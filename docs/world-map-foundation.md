@@ -68,6 +68,17 @@
 
 两者共通过了 92 个 group、115,388 个 POSITION 顶点和 62,088 个三角形；其 bounds 与先前的独立 Cell census 一致。生成器可在显式指定 `--preview-html` 时写一个**私有、无纹理的 WebGL 三角诊断页**，用于拖拽/缩放检查同一世界坐标空间；该页面只含为显示而派生的 POSITION/索引数据，不得提交或分发。它不是材质预览，也尚不构成“接缝已验证”的结论：UV、normal、vertex color 与 shader/texture 关联仍没有经过渲染回归。
 
+### 第一次 shader / 贴图文本依赖台账：Cell 2 与 Cell 3
+
+`tools/world/probe_cell_shader_dependencies.py` 已在相同的 core-only 范围内读取了 `NewShader` 的 name / template header、其直属的双字符串参数以及本 Cell 的 Texture header；输出严格是文本和尺寸等 metadata，不保存任何 DDS 或 P3D payload。PrimitiveGroup 到 shader 名的引用、同 Cell NewShader 定义和 Texture 名称由真实文件交叉关联，但双字符串参数目前仅标为**图像引用候选**，不可将参数名或 template 名直接等同于已实现的 glTF 材质语义。
+
+| Cell | core PrimitiveGroup / unique shader | local NewShader / Texture definition | 非空图像引用候选 | 能同 Cell Texture 名匹配 | 未解析 core shader / parser error |
+|---|---:|---:|---:|---:|---:|
+| `manhattan_Cell_2` | 58 / 58 | 101 / 64 | 94 | 50 | 0 / 0 |
+| `manhattan_Cell_3` | 34 / 34 | 83 / 48 | 58 | 35 | 0 / 0 |
+
+这说明两个 Cell 的所有当前 core PrimitiveGroup 都能在**同一 Cell**找到其 NewShader 定义，且至少部分字符串值可立即匹配同 Cell Texture 定义；剩余候选很可能需要由共享 archive / 全局资源层解析，但在实际 DDS 解码和渲染前不能宣称它们就是缺失贴图。已观察到 `zCBV2_*building*`、`*road*`、`*sidewalk*` 等 template 文本和 `color`、`normal`、`grime` 等参数文本，它们为下一步选择代表性 shader/texture 回归样本提供依据，不是 UV、normal 或光照公式的结论。
+
 ### `art.rcf` 提供共享美术资源
 
 在 `art.rcf` 内已定位到 290 个 `\\art\\locations\\manhattan...` 相关 P3D 包（压缩总量约 87.5 MiB），包括：
