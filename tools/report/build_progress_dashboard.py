@@ -198,6 +198,7 @@ const milestones=[
  ['done','Cell 2 / 3 core 三角连接','92 个 group、115,388 顶点、62,088 triangles；0 errors','verified'],
  ['done','68-byte layout color coordinate','两个 WebGL 样本：0x00364509 @ 24 优于 @ 32','verified'],
  ['done','68-byte layout surface vectors','三组几何证据：0xC206BCE7 @ 40 normal；0xA4176245 @ 52 tangent','verified'],
+ ['live','Cell 2 合并 core material diagnostic','58 groups；25 组本地贴图；33 组保留灰色上下文','active'],
  ['live','静态地图 normal / shader transform','定向光渲染回归，再验证 vertex color、transform 与 multi-stream','active'],
  ['warn','完整 TRAN 动画标定','未验证的 int16 TRAN 不导出为“正确位移”','blocked'],
 ];
