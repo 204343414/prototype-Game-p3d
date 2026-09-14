@@ -1,5 +1,10 @@
 # Prototype P3D Archive Toolkit
 
+> ⚠️ **使用前必读版权声明：[NOTICE.md](./NOTICE.md)**
+> 本项目仅为文件格式研究/逆向工程工具，不含任何游戏资源本体。
+> 提取内容仅限个人学习、技术研究与非商业同人创作用途，
+> **严禁商用、严禁公开重新分发**。
+
 > 一个面向《虐杀原形》(*Prototype*, Radical Entertainment, 2009) 及其续作
 > 的资源考古 / 逆向工程 / 本地预览工具集。
 >
@@ -40,11 +45,17 @@ prototype-p3d-toolkit/
 │   ├── chunk-id-crosswalk.md  <- Prototype <-> Hit&Run chunk ID 对照表
 │   └── roadmap.md             <- 开发路线图与 TODO
 ├── tools/
-│   ├── rcf_unpack/            <- .rcf 归档解包 (Python 移植)
+│   ├── rcf_unpack/            <- .rcf (Cement) 归档解包 (Python 移植，自测通过，未测真实文件)
+│   │   └── rcf_extract.py
 │   ├── p3d_parser/            <- 通用 Pure3D chunk 树解析器 (Python)
 │   │   └── inspect_p3d.py     <- 已验证可用：任意 .p3d 文件的 chunk 树 dump 工具
-│   └── p3d2gltf/              <- p3d (网格/骨骼/动画) -> glTF 转换器
-├── viewer/                    <- 本地 web viewer（three.js，浏览器 127.0.0.1 预览）
+│   ├── p3d2gltf/              <- p3d (网格/骨骼/动画) -> glTF 转换器（待写）
+│   └── inventory/             <- 资源清点扫描工具（按文件名关键词粗分类）
+│       └── scan_assets.py
+├── viewer/                    <- 本地 web viewer（three.js，浏览器 127.0.0.1 预览，已验证可用）
+│   ├── server.py              <- 纯标准库 HTTP server：目录浏览 + 文件读取 API
+│   └── static/index.html      <- 前端页面：输入路径浏览 + glTF/GLB 预览
+├── run_viewer.sh              <- 一键启动本地查看器（见下方用法）
 ├── samples/                   <- 测试/样例资源（不含受版权保护的游戏本体资源）
 └── references/                <- clone 下来的参考实现（仅供阅读/交叉验证，见 LICENSE 各自条款）
     ├── gibbed-prototype/      <- gibbed/Gibbed.Prototype（Prototype 专用，2012年停更）
@@ -61,6 +72,43 @@ prototype-p3d-toolkit/
   ```bash
   python3 tools/p3d_parser/inspect_p3d.py path/to/file.p3d
   ```
+
+- `tools/rcf_unpack/rcf_extract.py` — `.rcf` (ATG CORE CEMENT LIBRARY) 归档
+  解包器，从 `gibbed-prototype` 的 C# 源码逐行移植。已用**自造的合成 .rcf
+  文件**验证了文件头解析、Entry/Metadata 表解析、文件名哈希查找、以及
+  `.rz` (zlib) 解压逻辑的自洽性（`test_rcf_extract.py`），但**还没有用真实
+  游戏 `.rcf` 文件测试过** —— 这是当前最需要验证的一环，一旦拿到
+  `art.rcf` 之类的真实文件应优先跑这个。
+
+  ```bash
+  python3 tools/rcf_unpack/rcf_extract.py path/to/art.rcf output_dir/ --rz -v
+  ```
+
+- `tools/inventory/scan_assets.py` — 扫描一个已解包目录，按文件名/路径
+  关键词把资源粗分类为角色/武器/形态变身/动画/关卡/音频/贴图/UI等，
+  输出 JSON + Markdown 清单。目前分类关键词是基于命名习惯的猜测，
+  需要用真实资源目录跑过之后持续修正关键词表。
+
+  ```bash
+  python3 tools/inventory/scan_assets.py path/to/unpacked_dir \
+      --json docs/asset_inventory.json --md docs/asset_inventory.md
+  ```
+
+- `viewer/` — 本地 web 查看器。纯 Python 标准库后端（无需 `pip install`
+  任何东西）+ three.js 前端。已用自动化测试（`viewer/test_server.py`）
+  验证目录浏览 API、文件读取 API、`--root` 越权访问拦截、静态页面服务
+  均正常工作。
+
+  ```bash
+  ./run_viewer.sh                              # 默认端口 8420，可浏览整个文件系统
+  ./run_viewer.sh 8420 /path/to/unpacked        # 限制只能浏览指定目录（推荐，更安全）
+  ```
+
+  启动后终端会常驻显示 `http://127.0.0.1:8420/`，在浏览器打开即可：
+  左侧输入本地路径 → 浏览目录 → 点击 `.glb`/`.gltf` 文件即可在右侧
+  three.js 场景里预览（支持旋转/缩放/平移、自动播放第一个动画片段）。
+  **注意**：目前还不支持直接预览原始 `.p3d`，需要先用 `tools/p3d2gltf`
+  （待写）转换成 `.glb`。
 
 ## 还没做 / 需要真实游戏资源才能继续验证
 
