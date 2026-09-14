@@ -148,20 +148,34 @@ prototype-p3d-toolkit/
 
 ## 人类 + AI 协作模式：本地文件隧道
 
-`run_viewer.sh` 支持 `--tunnel` 参数，会自动下载并启动一条
-[Cloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)，
-把 `viewer/server.py` 的目录浏览 / 文件读取 API 通过一个临时公网 URL
+`run_viewer.sh` 支持 `--tunnel` 参数，会启动一条公网隧道，把
+`viewer/server.py` 的目录浏览 / 文件读取 API 通过一个临时公网 URL
 暴露出来。协作的 AI 拿到这个 URL 之后，可以直接读取被 `--root` 限定的
 目录内容（比如整个项目目录），不需要你手动复制粘贴代码或文件结构。
 
+隧道有两种实现方式，脚本会自动选择（`TUNNEL_MODE=auto`，默认）：
+
+1. **[Cloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)**：
+   需要先下载一个约 40MB 的 `cloudflared` 二进制文件（首次使用，缓存
+   在 `.cloudflared/`）。**在国内网络环境下，GitHub Releases 的下载经常
+   被限速甚至卡住不动**——脚本设置了 25 秒下载超时，超时会自动改用
+   下面的 SSH 隧道方式，不会无限期卡住。
+2. **SSH 隧道（[localhost.run](https://localhost.run/)）**：用系统自带的
+   `ssh` 命令直接连出去，不需要下载任何额外程序，通常比下载 GitHub
+   二进制文件更容易穿过网络限制。首次连接会自动接受主机指纹。
+
 ```bash
 ./run_viewer.sh 8420 /path/to/prototype-p3d-toolkit --tunnel
+
+# 如果知道自己的网络下载 GitHub Releases 比较困难，可以直接强制用 SSH 隧道，
+# 跳过 cloudflared 下载尝试，启动更快：
+TUNNEL_MODE=ssh ./run_viewer.sh 8420 /path/to/prototype-p3d-toolkit --tunnel
 ```
 
-终端会打印出一个形如 `https://xxxx-yyyy.trycloudflare.com` 的 URL，
-把它发给协作的 AI 即可（例如让它访问
-`<url>/api/browse?path=/home/you/prototype-p3d-toolkit` 或
-`<url>/api/file?path=/home/you/prototype-p3d-toolkit/README.md`）。
+终端会打印出一个 URL（cloudflared 是 `https://xxxx-yyyy.trycloudflare.com`
+形式，SSH 隧道是 `https://xxxxx.lhr.life` 形式），把它发给协作的 AI 即可
+（例如让它访问 `<url>/api/browse?path=/home/you/prototype-p3d-toolkit`
+或 `<url>/api/file?path=/home/you/prototype-p3d-toolkit/README.md`）。
 
 ⚠️ **安全提醒**：这条隧道在开着的时候，任何拿到这个 URL 的人都能读取
 `--root` 范围内的所有文件（URL 本身是随机生成、难以被扫到，但不代表

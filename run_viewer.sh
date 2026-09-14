@@ -10,6 +10,17 @@
 #   ./run_viewer.sh 9000 /path/to/unpacked   # 指定端口 + 限制可浏览的根目录（推荐）
 #   ./run_viewer.sh 9000 /path/to/unpacked --tunnel   # 同上，并额外开一条公网隧道
 #   NO_TUNNEL=1 ./run_viewer.sh --tunnel     # 强制不开隧道（调试用）
+#   TUNNEL_MODE=ssh ./run_viewer.sh 9000 /path/to/unpacked --tunnel
+#       # 强制使用 SSH 隧道（localhost.run），不下载 cloudflared，
+#       # 适合 GitHub Releases 下载被限速/卡住的网络环境（常见于国内）
+#
+# 隧道有两种实现方式，脚本会自动选择：
+#   1. cloudflared（默认优先）：需要先下载一个 ~40MB 的二进制文件，
+#      国内网络访问 GitHub Releases 经常被限速甚至卡死不动。
+#   2. SSH 隧道（localhost.run）：用系统自带的 ssh 命令，不需要下载
+#      任何额外程序，直接用 SSH 协议连出去，通常比下载 GitHub 二进制
+#      文件更容易穿过网络限制。如果 cloudflared 下载 30 秒内没完成，
+#      脚本会自动切换到这个方式；也可以用 TUNNEL_MODE=ssh 强制只用这个。
 #
 # 运行后终端会常驻显示：
 #   - "本地访问: http://127.0.0.1:xxxx"     -> 你自己在本机浏览器打开
@@ -60,27 +71,40 @@ echo "公网隧道:     $([ "$USE_TUNNEL" = "1" ] && echo "启用" || echo "未�
 echo ""
 
 CLOUDFLARED_BIN="${SCRIPT_DIR}/.cloudflared/cloudflared"
+TUNNEL_MODE="${TUNNEL_MODE:-auto}"   # auto | cloudflared | ssh
 
-ensure_cloudflared() {
-  if [ -x "${CLOUDFLARED_BIN}" ]; then
-    return 0
-  fi
-  echo "[隧道] 未找到 cloudflared，正在下载（约 30-50MB，仅需一次）..."
+# 下载 cloudflared，带超时（不会无限卡住）。返回非0表示下载失败/超时。
+try_download_cloudflared() {
   mkdir -p "${SCRIPT_DIR}/.cloudflared"
   local arch cf_arch
   arch="$(uname -m)"
   case "$arch" in
     x86_64) cf_arch=amd64 ;;
     aarch64|arm64) cf_arch=arm64 ;;
-    *) echo "[隧道] 不支持的架构: $arch，跳过隧道功能"; return 1 ;;
+    *) echo "[隧道] 不支持的架构: $arch，跳过 cloudflared"; return 1 ;;
   esac
-  if ! curl -sSL -o "${CLOUDFLARED_BIN}" \
-      "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cf_arch}"; then
-    echo "[隧道] 下载失败（可能没有公网访问权限），跳过隧道功能"
+  echo "[隧道] 未找到 cloudflared，尝试下载（约 30-50MB，最多等 25 秒，超时会自动改用 SSH 隧道）..."
+  # --max-time 限制整个请求耗时；-f 让 HTTP 错误也返回非0；
+  # 下载到临时文件成功后再 mv，避免留下半个损坏的二进制文件
+  local tmp_file="${CLOUDFLARED_BIN}.part"
+  if curl -fSL --connect-timeout 8 --max-time 25 -o "${tmp_file}" \
+      "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cf_arch}" 2>/dev/null; then
+    mv "${tmp_file}" "${CLOUDFLARED_BIN}"
+    chmod +x "${CLOUDFLARED_BIN}"
+    echo "[隧道] cloudflared 下载成功。"
+    return 0
+  else
+    rm -f "${tmp_file}"
+    echo "[隧道] cloudflared 下载失败或超时（常见于 GitHub Releases 被限速的网络环境），改用 SSH 隧道..."
     return 1
   fi
-  chmod +x "${CLOUDFLARED_BIN}"
-  return 0
+}
+
+ensure_cloudflared() {
+  if [ -x "${CLOUDFLARED_BIN}" ]; then
+    return 0
+  fi
+  try_download_cloudflared
 }
 
 TUNNEL_PID=""
@@ -91,36 +115,91 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if [ "$USE_TUNNEL" = "1" ]; then
-  if ensure_cloudflared; then
-    TUNNEL_LOG="$(mktemp)"
-    echo "[隧道] 正在启动 Cloudflare Quick Tunnel..."
-    "${CLOUDFLARED_BIN}" tunnel --url "http://127.0.0.1:${PORT}" --no-autoupdate \
+start_cloudflared_tunnel() {
+  TUNNEL_LOG="$(mktemp)"
+  echo "[隧道] 正在启动 Cloudflare Quick Tunnel..."
+  "${CLOUDFLARED_BIN}" tunnel --url "http://127.0.0.1:${PORT}" --no-autoupdate \
+    > "${TUNNEL_LOG}" 2>&1 &
+  TUNNEL_PID=$!
+
+  TUNNEL_URL=""
+  for _ in $(seq 1 30); do
+    TUNNEL_URL="$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "${TUNNEL_LOG}" | head -n1 || true)"
+    if [ -n "${TUNNEL_URL}" ]; then break; fi
+    if ! kill -0 "${TUNNEL_PID}" 2>/dev/null; then break; fi
+    sleep 1
+  done
+
+  if [ -z "${TUNNEL_URL}" ]; then
+    kill "${TUNNEL_PID}" 2>/dev/null || true
+    TUNNEL_PID=""
+    echo "[隧道] 30 秒内未能获取到 Cloudflare 公网 URL（日志: ${TUNNEL_LOG}）"
+    return 1
+  fi
+  return 0
+}
+
+# SSH 隧道方案：用系统自带 ssh 连 localhost.run（无需注册、无需下载任何
+# 额外程序），把本地端口反向映射到一个 *.lhr.life 的公网 URL 上。
+# 原理等价于: ssh -R 80:localhost:PORT nokey@localhost.run
+start_ssh_tunnel() {
+  if ! command -v ssh >/dev/null 2>&1; then
+    echo "[隧道] 系统没有安装 ssh 客户端，无法使用 SSH 隧道方式"
+    return 1
+  fi
+  echo "[隧道] 正在通过 SSH 启动 localhost.run 隧道（首次连接可能需要接受主机指纹，已自动确认）..."
+  TUNNEL_LOG="$(mktemp)"
+  ssh -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 \
+      -R "80:localhost:${PORT}" nokey@localhost.run \
       > "${TUNNEL_LOG}" 2>&1 &
-    TUNNEL_PID=$!
+  TUNNEL_PID=$!
 
-    # 等待日志里出现分配好的 https://xxx.trycloudflare.com URL
-    TUNNEL_URL=""
-    for _ in $(seq 1 30); do
-      TUNNEL_URL="$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "${TUNNEL_LOG}" | head -n1 || true)"
-      if [ -n "${TUNNEL_URL}" ]; then break; fi
-      sleep 1
-    done
+  TUNNEL_URL=""
+  for _ in $(seq 1 25); do
+    TUNNEL_URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\.lhr\.life' "${TUNNEL_LOG}" | head -n1 || true)"
+    if [ -n "${TUNNEL_URL}" ]; then break; fi
+    if ! kill -0 "${TUNNEL_PID}" 2>/dev/null; then break; fi
+    sleep 1
+  done
 
-    if [ -n "${TUNNEL_URL}" ]; then
-      echo ""
-      echo "========================================================"
-      echo "  公网隧道已就绪，把下面这个 URL 发给协作的 AI/队友："
-      echo ""
-      echo "    ${TUNNEL_URL}"
-      echo ""
-      echo "  （每次重启这个脚本都会生成一个新的随机 URL）"
-      echo "========================================================"
-      echo ""
+  if [ -z "${TUNNEL_URL}" ]; then
+    kill "${TUNNEL_PID}" 2>/dev/null || true
+    TUNNEL_PID=""
+    echo "[隧道] 未能从 SSH 隧道获取到公网 URL，日志内容："
+    cat "${TUNNEL_LOG}" 2>/dev/null || true
+    return 1
+  fi
+  return 0
+}
+
+if [ "$USE_TUNNEL" = "1" ]; then
+  TUNNEL_URL=""
+
+  if [ "$TUNNEL_MODE" = "ssh" ]; then
+    start_ssh_tunnel || true
+  elif [ "$TUNNEL_MODE" = "cloudflared" ]; then
+    if ensure_cloudflared; then start_cloudflared_tunnel || true; fi
+  else
+    # auto: 先试 cloudflared（若已缓存或能快速下载），下载失败/超时立刻退到 SSH
+    if ensure_cloudflared; then
+      start_cloudflared_tunnel || start_ssh_tunnel || true
     else
-      echo "[隧道] 30 秒内未能获取到公网 URL，查看日志: ${TUNNEL_LOG}"
-      echo "[隧道] 继续以仅本地模式运行..."
+      start_ssh_tunnel || true
     fi
+  fi
+
+  if [ -n "${TUNNEL_URL}" ]; then
+    echo ""
+    echo "========================================================"
+    echo "  公网隧道已就绪，把下面这个 URL 发给协作的 AI/队友："
+    echo ""
+    echo "    ${TUNNEL_URL}"
+    echo ""
+    echo "  （每次重启这个脚本都会生成一个新的随机 URL）"
+    echo "========================================================"
+    echo ""
+  else
+    echo "[隧道] 未能建立公网隧道，继续以仅本地模式运行..."
   fi
 fi
 
