@@ -29,6 +29,7 @@ import mimetypes
 import os
 import socketserver
 import struct
+import subprocess
 import sys
 import urllib.parse
 
@@ -52,6 +53,27 @@ except ImportError:
 
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+# The git repo this server itself lives in -- used by /api/self_update to
+# `git pull` and by /api/health to report the currently-running commit, so
+# a remote collaborator can push a fix and confirm it's actually live
+# without asking the human to run commands and paste output back.
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Captured at import time (before anything could chdir) so /api/self_update
+# can relaunch this exact same invocation (same interpreter, same argv,
+# same working directory) after `git pull`.
+STARTUP_CWD = os.getcwd()
+STARTUP_ARGV = [sys.executable, os.path.abspath(sys.argv[0])] + sys.argv[1:]
+
+
+def _git_commit():
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=REPO_DIR, capture_output=True, text=True, timeout=5,
+        )
+        return out.stdout.strip() if out.returncode == 0 else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 
@@ -118,10 +140,109 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if parsed.path == "/api/rcf_entry":
             return self._handle_rcf_entry(qs)
         if parsed.path == "/api/health":
-            return self._send_json({"ok": True, "root": self.root_dir})
+            return self._send_json({
+                "ok": True,
+                "root": self.root_dir,
+                "git_commit": _git_commit(),
+                "pid": os.getpid(),
+            })
 
         # static file serving (frontend)
         return self._handle_static(parsed.path)
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/api/self_update":
+            return self._handle_self_update()
+        return self._send_error_json(f"not found: {parsed.path}", 404)
+
+    def _handle_self_update(self):
+        """Pull the latest code for this server's own git repo, then hand
+        off to a small detached watcher process that waits for this
+        process to exit and relaunches the exact same command (same argv,
+        same cwd, same port) -- so a running Cloudflare/SSH tunnel pointed
+        at this port comes back up with the SAME public URL, no manual
+        restart or new link needed. There's a brief (sub-second) gap where
+        the port isn't listening while the old process exits and the new
+        one binds; the tunnel itself doesn't need to restart for that.
+
+        ⚠️ This intentionally lets anyone who has this tunnel's URL trigger
+        `git pull` + a process restart in this repo -- same trust boundary
+        already accepted for the read-only endpoints (no auth token on the
+        tunnel by design, see run_viewer.sh). It does NOT run arbitrary
+        shell commands from the request; it only ever runs a hardcoded
+        `git pull` in REPO_DIR followed by relaunching this exact script
+        with its original arguments.
+        """
+        before = _git_commit()
+        try:
+            result = subprocess.run(
+                ["git", "pull", "--ff-only"],
+                cwd=REPO_DIR, capture_output=True, text=True, timeout=60,
+            )
+        except Exception as e:  # noqa: BLE001
+            return self._send_error_json(f"git pull failed to run: {type(e).__name__}: {e}", 500)
+
+        after = _git_commit()
+        pull_ok = result.returncode == 0
+
+        response = {
+            "pull_ok": pull_ok,
+            "git_stdout": result.stdout.strip(),
+            "git_stderr": result.stderr.strip(),
+            "commit_before": before,
+            "commit_after": after,
+            "changed": before != after,
+            "will_restart": pull_ok,
+        }
+        self._send_json(response)
+
+        if not pull_ok:
+            return
+
+        try:
+            self.wfile.flush()
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Poll the actual TCP port rather than the PID: if the parent
+        # process that spawned this server never reap()s us, os.kill(pid, 0)
+        # keeps succeeding against the resulting zombie indefinitely, so the
+        # watcher would wait forever. Whether the port is still accepting
+        # connections is what we actually care about anyway.
+        bind_host = self.server.server_address[0]
+        probe_host = "127.0.0.1" if bind_host in ("0.0.0.0", "") else bind_host
+        watcher_code = (
+            "import socket, subprocess, sys, time\n"
+            f"host, port = {probe_host!r}, {self.server.server_address[1]!r}\n"
+            "while True:\n"
+            "    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+            "    s.settimeout(0.3)\n"
+            "    try:\n"
+            "        s.connect((host, port))\n"
+            "        s.close()\n"
+            "        time.sleep(0.1)\n"
+            "        continue\n"
+            "    except OSError:\n"
+            "        break\n"
+            f"subprocess.Popen({STARTUP_ARGV!r}, cwd={STARTUP_CWD!r})\n"
+        )
+        subprocess.Popen(
+            [sys.executable, "-c", watcher_code],
+            cwd=STARTUP_CWD,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+        def _exit_soon():
+            import time
+            time.sleep(0.2)
+            os._exit(0)
+
+        import threading
+        threading.Thread(target=_exit_soon, daemon=True).start()
 
     def _handle_browse(self, qs):
         path = qs.get("path", ["/"])[0]
