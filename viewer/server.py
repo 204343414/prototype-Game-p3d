@@ -58,11 +58,6 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 # a remote collaborator can push a fix and confirm it's actually live
 # without asking the human to run commands and paste output back.
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# Captured at import time (before anything could chdir) so /api/self_update
-# can relaunch this exact same invocation (same interpreter, same argv,
-# same working directory) after `git pull`.
-STARTUP_CWD = os.getcwd()
-STARTUP_ARGV = [sys.executable, os.path.abspath(sys.argv[0])] + sys.argv[1:]
 
 
 def _git_commit():
@@ -202,23 +197,36 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_self_update()
         return self._send_error_json(f"not found: {parsed.path}", 404)
 
+    # Special exit code used to signal "please relaunch me" to a wrapping
+    # shell loop (run_viewer.sh), as opposed to a real exit (Ctrl+C, crash,
+    # etc). Chosen to be outside the 0-2/126-165/SIGNAL-derived ranges a
+    # process would normally exit with, to avoid ambiguity.
+    SELF_UPDATE_EXIT_CODE = 78
+
     def _handle_self_update(self):
-        """Pull the latest code for this server's own git repo, then hand
-        off to a small detached watcher process that waits for this
-        process to exit and relaunches the exact same command (same argv,
-        same cwd, same port) -- so a running Cloudflare/SSH tunnel pointed
-        at this port comes back up with the SAME public URL, no manual
-        restart or new link needed. There's a brief (sub-second) gap where
-        the port isn't listening while the old process exits and the new
-        one binds; the tunnel itself doesn't need to restart for that.
+        """Pull the latest code for this server's own git repo, then exit
+        this process with a special exit code (SELF_UPDATE_EXIT_CODE) that
+        tells the wrapping shell loop in run_viewer.sh "relaunch me, this
+        wasn't a real shutdown". This keeps the new server process inside
+        run_viewer.sh's own process tree/session, so its `trap cleanup EXIT`
+        (which tears down the Cloudflare/SSH tunnel) does NOT fire -- the
+        tunnel keeps running, unaffected, pointed at the same port, so the
+        public URL stays the same the whole time.
+
+        (An earlier version of this spawned a detached "watcher" subprocess
+        to relaunch the server itself, independently of run_viewer.sh. That
+        orphaned the new server process from run_viewer.sh's process tree,
+        so run_viewer.sh saw its `python3 server.py` child exit, considered
+        itself done, and its EXIT trap killed the tunnel out from under the
+        (still running!) new server. Delegating the relaunch decision to
+        run_viewer.sh itself avoids that whole class of bug.)
 
         ⚠️ This intentionally lets anyone who has this tunnel's URL trigger
         `git pull` + a process restart in this repo -- same trust boundary
         already accepted for the read-only endpoints (no auth token on the
         tunnel by design, see run_viewer.sh). It does NOT run arbitrary
         shell commands from the request; it only ever runs a hardcoded
-        `git pull` in REPO_DIR followed by relaunching this exact script
-        with its original arguments.
+        `git pull` in REPO_DIR, then exits with a fixed special code.
         """
         before = _git_commit()
         try:
@@ -251,41 +259,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             pass
 
-        # Poll the actual TCP port rather than the PID: if the parent
-        # process that spawned this server never reap()s us, os.kill(pid, 0)
-        # keeps succeeding against the resulting zombie indefinitely, so the
-        # watcher would wait forever. Whether the port is still accepting
-        # connections is what we actually care about anyway.
-        bind_host = self.server.server_address[0]
-        probe_host = "127.0.0.1" if bind_host in ("0.0.0.0", "") else bind_host
-        watcher_code = (
-            "import socket, subprocess, sys, time\n"
-            f"host, port = {probe_host!r}, {self.server.server_address[1]!r}\n"
-            "while True:\n"
-            "    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
-            "    s.settimeout(0.3)\n"
-            "    try:\n"
-            "        s.connect((host, port))\n"
-            "        s.close()\n"
-            "        time.sleep(0.1)\n"
-            "        continue\n"
-            "    except OSError:\n"
-            "        break\n"
-            f"subprocess.Popen({STARTUP_ARGV!r}, cwd={STARTUP_CWD!r})\n"
-        )
-        subprocess.Popen(
-            [sys.executable, "-c", watcher_code],
-            cwd=STARTUP_CWD,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-
         def _exit_soon():
             import time
             time.sleep(0.2)
-            os._exit(0)
+            os._exit(Handler.SELF_UPDATE_EXIT_CODE)
 
         import threading
         threading.Thread(target=_exit_soon, daemon=True).start()

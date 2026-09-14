@@ -215,4 +215,31 @@ echo "本地访问: http://127.0.0.1:${PORT}/"
 echo "按 Ctrl+C 停止服务（会同时关闭隧道）"
 echo ""
 
-python3 "${SCRIPT_DIR}/viewer/server.py" --host 127.0.0.1 --port "${PORT}" --root "${ROOT}"
+# Loop around the server process instead of a single exec: viewer/server.py
+# exits with a special code (SELF_UPDATE_EXIT_CODE, currently 78) after a
+# remote POST /api/self_update successfully `git pull`s, to ask us to
+# relaunch it. Handling that restart HERE (still inside this same shell/
+# session) instead of letting server.py spawn a fully detached replacement
+# process is what keeps the tunnel alive across a self-update: since the
+# relaunched python3 stays a child of this same run_viewer.sh, our `trap
+# cleanup EXIT` never fires just because one server instance exited to make
+# room for the next one, so cloudflared/ssh keeps running the whole time on
+# the same URL. Any other exit code (crash, Ctrl+C's SIGINT, etc) falls
+# through and lets this script exit normally (tearing down the tunnel too).
+SELF_UPDATE_EXIT_CODE=78
+while true; do
+  # `set -e` is in effect for the whole script (see top), which would
+  # otherwise abort the script the instant python3 exits non-zero -- before
+  # we ever get to inspect `code` below. Disable it just around this one
+  # command so a self-update's special exit code can actually be handled.
+  set +e
+  python3 "${SCRIPT_DIR}/viewer/server.py" --host 127.0.0.1 --port "${PORT}" --root "${ROOT}"
+  code=$?
+  set -e
+  if [ "${code}" -eq "${SELF_UPDATE_EXIT_CODE}" ]; then
+    echo ""
+    echo "[自更新] 收到重启请求（POST /api/self_update 已完成 git pull），正在原地重启 server（隧道 URL 不变）..."
+    continue
+  fi
+  exit "${code}"
+done
