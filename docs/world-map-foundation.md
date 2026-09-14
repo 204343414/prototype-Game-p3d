@@ -39,6 +39,14 @@
 
 这不是解析错误，而是一个已经量化的格式分支：地图预览器必须先按 static vertex stride/description 分类并验证 POSITION、NORMAL、UV 的实际偏移，才能写入一张正确贴图的 GLB。
 
+进一步对 `0x00010014` MemoryImageVertexDescription 做了结构解码：所有基础 Cell 的 25,900 个 PrimitiveGroup 收敛为 **29 种稳定的 attribute layout**。每个 layout 明确记录语义哈希、byte offset、stride、element type 和 usage index；尚未给语义哈希擅自命名。所有 29 种 layout 都把同一哈希 `0x2C929929` 放在 offset 0，读取前三个 `float32` 得到上述有意义的世界 POSITION bounds。这是 POSITION 偏移的已验证证据；UV/NORMAL/TANGENT 哈希的最终名字与 glTF 映射仍须以贴图预览回归确认。
+
+还发现一个直接影响首版整图的边界：一个 Cell 除城市合并网格外，也可携带像直升机、灯光等**局部坐标**的可复用 Geometry。已把名称前缀为 `mergedDrawableRoot` 的 Geometry 单独标为“合并世界静态几何”：
+
+- 143 / 149 个非空基础 Cell 有此类根，共 258 个 Geometry、16,898 个可读 POSITION PrimitiveGroup；
+- 6 个非空 Cell（5、24、98、126、139、244）没有该根，不能被错误地判为整图缺失；它们保留为单独的实例/特殊内容候选；
+- 首版地图只尝试导出 `mergedDrawableRoot*`，防止将 local-space 的直升机/灯具网格错误堆到世界原点。其余 Geometry 与 `_ft` 层在第二阶段通过实例/MetaObject 关系再加入。
+
 ### `art.rcf` 提供共享美术资源
 
 在 `art.rcf` 内已定位到 290 个 `\\art\\locations\\manhattan...` 相关 P3D 包（压缩总量约 87.5 MiB），包括：
@@ -63,11 +71,11 @@
 
 ## 下一步的可验证工作
 
-1. 选一组相邻/不同编号的非空基础 Cell，读取 Geometry 顶点 position 的 bounds，验证它们是否已经处在共同世界坐标，或需要索引→格点变换；
+1. 基于已完成的全 260 Cell POSITION/vertex-declaration census，先为 29 种 static layout 建立经过验证的 POSITION、NORMAL、UV/颜色映射；
 2. 对照 Cell 的 PrimitiveGroup shader 名和 `art.rcf` 的纹理资源，建立只含引用名的材质依赖表；
-3. 用低细节、不含 gameplay `_ft` 的 2–4 Cell 拼装预览做 seam / 坐标验证；
-4. 只有在相邻 Cell 无错位、UV/纹理绑定正常后，才扩到全 149 个非空基础 Cell；
-5. 再决定 mini / midgeo / height map / `_ft` 是否作为独立图层和何时加载。
+3. 用 `mergedDrawableRoot*` 的 2–4 个空间相邻 Cell 做低细节拼装预览，验证 seam / 坐标；不混入 local-space Geometry 或 gameplay `_ft`；
+4. 只有在相邻 Cell 无错位、UV/纹理绑定正常后，才扩到 143 个有合并世界根的非空基础 Cell；
+5. 再决定其余 6 个特殊 Cell、mini / midgeo / height map / `_ft` 是否作为独立图层和何时加载。
 
 如果前 2–4 Cell 出现系统性的坐标、顶点布局、UV 或材质错误，应停止扩大范围并先记录/说明；不得把坏的单 Cell 转换批量复制为“全曼哈顿预览”。
 
