@@ -22,6 +22,21 @@ python3 tools/inventory/rcf_inventory.py \
 
 输出 JSON 是机器可读主记录；Markdown 是受限长度的人类浏览报告。分类来自文件名启发式，不能当作已验证的格式或角色身份结论。
 
+## 全量带骨架普查（结构而非名称筛选）
+
+当目标是建立角色/可动对象的候选货架而非按文件名猜角色时，使用 viewer 的分页 `GET /api/rcf_rigged_manifest` 和客户端 [`tools/inventory/rigged_inventory.py`](../tools/inventory/rigged_inventory.py)：
+
+```bash
+python3 tools/inventory/rigged_inventory.py \
+  --base-url 'https://<当前隧道>.trycloudflare.com' \
+  --rcf-path '/本机/Prototype/art.rcf' \
+  --out /private/research/art_rigged_inventory.json
+```
+
+该扫描覆盖所有**已知名称**的 `.p3d.rz` 包，不按 `alex`、`soldier`、`characters` 等词过滤。一个候选的结构条件是：`CompositeDrawable` 有骨架名，且其直接子引用至少有一个 `type=2` polyskin。响应/输出仅保留 entry 元数据、骨架/CompositeDrawable/primitive/shader 的名称和计数；绝不输出顶点、索引、贴图、动画 key 或 raw asset payload。
+
+随后 [`tools/inventory/build_rigged_shelf.py`](../tools/inventory/build_rigged_shelf.py) 将完整普查扁平为稳定 `ARC-<entry-hash>-<ordinal>` review ID 的物品栏元数据。它给未来缩略图和人工勾选提供精确引用，但它本身不生成或伪造模型预览。
+
 ## JSON schema v1
 
 顶层字段：

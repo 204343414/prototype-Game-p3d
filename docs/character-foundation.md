@@ -53,6 +53,24 @@
 - `mesh_layout_status`：`uninspected` / `validated` / `blocked`；必须按各 mesh 独立记录，防止重演 Alex 夹克的 Weight_List 错配。
 - `static_preview_status`、`animation_preview_status`、`blocked_reason`、`verification_evidence`。
 
+## 全量“带骨架货架”普查（不按名称预筛）
+
+用户选择的第一轮范围是：**全 `art.rcf`，不按文件名、阵营或目录预筛，只按真实 P3D 结构判断。** 因此先用一个 metadata-only census 逐项读取所有已命名的 `.p3d.rz` 条目；执行策略不是“只找角色”，而是先找出有命名骨架且直接引用至少一个 `type=2` polyskin 的 CompositeDrawable。
+
+2026-09-15 的完整结果：
+
+- 扫描：2,219 个 `.p3d.rz` 包，累计压缩大小约 559.5 MiB；
+- 命中：236 个包、491 个 rigged CompositeDrawable；
+- 未命中该严格结构条件：1,983 个包；解析错误：0；
+- 结果排序：按**解压后的实际 P3D 大小由大到小**，同时保存压缩大小，绝不以名称大小或截图印象替代；
+- 结果只包含路径、大小、骨架/CompositeDrawable/primitive/shader 名称和计数，不含任何顶点、贴图像素、动画 key 或其它资源 payload。
+
+这就是之后“非筛选货架”的后端地基：它会刻意包含非人物候选。例如排在最大两项的是 `infectedSpawnerDoor` / `infectedSpawnerWall` 等地点 prop；它们不会因我猜测“不像角色”而被悄悄删掉。相反，角色、路人、载具、可动机关、废墟中的绑定物都可先显式出现在货架，再由预览和人工判断分类。
+
+每一个 CompositeDrawable 已生成一个稳定 review ID，例如 `ARC-ADF91921-04`。ID 来自 RCF 条目哈希和该包中的 primitive ordinal，不依赖不可靠的显示名称。未来缩略卡和用户消息都使用这个 ID：例如“`ARC-…-04` 是黑色守望小兵，重点修缮；`ARC-…-02` 是环境物，不做角色”即可精确回填台账。
+
+注意：当前这 491 个条目已经是**可审计的候选物品栏**，但还不是 491 张假装正确的 3D 渲染图。批量缩略图之前仍需要把通用静态 P3D→GLB 路径按每个顶点布局/骨架组合验证；否则会把 Alex 夹克曾经出现过的蒙皮错误成批复制到货架。缩略图生成是下一层，不能跳过这道地基。
+
 ## 未来预览展厅的交互约定（暂不替代当前调试页）
 
 当前 Alex 页面是为了验证 skinning 和 ROT-only 动画的工程调试页，因此刻意简洁。稳定资产目录建立后，展厅应是：
