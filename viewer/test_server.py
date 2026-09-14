@@ -303,8 +303,40 @@ def main():
         assert data["returned_record_count"] == 2, data
         assert data["nonrigged_count_in_page"] == 1, data
 
+        # --- /api/rcf_cell_geometry_manifest ---
+        # A static Cell fixture has Geometry -> PrimitiveGroup -> memory vertex
+        # list.  The map endpoint must retain only bounds/count metadata and
+        # explicitly mark the paired 33-byte sparse Cell as a placeholder.
+        map_vertices = _struct.pack("<4f", -1.0, 2.0, 3.0, 0.0) + _struct.pack("<4f", 4.0, -5.0, 6.0, 0.0)
+        map_vertex_list = build_chunk(0x00010012, _struct.pack("<III", 1, 2, len(map_vertices)) + map_vertices)
+        map_group_payload = (_struct.pack("<I", 1) + p3d_string("map_shader")
+                             + _struct.pack("<9I", 0, 0x3011, 2, 6, 0, 1, 1, 0, 0))
+        map_group = build_chunk(0x00010020, map_group_payload, map_vertex_list)
+        map_geometry = build_chunk(0x00010000, p3d_string("map_geometry") + _struct.pack("<I", 1), map_group)
+        map_p3d = build_chunk(0xFF443350, b"", map_geometry)
+        rcf4_path = os.path.join(tmpdir, "synthetic_cells.rcf")
+        build_synthetic_rcf_fixed(rcf4_path, [
+            (r"\art\locations\manhattan\manhattan_Cell_0.p3d.rz", b"x" * 33),
+            (r"\art\locations\manhattan\manhattan_Cell_2.p3d.rz", make_rz_payload(map_p3d)),
+            (r"\art\locations\manhattan\manhattan_Cell_2_ft.p3d.rz", make_rz_payload(plain_p3d)),
+        ])
+        status, body = get(base + f"/api/rcf_cell_geometry_manifest?path={rcf4_path}&limit=10")
+        assert status == 200, (status, body)
+        data = json.loads(body)
+        assert data["eligible_cell_count"] == 2, data
+        assert data["scanned_cell_count"] == 2, data
+        assert data["complete"] is True, data
+        assert [record["cell_index"] for record in data["records"]] == [0, 2], data
+        assert data["records"][0]["status"] == "placeholder", data
+        scanned_cell = data["records"][1]
+        assert scanned_cell["status"] == "scanned", scanned_cell
+        assert scanned_cell["geometry_count"] == 1, scanned_cell
+        assert scanned_cell["vertex_stride_counts"] == {"16": 1}, scanned_cell
+        assert scanned_cell["world_position_min"] == [-1.0, -5.0, 3.0], scanned_cell
+        assert scanned_cell["world_position_max"] == [4.0, 2.0, 6.0], scanned_cell
+
         print("OK: viewer/server.py smoke test passed "
-              "(browse + file + hexdump + p3d + rcf_manifest + rcf_rigged_manifest + rcf_entry APIs, "
+              "(browse + file + hexdump + p3d + rcf_manifest + rcf_rigged_manifest + rcf_cell_geometry_manifest + rcf_entry APIs, "
               "root confinement, static frontend)")
     finally:
         proc.terminate()

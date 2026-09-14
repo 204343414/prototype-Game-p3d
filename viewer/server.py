@@ -27,6 +27,7 @@ import http.server
 import json
 import mimetypes
 import os
+import re
 import socketserver
 import struct
 import subprocess
@@ -58,6 +59,15 @@ try:
     import rigged_p3d  # noqa: E402
 except ImportError:
     rigged_p3d = None
+
+# Static-world probe used for Cell coordinate/vertex-layout census.  It
+# returns bounds and header metadata only; no world geometry is sent through
+# the endpoint.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "world"))
+try:
+    import probe_static_geometry  # noqa: E402
+except ImportError:
+    probe_static_geometry = None
 
 
 
@@ -243,6 +253,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_rcf_manifest(qs)
         if parsed.path == "/api/rcf_rigged_manifest":
             return self._handle_rcf_rigged_manifest(qs)
+        if parsed.path == "/api/rcf_cell_geometry_manifest":
+            return self._handle_rcf_cell_geometry_manifest(qs)
         if parsed.path == "/api/rcf_entry":
             return self._handle_rcf_entry(qs)
         if parsed.path == "/api/health":
@@ -800,6 +812,118 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "returned_record_count": len(records),
             "nonrigged_count_in_page": nonrigged_count,
             "scan_error_count_in_page": error_count,
+            "records": records,
+        })
+
+    def _handle_rcf_cell_geometry_manifest(self, qs):
+        """Census a page of numbered Manhattan base Cells without sending P3D data.
+
+        This endpoint is deliberately specific to the confirmed ``cells.rcf``
+        naming convention.  It emits only package metadata, counts, observed
+        memory-image vertex strides, and aggregate POSITION bounds.  The
+        ``_ft`` companion entries are excluded because they are a separately
+        verified gameplay/meta-object layer, not initial static city geometry.
+
+        Query params:
+          path    required absolute cells.rcf path
+          offset  index in numeric Cell order, default 0
+          limit   Cells per page (1..25, default 10)
+          detail  "summary" (default) or "full"; full includes per-Geometry
+                  header/bounds metadata, never vertex or texture payloads.
+        """
+        if rcf_extract is None:
+            return self._send_error_json("rcf_extract module not available on server", 500)
+        if probe_static_geometry is None:
+            return self._send_error_json("probe_static_geometry module not available on server", 500)
+
+        path = qs.get("path", [None])[0]
+        if not path:
+            return self._send_error_json("missing ?path=", 400)
+        try:
+            target = self._safe_resolve(path)
+        except PermissionError as e:
+            return self._send_error_json(str(e), 403)
+        if not os.path.isfile(target):
+            return self._send_error_json(f"not a file: {target}", 404)
+        try:
+            offset = int(qs.get("offset", ["0"])[0])
+            limit = int(qs.get("limit", ["10"])[0])
+        except ValueError:
+            return self._send_error_json("offset and limit must be integers", 400)
+        if offset < 0:
+            return self._send_error_json("offset must be non-negative", 400)
+        limit = max(1, min(limit, 25))
+        detail = qs.get("detail", ["summary"])[0]
+        if detail not in ("summary", "full"):
+            return self._send_error_json("detail must be summary or full", 400)
+
+        try:
+            cement = rcf_extract.CementFile.load(target)
+        except Exception as e:  # noqa: BLE001
+            return self._send_error_json(f"RCF parse error: {type(e).__name__}: {e}", 500)
+
+        cell_pattern = re.compile(r"^\\art\\locations\\manhattan\\manhattan_Cell_(\d+)\.p3d\.rz$", re.IGNORECASE)
+        cells = []
+        for entry in cement.entries:
+            metadata = cement.get_metadata(entry.name_hash)
+            name = metadata.name if metadata is not None else None
+            match = cell_pattern.match(name or "")
+            if match:
+                cells.append((int(match.group(1)), name, entry))
+        cells.sort(key=lambda item: item[0])
+        page = cells[offset:offset + limit]
+        records = []
+        for cell_index, name, entry in page:
+            basic = {
+                "cell_index": cell_index,
+                "entry_name": name,
+                "entry_name_hash": f"0x{entry.name_hash:08X}",
+                "entry_offset": entry.offset,
+                "entry_size_compressed": entry.size,
+            }
+            # The known 33-byte entries carry no useful P3D geometry payload.
+            # Report them explicitly instead of treating sparse world space as
+            # an extractor error or transferring a pointless decompression.
+            if entry.size == 33:
+                basic["status"] = "placeholder"
+                records.append(basic)
+                continue
+            try:
+                with open(target, "rb") as handle:
+                    handle.seek(entry.offset)
+                    compressed = handle.read(entry.size)
+                data = rcf_extract.decompress_rz_payload(compressed)
+                scan = probe_static_geometry.scan_static_geometry(data)
+                basic.update({
+                    "status": "scanned",
+                    "decompressed_size": scan["decompressed_size"],
+                    "geometry_count": scan["geometry_count"],
+                    "position_group_count": scan["position_group_count"],
+                    "vertex_stride_counts": scan["vertex_stride_counts"],
+                    "world_position_bounds_status": scan["world_position_bounds_status"],
+                    "world_position_min": scan["world_position_min"],
+                    "world_position_max": scan["world_position_max"],
+                    "warning_count": len(scan["warnings"]),
+                })
+                if detail == "full":
+                    basic["geometries"] = scan["geometries"]
+                    basic["warnings"] = scan["warnings"]
+            except Exception as e:  # noqa: BLE001 - preserve a failing Cell's identity
+                basic.update({"status": "scan_error", "scan_error": f"{type(e).__name__}: {e}"})
+            records.append(basic)
+
+        self._send_json({
+            "path": target,
+            "scope": (
+                "numbered Manhattan base Cells only; structural headers and POSITION bounds; "
+                "no P3D geometry/texture payloads; _ft companion entries excluded"),
+            "eligible_cell_count": len(cells),
+            "entry_offset": offset,
+            "requested_limit": limit,
+            "scanned_cell_count": len(page),
+            "next_entry_offset": offset + len(page),
+            "complete": offset + len(page) >= len(cells),
+            "detail": detail,
             "records": records,
         })
 
