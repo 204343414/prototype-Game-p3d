@@ -43,6 +43,9 @@ ANIMATION = 0x00121000
 ANIMATION_HEADER = 0x00121006
 ANIMATION_GROUP_LIST = 0x00121002
 ANIMATION_GROUP = 0x00121001
+# Present on every skeletal PTRN animation observed in alex.p3d. The supplied
+# FileFormats metadata identifies this node as AnimationLimbReference.
+ANIMATION_LIMB_REFERENCE = 0x00121401
 CHANNEL_INTERPOLATION = 0x00121110
 CHANNEL_LOCATOR = 0x00121120
 COMPRESSED_BLOB = 0x02F00000
@@ -199,6 +202,29 @@ def _fourcc(payload, offset):
     return payload[offset:offset + 4].rstrip(b"\0").decode("ascii", "replace")
 
 
+def parse_animation_limb_reference(chunk):
+    """Losslessly parse the known outer layout of 0x00121401.
+
+    Static inspection of the supplied FileFormats assembly establishes only a
+    limb name followed by 24 opaque bytes. In particular, it does *not*
+    establish that those bytes are a TRAN scale or reference frame, so retain
+    them as hex rather than assigning speculative semantics.
+    """
+    _require(chunk.type_id == ANIMATION_LIMB_REFERENCE,
+             f"expected AnimationLimbReference 0x{ANIMATION_LIMB_REFERENCE:08X}, "
+             f"got 0x{chunk.type_id:08X}")
+    limb, offset = read_p3d_string(chunk.payload, 0)
+    opaque = chunk.payload[offset:]
+    _require(len(opaque) == 24,
+             f"AnimationLimbReference {limb!r} at 0x{chunk.start:X} has {len(opaque)} "
+             "opaque bytes, expected 24")
+    return {
+        "limb": limb,
+        "source_chunk_offset": chunk.start,
+        "unknown_bytes_hex": opaque.hex(),
+    }
+
+
 def _parse_channel(channel, blob, endian):
     _require(channel.type_id in KNOWN_CHANNEL_TYPES,
              f"unsupported Animation channel type 0x{channel.type_id:08X}")
@@ -289,6 +315,9 @@ def decode_animation(animation_chunk, endian="<"):
              f"Animation {header['name']!r} group count mismatch: header={header_group_count}, "
              f"list={list_group_count}, children={len(groups)}")
     blob, blob_info = decompress_blob(blob_chunk, endian)
+    limb_references = [parse_animation_limb_reference(child)
+                       for child in animation_chunk.children
+                       if child.type_id == ANIMATION_LIMB_REFERENCE]
 
     decoded_groups = []
     all_channels = []
@@ -331,6 +360,10 @@ def decode_animation(animation_chunk, endian="<"):
         **header,
         "source_chunk_offset": animation_chunk.start,
         "blob": blob_info,
+        # This is metadata adjacent to, but outside, the external keyframe
+        # blob. Preserve it for future TRAN calibration without guessing a
+        # numerical interpretation.
+        "limb_references": limb_references,
         "group_count": len(decoded_groups),
         "channel_count": len(all_channels),
         "groups": decoded_groups,

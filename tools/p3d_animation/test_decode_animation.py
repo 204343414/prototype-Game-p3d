@@ -51,8 +51,13 @@ def make_fixture():
     group_list = chunk(mod.ANIMATION_GROUP_LIST, struct.pack("<II", 0, 1), [group])
     histogram_entry = chunk(0x00121009, struct.pack("<III", 0, mod.ROT_INT16, 1))
     animation_header = chunk(mod.ANIMATION_HEADER, struct.pack("<II", 0, 1), [chunk(0x00121008, struct.pack("<II", 0, 1), [histogram_entry])])
+    # AnimationLimbReference is a direct Animation child: a P3D string plus
+    # exactly 24 opaque bytes. The fixture keeps those bytes distinct from the
+    # external ZLIB channel blob.
+    limb_reference = chunk(mod.ANIMATION_LIMB_REFERENCE, p3d_string("leg_left") + bytes(range(24)))
     animation_payload = struct.pack("<I", 0) + p3d_string("synthetic_block") + b"PTRN" + struct.pack("<ffI", 16.0, 30.0, 1)
-    animation = chunk(mod.ANIMATION, animation_payload, [animation_header, chunk(mod.COMPRESSED_BLOB, zlib_payload), group_list])
+    animation = chunk(mod.ANIMATION, animation_payload,
+                      [animation_header, chunk(mod.COMPRESSED_BLOB, zlib_payload), group_list, limb_reference])
     total_size = 12 + len(animation)
     return struct.pack("<III", mod.P3D_SIGNATURE_LE, 12, total_size) + animation
 
@@ -65,6 +70,11 @@ def main():
     assert decoded["cyclic"] is True
     assert decoded["group_count"] == 1
     assert decoded["channel_count"] == 2
+    assert len(decoded["limb_references"]) == 1
+    reference = decoded["limb_references"][0]
+    assert reference["limb"] == "leg_left"
+    assert reference["source_chunk_offset"] > 0
+    assert reference["unknown_bytes_hex"] == bytes(range(24)).hex()
 
     rot, tran = decoded["groups"][0]["channels"]
     assert rot["frames"] == [0, 15]

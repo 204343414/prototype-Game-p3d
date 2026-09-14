@@ -17,9 +17,9 @@ Animation (0x00121000)                         version,name,AnimationType(FourCC
 │  └─ 0x00121400                                 version(u32), 未知u32(=NumGroups? 观察值等于NumGroups=0x35=53)
 ├─ 0x02F00000  ★关键★ ZLIB压缩blob                version(u32,=0)+magic"ZLIB"(4字节)+decompressed_size(u32)+compressed_size(u32)+zlib_compressed_data[compressed_size]
 │                                                 解压后得到一大块连续二进制，是全部Animation_Group的frames+values数据，按group在Animation_Group_List里出现的顺序首尾相接排列（无需额外分隔符，靠每个channel meta chunk里的count+offset字段定位）
-└─ Animation_Group_List (0x00121002)             version(u32), NumGroups(u32，冗余，可从子节点数计算)
-   └─ Animation_Group (0x00121001) ×NumGroups     version(u32) + name(p3d string，通常=骨骼名，如"Pelvis"/"Hip_L"/"Spine_1") + GroupID(u32，全局关节索引，非从0连续，可能跳号) + NumChannels(u32)
-      └─ 1~2个channel节点，常见两种FourCC参数：
+├─ Animation_Group_List (0x00121002)             version(u32), NumGroups(u32，冗余，可从子节点数计算)
+│  └─ Animation_Group (0x00121001) ×NumGroups     version(u32) + name(p3d string，通常=骨骼名，如"Pelvis"/"Hip_L"/"Spine_1") + GroupID(u32，全局关节索引，非从0连续，可能跳号) + NumChannels(u32)
+│     └─ 1~2个channel节点，常见两种FourCC参数：
          "TRAN" → 位移通道，具体chunk类型为 0x00121119（自定义压缩vector3，非netp3dlib的Vector_3D_OF_Channel=0x121104）
          "ROT"  → 旋转通道，具体chunk类型为以下之一：
                    0x00121112 = 26次出现，主关节，值块=int16×3/值（6 bytes/value）
@@ -28,7 +28,24 @@ Animation (0x00121000)                         version,name,AnimationType(FourCC
          每个channel节点下还有2个子chunk：
            Channel_Interpolation_Mode (0x00121110)   version(u32) + InterpMode(i32，观察值恒为-1=0xFFFFFFFF，插值模式未变化过，可能代表"默认/线性")
            0x00121120（数据定位符）                    version(u32) + Count(u32，帧数) + Offset(u32，在ZLIB解压后blob里的字节offset)
+├─ AnimationLimbReference (0x00121401) ×4         仅PTRN骨骼动画具备；下节说明其已确认的外层布局
+└─ 0x00121402                                      在PTRN样本中为`version=0, unknown=0`的8字节payload；语义未定
 ```
+
+### 2.1 `AnimationLimbReference`（`0x00121401`）的新增静态证据
+
+来自用户提供的旧版 P3DAddon 所带**较新** `Gibbed.Prototype.FileFormats.dll` 的离线元数据/IL审计（未加载或执行 DLL）：`[KnownType(0x00121401)]` 精确归属到 `AnimationLimbReference`。其 `Deserialize` 仅执行两步：`ReadStringAlignedU8()` 读取 `Limb`，随后 `ReadBytes(24)` 读取名为 `Unknown` 的24字节；`Serialize` 对称地原样写回两者。因此目前能可靠声称的是：这是具名 limb reference，且尾部是**固定24个不透明字节**；该 DLL 本身没有解释这24字节的含义或给出 TRAN 换算公式。
+
+在私有 `alex.p3d` 的完整枚举中：634个 Animation 分为533个`PTRN`、67个`CAM`、34个`EXP`；**仅全部533个 `PTRN`**各有4个该节点（总计2132），固定顺序和名称均为 `leg_left`、`leg_right`、`arm_left`、`arm_right`。2132个记录的尾部长度均为24，开头8字节都为 little-endian `u32(0), u32(2)`。以 `alex_act_block` 为例，四个完整尾部若临时按 `u32,u32,float32×4` 显示为：
+
+| Limb | 固定前缀 | 剩余16字节的浮点视图（**仅供比对，非已证实语义**） |
+|---|---:|---:|
+| `leg_left` | `(0, 2)` | `(0.0, 26.0, 26.0, 26.0)` |
+| `leg_right` | `(0, 2)` | `(26.0, 26.0, 0.0, 26.0)` |
+| `arm_left` | `(0, 2)` | `(-1.0, 25.0, 24.0, 27.0)` |
+| `arm_right` | `(0, 2)` | `(-1.0, 32.0, 31.0, 20.0)` |
+
+这四个记录与该动画中四个双通道 group 同名、共现，因而是 TRAN 标定的**有价值线索**；但目前仍不能把24字节中的数值擅自认定为平移 scale、offset 或 bind pose。解码器只无损输出 limb 名、chunk offset 和24字节 hex，等待能跨样本验证的公式。
 
 ## 3. ZLIB blob内部布局（对每个channel，按`0x00121120`给出的`(count, offset)`去blob里读取）
 
