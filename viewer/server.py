@@ -242,18 +242,85 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """
         before = _git_commit()
         try:
-            result = subprocess.run(
-                ["git", "pull", "--ff-only"],
+            branch_out = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=REPO_DIR, capture_output=True, text=True, timeout=5,
+            )
+            current_branch = branch_out.stdout.strip() or None
+        except Exception:  # noqa: BLE001
+            current_branch = None
+
+        def _do_pull():
+            # Explicitly pull from origin/master rather than a bare
+            # `git pull` (which depends on the current branch's configured
+            # upstream/merge remote via `branch.<name>.merge` in .git/config
+            # -- if that's stale, unset, or pointed at the wrong branch
+            # (this repo has both a `main` and a `master` branch upstream,
+            # which has caused exactly this kind of confusion before), a
+            # bare `git pull` can silently report "already up to date"
+            # while origin/master has moved on). Being explicit here makes
+            # self_update's behavior independent of local branch config.
+            return subprocess.run(
+                ["git", "pull", "origin", "master", "--ff-only"],
                 cwd=REPO_DIR, capture_output=True, text=True, timeout=60,
             )
+
+        def _remote_master_sha():
+            # Ground truth for "what commit does origin/master actually
+            # point at right now", independent of any local fetch/tracking
+            # state. Cross-checking against this detects a stale caching
+            # GitHub mirror/proxy (some networks route git through one,
+            # e.g. ghfast.top, instead of github.com directly) that hasn't
+            # picked up a very recent push yet -- in that case `git pull`
+            # can report "already up to date" even though the real origin
+            # has moved on, which is confusing without this cross-check.
+            try:
+                out = subprocess.run(
+                    ["git", "ls-remote", "origin", "refs/heads/master"],
+                    cwd=REPO_DIR, capture_output=True, text=True, timeout=15,
+                )
+                if out.returncode == 0 and out.stdout.strip():
+                    return out.stdout.split()[0][:7]
+            except Exception:  # noqa: BLE001
+                pass
+            return None
+
+        try:
+            result = _do_pull()
         except Exception as e:  # noqa: BLE001
             return self._send_error_json(f"git pull failed to run: {type(e).__name__}: {e}", 500)
 
         after = _git_commit()
+        remote_sha = _remote_master_sha()
+        retried = False
+
+        def _mismatch(local, remote):
+            return bool(local and remote and not local.startswith(remote[:7]) and not remote.startswith(local[:7]))
+
+        # If the pull "succeeded" but local HEAD still doesn't match what
+        # origin/master actually points at, this is very likely a stale
+        # caching mirror/proxy -- wait a moment and retry once before
+        # reporting a possibly-false "up to date".
+        if result.returncode == 0 and _mismatch(after, remote_sha):
+            import time
+            time.sleep(2)
+            try:
+                result = _do_pull()
+                after = _git_commit()
+                remote_sha = _remote_master_sha()
+                retried = True
+            except Exception:  # noqa: BLE001
+                pass
+
         pull_ok = result.returncode == 0
+        mirror_stale = _mismatch(after, remote_sha)
 
         response = {
             "pull_ok": pull_ok,
+            "current_branch": current_branch,
+            "retried_once": retried,
+            "remote_master_sha_short": remote_sha,
+            "mirror_may_be_stale": mirror_stale,
             "git_stdout": result.stdout.strip(),
             "git_stderr": result.stderr.strip(),
             "commit_before": before,
