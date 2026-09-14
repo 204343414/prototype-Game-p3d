@@ -50,6 +50,15 @@ try:
 except ImportError:
     rcf_extract = None
 
+# Content-free, package-wide skeleton/CompositeDrawable census.  It only
+# returns names and structural counts, never vertex, texture, or animation
+# payloads, which makes it suitable for building a user-owned asset ledger.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "inventory"))
+try:
+    import rigged_p3d  # noqa: E402
+except ImportError:
+    rigged_p3d = None
+
 
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -232,6 +241,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_p3d(qs)
         if parsed.path == "/api/rcf_manifest":
             return self._handle_rcf_manifest(qs)
+        if parsed.path == "/api/rcf_rigged_manifest":
+            return self._handle_rcf_rigged_manifest(qs)
         if parsed.path == "/api/rcf_entry":
             return self._handle_rcf_entry(qs)
         if parsed.path == "/api/health":
@@ -664,6 +675,132 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "entries_shown": len(entries_out),
             "entries_truncated": (limit != 0 and (known_count + unknown_count) > limit and not name_filter),
             "entries": entries_out,
+        })
+
+    def _handle_rcf_rigged_manifest(self, qs):
+        """Return a paged, metadata-only census of rigged P3D packages in an RCF.
+
+        Unlike calling /api/rcf_entry once for every package, this opens the
+        Cement archive once per page, then checks each selected .p3d.rz entry
+        server-side.  The response never exposes geometry, texture pixels, or
+        animation keys: it contains only entry metadata, CompositeDrawable and
+        Skeleton names/counts, and PrimitiveGroup shader binding names.
+
+        Query params:
+          path                  required absolute RCF path
+          offset                index in the stable, name-sorted P3D entry list
+          limit                 packages to inspect this page (1..100, default 25)
+          min_compressed_size   optional non-negative byte threshold, default 0
+          include_nonrigged     1 to include structural summaries of P3Ds which
+                                do not qualify as a rigged CompositeDrawable;
+                                default only returns qualifying records.
+
+        A qualifying record has a CompositeDrawable that names a skeleton and
+        directly references at least one type=2 polyskin primitive.  The
+        response separately records whether that named skeleton is present in
+        the same package, rather than inventing cross-package linkage.
+        """
+        if rcf_extract is None:
+            return self._send_error_json("rcf_extract module not available on server", 500)
+        if rigged_p3d is None:
+            return self._send_error_json("rigged_p3d module not available on server", 500)
+
+        path = qs.get("path", [None])[0]
+        if not path:
+            return self._send_error_json("missing ?path=", 400)
+        try:
+            target = self._safe_resolve(path)
+        except PermissionError as e:
+            return self._send_error_json(str(e), 403)
+        if not os.path.isfile(target):
+            return self._send_error_json(f"not a file: {target}", 404)
+
+        try:
+            offset = int(qs.get("offset", ["0"])[0])
+            limit = int(qs.get("limit", ["25"])[0])
+            min_size = int(qs.get("min_compressed_size", ["0"])[0])
+        except ValueError:
+            return self._send_error_json("offset, limit and min_compressed_size must be integers", 400)
+        if offset < 0 or min_size < 0:
+            return self._send_error_json("offset and min_compressed_size must be non-negative", 400)
+        limit = max(1, min(limit, 100))
+        include_nonrigged = qs.get("include_nonrigged", ["0"])[0] == "1"
+
+        try:
+            cement = rcf_extract.CementFile.load(target)
+        except Exception as e:  # noqa: BLE001
+            return self._send_error_json(f"RCF parse error: {type(e).__name__}: {e}", 500)
+
+        eligible = []
+        for entry in cement.entries:
+            metadata = cement.get_metadata(entry.name_hash)
+            name = metadata.name if metadata is not None else None
+            if (name is not None and name.lower().endswith(".p3d.rz")
+                    and entry.size >= min_size):
+                eligible.append((name, entry))
+        eligible.sort(key=lambda item: item[0].casefold())
+        page = eligible[offset:offset + limit]
+
+        records = []
+        nonrigged_count = 0
+        error_count = 0
+        for name, entry in page:
+            try:
+                with open(target, "rb") as handle:
+                    handle.seek(entry.offset)
+                    compressed = handle.read(entry.size)
+                data = rcf_extract.decompress_rz_payload(compressed)
+                scan = rigged_p3d.scan_p3d_bytes(data)
+            except Exception as e:  # noqa: BLE001 - preserve a per-package result
+                error_count += 1
+                if include_nonrigged:
+                    records.append({
+                        "entry_name": name,
+                        "entry_name_hash": f"0x{entry.name_hash:08X}",
+                        "entry_offset": entry.offset,
+                        "entry_size_compressed": entry.size,
+                        "scan_error": f"{type(e).__name__}: {e}",
+                    })
+                continue
+
+            record = {
+                "entry_name": name,
+                "entry_name_hash": f"0x{entry.name_hash:08X}",
+                "entry_offset": entry.offset,
+                "entry_size_compressed": entry.size,
+                "decompressed_size": scan["file_size"],
+                "declared_total_size": scan["declared_total_size"],
+                "chunk_count": scan["chunk_count"],
+                "skeletons": scan["skeletons"],
+                "rigged_composites": scan["rigged_composites"],
+                "polyskin_count": scan["polyskin_count"],
+                "shader_names": scan["shader_names"],
+                "parse_warnings": scan["parse_warnings"],
+            }
+            if scan["rigged_composites"]:
+                records.append(record)
+            else:
+                nonrigged_count += 1
+                if include_nonrigged:
+                    records.append(record)
+
+        self._send_json({
+            "path": target,
+            "scope": "known-name .p3d.rz entries only; structural headers only; no asset payloads",
+            "qualification": (
+                "CompositeDrawable with named skeleton and at least one direct "
+                "type=2 polyskin primitive"),
+            "min_compressed_size": min_size,
+            "eligible_entry_count": len(eligible),
+            "entry_offset": offset,
+            "requested_limit": limit,
+            "scanned_entry_count": len(page),
+            "next_entry_offset": offset + len(page),
+            "complete": offset + len(page) >= len(eligible),
+            "returned_record_count": len(records),
+            "nonrigged_count_in_page": nonrigged_count,
+            "scan_error_count_in_page": error_count,
+            "records": records,
         })
 
     def _handle_rcf_entry(self, qs):

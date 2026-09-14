@@ -259,8 +259,52 @@ def main():
         status, body = get(base + f"/api/rcf_entry?path={rcf2_path}&name=" + urllib.parse.quote(r"\art\nope.p3d"))
         assert status == 404, (status, body)
 
+        # --- /api/rcf_rigged_manifest ---
+        # This is deliberately a structural-only endpoint.  Build one tiny
+        # rigged package and one valid but unrigged P3D, then confirm only the
+        # former qualifies without any mesh/texture bytes leaving the server.
+        def p3d_string(value):
+            raw = value.encode("utf-8") + b"\0"
+            return bytes([len(raw)]) + raw
+
+        skeleton_payload = p3d_string("test_skeleton") + _struct.pack("<IIII", 1, 67, 13, 4)
+        skeleton_chunk = build_chunk(0x00023000, skeleton_payload)
+        ref_payload = (_struct.pack("<II", 1, 0) + p3d_string("test_body")
+                       + _struct.pack("<II", 2, 0))
+        reference_chunk = build_chunk(0x00123001, ref_payload)
+        composite_payload = (_struct.pack("<I", 1) + p3d_string("test_soldier")
+                             + p3d_string("test_skeleton") + _struct.pack("<I", 1))
+        composite_chunk = build_chunk(0x00123000, composite_payload, reference_chunk)
+        primitive_group = build_chunk(0x00010020, _struct.pack("<I", 1) + p3d_string("test_shader"))
+        rigged_p3d = build_chunk(0xFF443350, b"", skeleton_chunk + composite_chunk + primitive_group)
+        plain_p3d = build_chunk(0xFF443350, b"", build_chunk(0x00019001, b"texture"))
+        rcf3_path = os.path.join(tmpdir, "synthetic_rigged.rcf")
+        build_synthetic_rcf_fixed(rcf3_path, [
+            (r"\art\props\plain.p3d.rz", make_rz_payload(plain_p3d)),
+            (r"\art\characters\soldier.p3d.rz", make_rz_payload(rigged_p3d)),
+        ])
+        status, body = get(base + f"/api/rcf_rigged_manifest?path={rcf3_path}&limit=10")
+        assert status == 200, (status, body)
+        data = json.loads(body)
+        assert data["eligible_entry_count"] == 2, data
+        assert data["scanned_entry_count"] == 2, data
+        assert data["complete"] is True, data
+        assert data["returned_record_count"] == 1, data
+        candidate = data["records"][0]
+        assert candidate["entry_name"] == r"\art\characters\soldier.p3d.rz", candidate
+        assert candidate["skeletons"][0]["joint_count"] == 67, candidate
+        assert candidate["rigged_composites"][0]["name"] == "test_soldier", candidate
+        assert candidate["rigged_composites"][0]["skeleton_is_local"] is True, candidate
+        assert candidate["shader_names"] == ["test_shader"], candidate
+
+        status, body = get(base + f"/api/rcf_rigged_manifest?path={rcf3_path}&limit=10&include_nonrigged=1")
+        assert status == 200, (status, body)
+        data = json.loads(body)
+        assert data["returned_record_count"] == 2, data
+        assert data["nonrigged_count_in_page"] == 1, data
+
         print("OK: viewer/server.py smoke test passed "
-              "(browse + file + hexdump + p3d + rcf_manifest + rcf_entry APIs, "
+              "(browse + file + hexdump + p3d + rcf_manifest + rcf_rigged_manifest + rcf_entry APIs, "
               "root confinement, static frontend)")
     finally:
         proc.terminate()
