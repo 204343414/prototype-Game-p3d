@@ -79,6 +79,12 @@
 
 这说明两个 Cell 的所有当前 core PrimitiveGroup 都能在**同一 Cell**找到其 NewShader 定义，且至少部分字符串值可立即匹配同 Cell Texture 定义；剩余候选很可能需要由共享 archive / 全局资源层解析，但在实际 DDS 解码和渲染前不能宣称它们就是缺失贴图。已观察到 `zCBV2_*building*`、`*road*`、`*sidewalk*` 等 template 文本和 `color`、`normal`、`grime` 等参数文本，它们为下一步选择代表性 shader/texture 回归样本提供依据，不是 UV、normal 或光照公式的结论。
 
+### 第一个贴图 UV 渲染候选对照（结论待目检）
+
+依赖台账已将 Cell 3 的 `mergedDrawableRootCastShadow` 第 18 个 PrimitiveGroup 的 shader `0c63a8bb069ec0cad9034c69bc28991f` 对应到同 Cell NewShader 的 `color=manhattan_Cell_3_02_plane0` 字符串候选。该 Texture 的嵌入 DDS header 可严格读为 `256×1024`、11 mip、`DXT5`，且带 count-prefixed DDS framing；私有环境已用 DXT5 decoder 成功解码出图像，未将 DDS/PNG 写入仓库。
+
+为避免根据 hash 猜 UV，`tools/world/render_static_uv_candidates.py` 对这个已通过严格三角检查的 group（25,509 顶点、10,704 triangles、68-byte layout）生成了左右并列的私有 WebGL 诊断页：左边读取 `0x00364509 @ offset 24`，右边读取 `0x0036450A @ offset 32`，两者都直接使用文件中的 float2，默认**不**翻转 V；页面只提供一个显式的 V→1−V 对照开关。此时只能确认两组值均为有限 float2（前者范围约 U `-5.000..5.001`、V `0..0.172`；后者 U `-8.993..13.501`、V `0..0.688`），不能据此自动命名 UV0/UV1。需要在该实际渲染页上目检哪一边给出正常的门窗/立面贴图关系，或是否两边都不正确；在获得该证据前不扩大 UV 规则。
+
 ### `art.rcf` 提供共享美术资源
 
 在 `art.rcf` 内已定位到 290 个 `\\art\\locations\\manhattan...` 相关 P3D 包（压缩总量约 87.5 MiB），包括：
@@ -103,7 +109,7 @@
 
 ## 下一步的可验证工作
 
-1. POSITION + uint16 TriangleList 的 core-only 诊断已在 Cell 2 / 3 通过；现在为 29 种 static layout 建立经贴图渲染验证的 NORMAL、UV/颜色映射，不能从 hash 外观猜名称；
+1. POSITION + uint16 TriangleList 的 core-only 诊断已在 Cell 2 / 3 通过；先目检 Cell 3 group 18 的两个真实 float2/texture 渲染候选，再把有证据的 UV 映射扩到同 declaration layout；NORMAL、颜色和其余 29 layouts 仍不能从 hash 外观猜名称；
 2. 对照 Cell 的 PrimitiveGroup shader 名和 `art.rcf` 的纹理资源，建立只含引用名的材质依赖表；
 3. 用 `mergedDrawableRoot*` 的 2–4 个空间相邻 Cell 做低细节**有材质**拼装预览，检查 seam / 坐标 / UV；不混入 local-space Geometry 或 gameplay `_ft`；
 4. 只有在相邻 Cell 无错位、UV/纹理绑定正常后，才扩到 143 个有合并世界根的非空基础 Cell；
