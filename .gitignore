@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node (viewer)
+node_modules/
+dist/
+
+# extracted game assets - never commit copyrighted game resources
+extracted/
+*.rcf
+*.p3d.bak
+
+# OS
+.DS_Store

@@ -1,0 +1,6 @@
+[submodule "references/gibbed-prototype"]
+	path = references/gibbed-prototype
+	url = https://github.com/gibbed/Gibbed.Prototype.git
+[submodule "references/netp3dlib"]
+	path = references/netp3dlib
+	url = https://github.com/Hampo/NetP3DLib.git
