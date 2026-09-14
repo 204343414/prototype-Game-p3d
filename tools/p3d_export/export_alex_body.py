@@ -817,8 +817,9 @@ def build_glb(out_path, joints, joint_names, world_mats, meshes_data, mesh_textu
         norm_bv = add_buffer_view(m["normals"].tobytes(), target=pygltflib.ARRAY_BUFFER)
         norm_acc = add_accessor(norm_bv, pygltflib.FLOAT, n_vert, "VEC3")
 
+        # 重要修复 (UV bug，同步 export_alex_full.py 的修复，详见其注释):
+        # 不应该翻转V轴，直接使用游戏原始UV即可。
         uv = m["uvs"].copy()
-        uv[:, 1] = 1.0 - uv[:, 1]  # P3D v 轴翻转适配 glTF 约定 (常见DirectX->OpenGL UV翻转)
         uv_bv = add_buffer_view(uv.tobytes(), target=pygltflib.ARRAY_BUFFER)
         uv_acc = add_accessor(uv_bv, pygltflib.FLOAT, n_vert, "VEC2")
 

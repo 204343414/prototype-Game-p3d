@@ -868,8 +868,16 @@ def build_glb(out_path, joints, joint_names, world_mats, meshes_data, mesh_textu
         norm_bv = add_buffer_view(m["normals"].tobytes(), target=pygltflib.ARRAY_BUFFER)
         norm_acc = add_accessor(norm_bv, pygltflib.FLOAT, n_vert, "VEC3")
 
+        # 重要修复 (UV bug，用户实测反馈 + 预览页UV调试面板定位): 之前这里做了
+        # "uv[:,1] = 1.0 - uv[:,1]" 的V轴翻转，当时是凭"DirectX->OpenGL习惯"的
+        # 猜测加的，并没有真正验证过。用户用预览页的UV调试面板(旋转/镜像按钮)
+        # 现场调出正确效果时的参数是 rot=180° flipU=是 flipV=否；用three.js
+        # 真实的 texture.matrix 反推这组参数的等价采样公式是
+        # u_final=u_exported, v_final=1-v_exported。由于 v_exported 本身已经是
+        # "1-v_raw"(旧代码翻转过一次)，代入换算得 v_final = 1-(1-v_raw) = v_raw，
+        # 即两次翻转互相抵消——说明正确做法是**完全不翻转V轴，直接使用游戏原始
+        # UV**。已删除这行错误的翻转。
         uv = m["uvs"].copy()
-        uv[:, 1] = 1.0 - uv[:, 1]  # P3D v 轴翻转适配 glTF 约定 (常见DirectX->OpenGL UV翻转)
         uv_bv = add_buffer_view(uv.tobytes(), target=pygltflib.ARRAY_BUFFER)
         uv_acc = add_accessor(uv_bv, pygltflib.FLOAT, n_vert, "VEC2")
 
