@@ -10,7 +10,7 @@
 > `docs/animation_format.md` 为准**。项目级目标、建设顺序与验收门槛见
 > `docs/PROJECT_TARGETS.md`。
 
-最后更新：2026-09-14（归档文档更新 `2b55a0d` 已合入 GitHub 默认分支 `main`；后续工作以 `main` 为准）
+最后更新：2026-09-14（当前权威版本始终以 `origin/main` 的 `git log -1` 为准；归档文档更新 `2b55a0d`、项目地基 `7b3335b`/`17512f6` 及后续动画 decoder 均在该分支）
 
 ## 项目一句话说明
 
@@ -60,18 +60,18 @@ Blackwatch黑色守望×2、海军陆战队×2、Hunter猎手、Alpha Hunter大�
    遗留bug，见下）。**这个结论目前只在 Alex Mercer 一个角色的5个Skin上
    验证过**，换新角色时理论上应该一致，但强烈建议每个新角色第一次导出
    后都用UV调试面板肉眼复核，不要预设所有shader都一样。
-6. **动画数据组织范式已完整逆向**（`docs/animation_format.md`）：
-   `alex.p3d.rz` 文件本体内嵌了634个具名动画chunk（`alex_act_*`系列，
-   如 `alex_act_death`/`alex_act_block`），**不需要额外找动画文件**。
-   已破解 `Animation`(0x121000) 容器的完整层级（Header/Group_List/Group/
-   Channel）+ Prototype 特有的**帧数据外部化压缩存储**方案（所有帧数据
-   打包进一个 `0x02F00000` ZLIB blob，channel chunk 本身只留类型+
-   count+offset 定位符）+ 3种channel值编码（int16×3压缩四元数/int8×3
-   压缩四元数/int16×3位移向量）。用真实动画样本（`alex_act_block`，53个
-   骨骼group、60个channel）做了逐字节零误差交叉验证。**这套理解目前
-   完全停留在"读懂了、能手动解码"阶段，还没有写代码把某个具体动画的
-   关键帧数据转换成 glTF 的 `animation` 轨道并让模型真的动起来**——
-   这是下一步的第一优先级任务。
+6. **动画数据组织范式已完整逆向，基础 decoder 已落地但尚未接入 glTF**
+   （`docs/animation_format.md`）：`alex.p3d.rz` 文件本体内嵌了634个具名动画
+   chunk（`alex_act_*`系列，如 `alex_act_death`/`alex_act_block`），**不需要
+   额外找动画文件**。已破解 `Animation`(0x121000) 容器的完整层级
+   （Header/Group_List/Group/Channel）+ Prototype 特有的**帧数据外部化压缩
+   存储**方案（所有帧数据打包进一个 `0x02F00000` ZLIB blob，channel chunk
+   本身只留类型+count+offset 定位符）+ 3种channel值编码（int16×3压缩四元数/
+   int8×3压缩四元数/int16×3位移向量）。`tools/p3d_animation/decode_animation.py`
+   已用合成夹具实现并以真实 `alex_act_block` 成功解出53个骨骼group、60个channel；
+   它还验证了真实 blob 最末 values block 可省略对齐尾字节这一细节（见动画文档
+   第3节）。**尚未**把结果转换为 glTF `animation` 轨道，尤其 `TRAN` 位移缩放/
+   参考系尚未标定——这仍是下一步第一优先级。
 
 ### 🐛 本轮修复的两个严重bug（教训写在这里，避免以后重犯同类错误）
 

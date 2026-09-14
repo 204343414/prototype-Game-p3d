@@ -47,27 +47,27 @@
 
 ```
 prototype-p3d-toolkit/
-├── README.md                  <- 本文件，项目总纲 & 状态记录
+├── README.md                  <- 本文件，项目简介与历史背景
+├── HANDOFF.md                 <- 当前技术状态、已验证结论与接手说明
 ├── docs/
+│   ├── PROJECT_TARGETS.md     <- 项目目标、建设顺序与阶段验收门槛
+│   ├── vertex_format.md       <- 网格、Skin、贴图、UV、骨架的已验证格式
+│   ├── animation_format.md    <- Prototype 动画/ZLIB blob 的已验证格式
+│   ├── asset_inventory_schema.md <- RCF 元数据资产台账规范
 │   ├── pure3d-format.md       <- Pure3D 文件/chunk 格式详细笔记
 │   ├── chunk-id-crosswalk.md  <- Prototype <-> Hit&Run chunk ID 对照表
-│   └── roadmap.md             <- 开发路线图与 TODO
+│   └── roadmap.md             <- 早期历史路线图（已过时）
 ├── tools/
-│   ├── rcf_unpack/            <- .rcf (Cement) 归档解包 (Python 移植，自测通过，未测真实文件)
-│   │   └── rcf_extract.py
-│   ├── p3d_parser/            <- 通用 Pure3D chunk 树解析器 (Python)
-│   │   └── inspect_p3d.py     <- 已验证可用：任意 .p3d 文件的 chunk 树 dump 工具
-│   ├── p3d2gltf/              <- p3d (网格/骨骼/动画) -> glTF 转换器（待写）
+│   ├── rcf_unpack/            <- .rcf (Cement) 归档解包（含合成测试）
+│   ├── p3d_parser/            <- 通用 Pure3D chunk 树解析器
+│   ├── p3d_export/            <- Alex 静态 GLB 导出、HTML 预览和截图验证脚本
+│   ├── p3d_animation/         <- Prototype 外部 ZLIB 动画 blob decoder（诊断 JSON）
+│   ├── p3d2gltf/              <- 通用 p3d -> glTF 解析/导出层（动画工程化待建）
 │   └── inventory/             <- 解包目录/RCF 元数据清点工具（含测试）
-│       └── scan_assets.py
-├── viewer/                    <- 本地 web viewer（three.js，浏览器 127.0.0.1 预览，已验证可用）
-│   ├── server.py              <- 纯标准库 HTTP server：目录浏览 + 文件读取 API
-│   └── static/index.html      <- 前端页面：输入路径浏览 + glTF/GLB 预览
-├── run_viewer.sh              <- 一键启动本地查看器（见下方用法）
+├── viewer/                    <- 本地 web viewer（three.js）
+├── run_viewer.sh              <- 一键启动本地查看器
 ├── samples/                   <- 测试/样例资源（不含受版权保护的游戏本体资源）
-└── references/                <- clone 下来的参考实现（仅供阅读/交叉验证，见 LICENSE 各自条款）
-    ├── gibbed-prototype/      <- gibbed/Gibbed.Prototype（Prototype 专用，2012年停更）
-    └── netp3dlib/             <- Hampo/NetP3DLib（Hit&Run 专用，持续维护，格式细节最全）
+└── references/                <- 参考实现（仅供阅读/交叉验证）
 ```
 
 ## 已验证可用
@@ -82,15 +82,20 @@ prototype-p3d-toolkit/
   ```
 
 - `tools/rcf_unpack/rcf_extract.py` — `.rcf` (ATG CORE CEMENT LIBRARY) 归档
-  解包器，从 `gibbed-prototype` 的 C# 源码逐行移植。已用**自造的合成 .rcf
-  文件**验证了文件头解析、Entry/Metadata 表解析、文件名哈希查找、以及
-  `.rz` (zlib) 解压逻辑的自洽性（`test_rcf_extract.py`），但**还没有用真实
-  游戏 `.rcf` 文件测试过** —— 这是当前最需要验证的一环，一旦拿到
-  `art.rcf` 之类的真实文件应优先跑这个。
+  解包器，从 `gibbed-prototype` 的 C# 源码逐行移植。合成 RCF 测试覆盖文件头、
+  Entry/Metadata 表、文件名哈希和 `.rz` (zlib) 解压；随后已通过 viewer 的
+  元数据 API 对用户本地真实 `art.rcf` 验证 RCF 2.1、2,601 条目和 2,601 条可
+  解析 metadata 名称。完整的 payload 解包/导出仍应对每类资源走专门回归测试。
 
   ```bash
   python3 tools/rcf_unpack/rcf_extract.py path/to/art.rcf output_dir/ --rz -v
   ```
+
+- `tools/p3d_animation/decode_animation.py` — 读取 Prototype `Animation`
+  的外部 ZLIB blob 并输出私有诊断 JSON；已用合成夹具和真实
+  `alex_act_block`（53 groups / 60 channels）验证。它保留 TRAN 原始整数值，
+  目前**不**声称已完成 TRAN 标定或 glTF animation 导出；详见
+  `docs/animation_format.md`。
 
 - `tools/inventory/scan_assets.py` — 扫描一个已解包目录，按文件名/路径
   关键词把资源粗分类为角色/武器/形态变身/动画/关卡/音频/贴图/UI等，

@@ -72,7 +72,7 @@
 **目标**：让一个已验证的 Alex 骨骼动作，以正确变换在现有本地预览器中播放。
 
 - [ ] 选定最小样本（建议 `alex_act_block`），将其名称、chunk 位置、骨架和预期行为登记到台账。
-- [ ] 实现 `Animation` 容器、group、channel、ZLIB blob 和 `(count, offset)` 定位符的可测试读取器；严格做范围、对齐和相邻 offset 的零容差校验。
+- [x] 实现 `Animation` 容器、group、channel、ZLIB blob 和 `(count, offset)` 定位符的可测试读取器（`tools/p3d_animation/decode_animation.py`）；严格做范围、对齐和相邻 offset 的零容差校验，并覆盖真实末尾 values block 无 padding 的情况。
 - [ ] 标定 `TRAN` 的缩放系数与参考系：以 `Character_Root` 和 bind pose/local matrix 为锚点，保留计算依据、样本和误差，而非只写一个魔法常数。
 - [ ] 将压缩 ROT/TRAN 解码进通用 `AnimationClip` IR；四元数输出始终规范化，并明确 Pure3D `(W,X,Y,Z)` 到 glTF `(X,Y,Z,W)` 的转换位置。
 - [ ] 在最小 Alex `.glb` 验证产物中写入 glTF animation channels/samplers；缺少 TRAN 的关节保持 bind pose 位移。
@@ -161,8 +161,8 @@
 ## 5. 即刻执行队列（下一会话从这里开始）
 
 1. **先同步并确认工作基线**：`git fetch origin`，以 `origin/main` 为基准；确认 `HANDOFF.md` 与本文件所写结论一致。不要基于过时的 `docs/roadmap.md` 排期。
-2. **完成 Phase 0 的最小地基**：创建资产台账 schema、依赖说明和不含游戏资产的测试夹具/测试入口。
-3. **启动 Phase 1 的 Alex 动画垂直切片**：以 `alex_act_block` 为唯一样本，先对 `TRAN` 标定建立可复查证据，再写 glTF animation 输出。
+2. **继续完成 Phase 0 的剩余地基**：资产台账 schema/生成器已经建立；接下来补齐依赖说明，以及不含游戏资产的解析 IR/测试夹具入口。
+3. **继续 Phase 1 的 Alex 动画垂直切片**：`alex_act_block` 的外部 ZLIB blob decoder 已落地；下一步只聚焦 `TRAN` 标定的可复查证据，再写 glTF animation 输出。
 4. **每完成一个可验证切片**：先更新格式文档/测试，再更新 `HANDOFF.md` 和台账，最后 commit 到 `main`。
 
 在用户重新提供本地 viewer 隧道 URL 前，不假装拥有真实游戏文件；可以先完成与游戏资源无关的解析接口、夹具和测试。

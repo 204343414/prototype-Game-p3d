@@ -33,10 +33,17 @@ Animation (0x00121000)                         version,name,AnimationType(FourCC
 ## 3. ZLIB blob内部布局（对每个channel，按`0x00121120`给出的`(count, offset)`去blob里读取）
 
 ```
-blob[offset : offset + align4(count*2)]                     = frames: uint16[count]     （关键帧所在的帧号，非连续，如(0,1,2,3,5,8,11,...)）
-blob[offset+align4(count*2) : ... + align4(count*V)]         = values: 見下表，V=每个值的字节数，紧跟在frames后面，起始位置同样4字节对齐
+blob[offset : offset + align4(count*2)]                 = frames: uint16[count]     （关键帧所在的帧号，非连续，如(0,1,2,3,5,8,11,...)）
+blob[offset+align4(count*2) : ... + count*V]            = values: 見下表，V=每个值的字节数，紧跟在frames后面，起始位置4字节对齐
 ```
-其中`align4(x) = (x+3) & ~3`（向上取整到4字节边界）。
+其中`align4(x) = (x+3) & ~3`（向上取整到4字节边界）。**相邻 channel 的下一个
+`offset` 使用 `align4(count*V)` 跳过当前 values 尾部的对齐字节；但整个 blob
+最后一个 channel 的 values 尾部可以省略这段无意义 padding。**真实
+`alex_act_block` 最后一个 `arm_right/ROT` 为 `count=53, V=6`：实际数据终点是
+`10352 + align4(53*2) + 53*6 = 10778`，恰为 blob 长度；若错误地对末尾也强行
+`align4(53*6)=320`，会读到不存在的 2 字节（10780）。解析器应对所有非末尾
+channel 严格要求对齐后的下一个 offset，对最终 channel 则以未填充的实际 value
+字节终点为准。
 
 ### 已确认的3种channel值编码：
 
@@ -50,7 +57,7 @@ blob[offset+align4(count*2) : ... + align4(count*V)]         = values: 見下表
 
 - `Animation_Header.NumGroups`(53) = `Animation_Group_List`实际子节点数(53) ✓
 - `0x00121008`直方图统计的3种类型计数（26/26/8）= 逐个Animation_Group实际枚举出的channel类型计数总和（26/26/8）✓
-- 相邻channel的`(count,offset)`可以精确预测下一个channel的offset：`next_offset = offset + align4(count*2) + align4(count*V)`，在全部53个group、60个channel上验证零误差 ✓
+- 相邻 channel 的`(count,offset)`可精确预测下一个 channel 的 offset：`next_offset = offset + align4(count*2) + align4(count*V)`，对全部59个“有后继”的 channel 零误差 ✓；最后一个 channel 允许省略 values 的无意义尾部 padding（见第3节） ✓
 - 骨骼名（`Pelvis`/`Hip_L`/`Knee_L`/`Ankle_L`/`Ball_L`/`Spine_1`/`Spine_2`/`Spine_3`/`Clavicle_L`/`Shoulder_L`/`Elbow_L`/`Wrist_L`/`Index_Base_L`...等）与`alex_reg_body_skeleton`里已解析的67关节骨架的关节名完全对应 ✓
 
 ## 5. 与netp3dlib标准定义的差异总结
@@ -65,3 +72,20 @@ netp3dlib（面向未压缩/内联式Animation格式）里`Animation_Group`直�
 - `0x00121119`用作TRAN时的具体缩放系数（bind pose绝对坐标 vs 相对父骨骼偏移，需要用实际骨骼局部矩阵对照校准）尚未标定，应用动画到glTF前必须先解决。
 - `CAM`(摄像机)类型的Animation结构未单独验证（推测与骨骼动画共用同一套group/channel机制，只是Animation_Group对应摄像机的位置/朝向/FOV等参数而非骨骼，需要时再抓样本验证）。
 - 插值模式恒为`-1`，暂视为线性插值处理（Cyclic标记决定动画是否循环，可直接从Animation chunk头部读取）。
+
+## 7. 已落地的解码器（仍未接入 glTF）
+
+`tools/p3d_animation/decode_animation.py` 已将本文件第1–5节的格式范式实现为
+可独立调用的 decoder。它可以读取私有本地 `.p3d`，或通过用户自己运行的 viewer
+`/api/rcf_entry?raw=1` 在**进程内存**中取得一个条目，然后输出私有的 JSON 诊断数据。
+工具严格校验 P3D/chunk 边界、ZLIB header 与解压长度、group/channel 数、frames 单调性、
+blob offset/对齐连续性和最终无 padding 尾部规则；`test_decode_animation.py` 使用合成
+P3D 夹具覆盖 int16 ROT、TRAN、ZLIB blob 和末尾 2-byte padding 省略场景。
+
+以真实 `alex_act_block` 的私有数据运行已成功解出 **53 groups / 60 channels**。TRAN
+在输出中同时保留原始 `int16×3` 值以及仅用于检查范围的 `/32767` 归一化值；该归一化
+值**不是**最终 glTF translation，不能把它当成第6节仍待标定的缩放/参考系结论。
+
+下一步是把 decoder 结果同 Alex bind pose 对照，给 TRAN 建立有证据、可回归的标定，
+然后才增加 glTF animation channels/samplers。生成自真实游戏条目的 `.p3d` 和 JSON
+不可提交进 Git。
