@@ -28,6 +28,14 @@
 
 因此，外部工具能预览“整个曼哈顿”是合理且可复现的目标：它们必须在某个层次上读取了这组 numbered Cell，而不只是导出了 `art.rcf` 中的一两个 `props.p3d`。
 
+### 功能参照截图的交叉验证（不复制第三方工具）
+
+用户于 2026-09-15 提供了一个第三方 Windows P3D viewer 的曼哈顿整图截图。其左侧资源树列出 `manhattan_Cell_N.p3d.rz` / `_ft`，中央是全城场景，右侧可逐 mesh 勾选；控制台可见 `Scene load progress: 260/260`，并报告 `cells=260`、`parsed=260`、`renderable=149`、`empty=111`。
+
+这四个 Cell 统计值与本项目对真实 `cells.rcf` 的独立 metadata census **完全一致**。它是“目标效果可达、基础 Cell 集合选择正确”的外部交叉证据，但不是格式语义的唯一依据，也不复制、反编译或分发该 viewer 的代码/资源。我们自己的预览器需独立验证顶点布局、材质和实例变换。
+
+目标体验可参考其能力而非其界面源码：全城主视窗、文件/Cell 树、每 mesh 或 Cell 的可见性勾选、加载进度/诊断，以及外部贴图解析状态。
+
 ### 基础 Cell 的完整 bounds 普查已完成
 
 `/api/rcf_cell_geometry_manifest` 已对全部 260 个基础 Cell 做了本机、metadata-only 的 Geometry/POSITION census：
