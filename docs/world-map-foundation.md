@@ -87,9 +87,11 @@
 
 workspace 内嵌浏览器无法显示该 WebGL 页时，工具现可同时生成确定性的 CPU/PNG fallback。第二个、信息量更高的回归样本是 Cell 2 的同一 68-byte layout `mergedDrawableRootCastShadow` group 40：24,436 顶点 / 15,837 triangles，shader 的 `color=manhattan_Cell_2_00_plane0` 候选可同 Cell 的 `256×1024` DXT1 Texture 定义匹配。
 
-**渲染回归为否定结果。** 用户目检该 PNG 后明确报告：原始 `0x00364509 @ 24` 一侧是“偏黄的雪花/乱码贴图”，`0x0036450A @ 32` 一侧则是“纯白模型”。因此两者都不能被接受为这个 sampler 的已验证 UV；之前基于图像非均一程度作出的 offset-24 候选推断已撤回。此结果也说明“能把某段 bytes 按 float2 读取”与“能以游戏 shader 的真实方式采样贴图”是不同的证据层级，不能混为一谈。
+这里出现了一个需要明确保留的诊断差异：用户最初观看 **CPU/PNG fallback** 时，报告原始 `0x00364509 @ 24` 一侧像“偏黄的雪花/乱码贴图”，`0x0036450A @ 32` 则像“纯白模型”。因此该 fallback 不能作为 UV 的验收证据；它缺少真正 GPU sampler 的过滤、mip/Lod、透视校正及游戏 shader 处理，只能作为无 WebGL 环境下的粗略可见性工具，不能据此做格式结论。
 
-当前必须停在该 68-byte layout 的失败回归上，先检查 NewShader 未解码参数、可能的 UV transform / multi-stream 关系、TextureDDS 颜色/alpha/format处理及候选 attribute 的实际 element encoding；在得到正常的门窗/立面渲染前，不得将任何 offset 命名为 UV0、UV1 或 primary color coordinate，也不扩大到其余 28 layouts。normal、tangent、vertex color 和完整 shader 公式同样仍未验证。
+随后用户实际打开了 `manhattan_cell_3_group18_uv_candidate_diagnostic.html` 的 **WebGL** 对照页，并确认同一个 68-byte layout 的 Cell 3 group 18 中：左侧原始 `0x00364509 @ 24` 明显比右侧 `0x0036450A @ 32` 的贴图关系更正常。这个用户目检结果恢复了一个受限的、相对性的渲染证据：对当前 `zCBV2_env_building_noglass` + `color=manhattan_Cell_3_02_plane0` 样本，offset 24 是比 offset 32 更可信的 color-sampler 坐标候选。
+
+结论仍严格受限：这不是把 hash 正式命名为 UV0，也没有裁定 V 轴方向、没有证明 Cell 2 group 40 的低清 CPU 图、没有排除 shader 的 transform / multi-stream 处理，更不能自动套给余下 28 layouts。下一步须在 WebGL 中用第二个具有可识别文字的 shader/Texture 样本复现相同相对优势，并继续验证 normal、tangent、vertex color 和完整 shader 公式。
 
 ### `art.rcf` 提供共享美术资源
 
@@ -115,7 +117,7 @@ workspace 内嵌浏览器无法显示该 WebGL 页时，工具现可同时生成
 
 ## 下一步的可验证工作
 
-1. POSITION + uint16 TriangleList 的 core-only 诊断已在 Cell 2 / 3 通过；68-byte declaration 的 offset 24 / 32 贴图渲染回归均失败，不能命名 UV。先解码 NewShader 未覆盖参数、可能的 UV transform / multi-stream 与 TextureDDS 颜色/alpha处理，再用正常的门窗/立面输出确证一个 sampler；其余 28 layouts 仍不能从 hash 外观猜名称；
+1. POSITION + uint16 TriangleList 的 core-only 诊断已在 Cell 2 / 3 通过；用户已在 WebGL 中确认 68-byte declaration 的 offset 24 相对 offset 32 更接近正确 color sampling，但 CPU/PNG fallback 不可作格式验收。先用第二个可识别 shader/Texture 样本复现该相对结果，同时解码 NewShader 未覆盖参数、可能的 UV transform / multi-stream 与 TextureDDS 颜色/alpha处理；其余 28 layouts 仍不能从 hash 外观猜名称；
 2. 对照 Cell 的 PrimitiveGroup shader 名和 `art.rcf` 的纹理资源，建立只含引用名的材质依赖表；
 3. 用 `mergedDrawableRoot*` 的 2–4 个空间相邻 Cell 做低细节**有材质**拼装预览，检查 seam / 坐标 / UV；不混入 local-space Geometry 或 gameplay `_ft`；
 4. 只有在相邻 Cell 无错位、UV/纹理绑定正常后，才扩到 143 个有合并世界根的非空基础 Cell；
