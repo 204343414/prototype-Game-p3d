@@ -43,6 +43,13 @@ try:
 except ImportError:
     inspect_p3d = None
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "rcf_unpack"))
+try:
+    import rcf_extract  # noqa: E402
+except ImportError:
+    rcf_extract = None
+
+
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
@@ -106,6 +113,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_hexdump(qs)
         if parsed.path == "/api/p3d":
             return self._handle_p3d(qs)
+        if parsed.path == "/api/rcf_manifest":
+            return self._handle_rcf_manifest(qs)
         if parsed.path == "/api/health":
             return self._send_json({"ok": True, "root": self.root_dir})
 
@@ -302,6 +311,88 @@ class Handler(http.server.BaseHTTPRequestHandler):
             })
         except Exception as e:  # noqa: BLE001 - surface parse errors to the caller
             return self._send_error_json(f"parse error: {type(e).__name__}: {e}", 500)
+
+    def _handle_rcf_manifest(self, qs):
+        """Parse a local .rcf (Cement archive) file server-side using
+        tools/rcf_unpack/rcf_extract.py's CementFile.load(), WITHOUT
+        extracting/decompressing any entry payloads, and return the header
+        fields + a manifest of entries (name, hash, offset, size, whether
+        metadata matched) as JSON.
+
+        This lets a collaborating AI validate the RCF parser against a
+        real, possibly 100s-of-MB .rcf file without transferring the file
+        itself over the tunnel -- only the resulting small JSON manifest
+        crosses the wire.
+
+        Query params:
+          path        - required, absolute path to a .rcf file
+          limit       - optional, max number of entries to include in the
+                        "entries" list (default 200, use 0 for "all" --
+                        careful, entry_count can be in the thousands)
+          name_filter - optional, case-insensitive substring filter applied
+                        to entry names before limiting (handy for e.g.
+                        name_filter=alex to find a specific character's
+                        files without listing thousands of entries)
+        """
+        if rcf_extract is None:
+            return self._send_error_json("rcf_extract module not available on server", 500)
+
+        path = qs.get("path", [None])[0]
+        if not path:
+            return self._send_error_json("missing ?path=", 400)
+        try:
+            target = self._safe_resolve(path)
+        except PermissionError as e:
+            return self._send_error_json(str(e), 403)
+
+        if not os.path.isfile(target):
+            return self._send_error_json(f"not a file: {target}", 404)
+
+        limit = int(qs.get("limit", ["200"])[0])
+        name_filter = qs.get("name_filter", [None])[0]
+
+        try:
+            cement = rcf_extract.CementFile.load(target)
+        except Exception as e:  # noqa: BLE001
+            return self._send_error_json(f"RCF parse error: {type(e).__name__}: {e}", 500)
+
+        entries_out = []
+        known_count = 0
+        unknown_count = 0
+        for entry in cement.entries:
+            metadata = cement.get_metadata(entry.name_hash)
+            if metadata is not None:
+                known_count += 1
+                name = metadata.name
+            else:
+                unknown_count += 1
+                name = None
+
+            if name_filter and (name is None or name_filter.lower() not in name.lower()):
+                continue
+
+            if limit == 0 or len(entries_out) < limit:
+                entries_out.append({
+                    "name_hash": f"0x{entry.name_hash:08X}",
+                    "name": name,
+                    "offset": entry.offset,
+                    "size": entry.size,
+                })
+
+        self._send_json({
+            "path": target,
+            "file_size": os.path.getsize(target),
+            "endian": "LE" if cement.endian == "<" else "BE",
+            "major_version": cement.major_version,
+            "minor_version": cement.minor_version,
+            "entry_count": len(cement.entries),
+            "metadata_count": len(cement.metadatas),
+            "known_count": known_count,
+            "unknown_count": unknown_count,
+            "entries_shown": len(entries_out),
+            "entries_truncated": (limit != 0 and (known_count + unknown_count) > limit and not name_filter),
+            "entries": entries_out,
+        })
 
     def _handle_static(self, url_path):
         if url_path == "/":

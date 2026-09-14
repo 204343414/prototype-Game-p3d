@@ -25,6 +25,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.join(HERE, "server.py")
 PORT = 8709  # fixed scratch port, unlikely to collide
 
+sys.path.insert(0, os.path.join(HERE, "..", "tools", "rcf_unpack"))
+from test_rcf_extract import build_synthetic_rcf_fixed, make_rz_payload  # noqa: E402
+
 
 def get(url):
     try:
@@ -149,8 +152,41 @@ def main():
         status, body = get(base + "/api/p3d?path=/etc/passwd")
         assert status in (400, 403), (status, body)
 
+        # --- /api/rcf_manifest ---
+        # Build a small synthetic .rcf (Cement archive) using the same
+        # fixture helper as tools/rcf_unpack/test_rcf_extract.py, then ask
+        # the server to parse it purely via rcf_extract.CementFile.load()
+        # and report back header fields + entry manifest as JSON. This is
+        # what lets a remote/real .rcf be validated against the parser
+        # without ever transferring the (often huge) archive itself.
+        rcf_path = os.path.join(tmpdir, "synthetic.rcf")
+        plain_data = b"hello prototype world\x00\x01\x02" * 10
+        rz_inner = b"this is compressed test content " * 50
+        rcf_files = [
+            (r"\art\alex\alex_fig.p3d", plain_data),
+            (r"\art\alex\alex_tod.p3d.rz", make_rz_payload(rz_inner)),
+        ]
+        build_synthetic_rcf_fixed(rcf_path, rcf_files)
+
+        status, body = get(base + f"/api/rcf_manifest?path={rcf_path}")
+        assert status == 200, (status, body)
+        data = json.loads(body)
+        assert data["entry_count"] == 2, data
+        assert data["known_count"] == 2, data
+        assert data["unknown_count"] == 0, data
+        names = sorted(e["name"] for e in data["entries"])
+        assert names == sorted(n for n, _ in rcf_files), names
+
+        status, body = get(base + f"/api/rcf_manifest?path={rcf_path}&name_filter=alex_fig")
+        data = json.loads(body)
+        assert len(data["entries"]) == 1, data
+        assert data["entries"][0]["name"] == r"\art\alex\alex_fig.p3d", data
+
+        status, body = get(base + "/api/rcf_manifest?path=/etc/passwd")
+        assert status in (403, 404, 500), (status, body)
+
         print("OK: viewer/server.py smoke test passed "
-              "(browse + file + hexdump + p3d APIs, root confinement, static frontend)")
+              "(browse + file + hexdump + p3d + rcf_manifest APIs, root confinement, static frontend)")
     finally:
         proc.terminate()
         try:
