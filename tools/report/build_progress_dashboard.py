@@ -146,11 +146,11 @@ button,input,select,textarea{{font:inherit}} button{{cursor:pointer;color:inheri
 </aside>
 <main class="main">
  <section class="page active" id="overview">
-  <header class="top"><div><div class="eyebrow">Current verified foundation</div><h2>不是“导出了多少”，<br>而是“哪些已经可信”。</h2><p>这里是当前角色、动画和全地图考古的状态面板。城市的 core POSITION 与 uint16 三角连接已在 Cell 2 / 3 严格通过；用户已在两个独立 WebGL 样本中确认 68-byte layout 的 `0x00364509 @ 24` 优于 `@ 32` 作为 color sampler coordinate。法线、完整贴图和实例层仍待解码。</p></div><div class="snapshot">SNAPSHOT<br><b id="snapshotTime">—</b><br><span id="snapshotSource">private local census</span></div></header>
+  <header class="top"><div><div class="eyebrow">Archive home · verified boundaries</div><h2>先把已知成果，<br>做成能查、能选、能继续的主页。</h2><p>这里不是“完整地图已导出”的宣传页，而是当前真实证据的总入口：角色候选可筛选和勾选，曼哈顿可查看已扫描的世界 bounds，动画与格式工作按已验证、进行中、归档三种状态明确分开。无法稳定显示的 Cell WebGL 诊断不作为预览承诺。</p></div><div class="snapshot">SNAPSHOT<br><b id="snapshotTime">—</b><br><span id="snapshotSource">private local census</span></div></header>
   <div class="grid-stats" id="stats"></div>
   <div class="two-col">
    <article class="card"><h3>当前里程碑 <small>verified / deliberately limited</small></h3><div class="milestones" id="milestones"></div></article>
-   <article class="card"><h3>地图阶段门 <small>no false full-map claim</small></h3><p><b style="color:var(--cyan)">已确认：</b>260 个基础 Cell、149 个静态可渲染 Cell、111 个 placeholder，与用户提供的第三方 viewer 计数一致；Cell 2 / 3 的 92 个 core group、62,088 个三角形通过 POSITION / uint16 index 严格检查；用户在两个 WebGL 样本中确认 68-byte layout 的 <code>0x00364509 @ 24</code> 是 color sampler coordinate。</p><div class="callout"><b>下一个真实输出：</b>验证同 layout 的 normal / tangent / vertex color 与 shader transform，再谨慎制作 2–4 Cell 的带材质拼接预览；不会将 local-instance 混入。</div></article>
+   <article class="card"><h3>地图阶段门 <small>no false full-map claim</small></h3><p><b style="color:var(--cyan)">已确认：</b>260 个基础 Cell、149 个静态可渲染 Cell、111 个 placeholder，与用户提供的第三方 viewer 计数一致；Cell 2 / 3 的 92 个 core group、62,088 个三角形通过 POSITION / uint16 index 严格检查；用户在两个 WebGL 样本中确认 68-byte layout 的 <code>0x00364509 @ 24</code> 是 color sampler coordinate。</p><div class="callout"><b>本轮归档决定：</b>Cell 2 的合并 WebGL diagnostic 虽已通过结构拼装，但未通过“人能看见一个稳定场景”的验收，现停在证据台账，不再把它作为用户预览入口。若未来获得已知可用的渲染实现或格式证据，再从这里恢复；不会将 local-instance 混入。</div></article>
   </div>
   <div class="two-col">
    <article class="card"><h3>角色物品栏协议 <small>human recognition loop</small></h3><p>已经有 236 个带骨架 P3D 包、491 个 CompositeDrawable 审阅条目。每一项都有稳定 <code>ARC-&lt;hash&gt;-&lt;ordinal&gt;</code>，不靠我猜角色名称。缩略图管线未完成前，卡片只显示结构证据；你勾选后可生成一段可直接发回给我的重点编号。</p></article>
@@ -198,9 +198,9 @@ const milestones=[
  ['done','Cell 2 / 3 core 三角连接','92 个 group、115,388 顶点、62,088 triangles；0 errors','verified'],
  ['done','68-byte layout color coordinate','两个 WebGL 样本：0x00364509 @ 24 优于 @ 32','verified'],
  ['done','68-byte layout surface vectors','三组几何证据：0xC206BCE7 @ 40 normal；0xA4176245 @ 52 tangent','verified'],
- ['live','Cell 2 合并 core material diagnostic','58 groups；8-texture budget 下 7 组已贴图、51 组灰色上下文','active'],
+ ['warn','Cell 2 合并 core material diagnostic','结构拼装已完成；画面未稳定可见，归档而非预览承诺','archived'],
+ ['warn','静态地图 normal / shader transform','等待已知可用的 renderer 线索或更强格式证据后再恢复','archived'],
 
- ['live','静态地图 normal / shader transform','定向光渲染回归，再验证 vertex color、transform 与 multi-stream','active'],
  ['warn','完整 TRAN 动画标定','未验证的 int16 TRAN 不导出为“正确位移”','blocked'],
 ];
 document.getElementById('milestones').innerHTML=milestones.map(([st,title,note,tag])=>`<div class="milestone"><i class="check ${{st==='done'?'done':''}}">✓</i><div><strong>${{title}}</strong><br><span>${{note}}</span></div><em class="tag ${{tag==='active'?'live':tag==='blocked'?'warn':''}}">${{tag}}</em></div>`).join('');
