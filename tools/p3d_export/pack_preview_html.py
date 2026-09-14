@@ -108,8 +108,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="title">UV 调试面板</div>
   <div class="row">
     <button id="uvRotBtn">↻ 旋转90°</button>
-    <button id="uvFlipUBtn">⇋ 水平镜像(U)</button>
-    <button id="uvFlipVBtn">⇵ 垂直镜像(V)</button>
+    <button id="uvFlipUBtn">⇋ 左右镜像(U)</button>
+    <button id="uvFlipVBtn">⇵ 上下镜像(V)</button>
   </div>
   <div class="row">
     <button id="uvResetBtn">重置</button>
