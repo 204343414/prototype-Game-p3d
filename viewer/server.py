@@ -77,6 +77,52 @@ def _git_commit():
 
 
 
+def _parse_type_filter(qs):
+    """Parse an optional &type_filter=0x00123000,0x00123001 query param into
+    a set of ints, or None if not provided. Used to let a caller pull out
+    just the chunk types they care about (e.g. CompositeDrawable/Skeleton)
+    from a huge real .p3d file (tens of thousands of chunks) without paging
+    through the whole flat chunk list.
+    """
+    raw = qs.get("type_filter", [None])[0]
+    if not raw:
+        return None
+    out = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        out.add(int(part, 16) if part.lower().startswith("0x") else int(part, 16))
+    return out
+
+
+def _chunks_to_json(out, payload_preview, type_filter=None, offset=0, limit=None):
+    """Shared post-processing for dump_chunk() output: turn the raw
+    (depth, type_id, header_size, total_size, payload) tuples into the JSON
+    shape used by both /api/p3d and /api/rcf_entry, with optional
+    type-ID filtering and offset/limit paging (both needed for real game
+    files, which can have tens of thousands of chunks).
+    """
+    if type_filter is not None:
+        out = [t for t in out if t[1] in type_filter]
+    total_matching = len(out)
+    if limit is not None:
+        out = out[offset:offset + limit]
+    else:
+        out = out[offset:]
+    chunks = []
+    for depth, type_id, hdr_size, tot_size, payload in out:
+        chunks.append({
+            "depth": depth,
+            "type_id": f"0x{type_id:08X}",
+            "header_size": hdr_size,
+            "total_size": tot_size,
+            "payload_len": len(payload),
+            "payload_hex_preview": payload[:payload_preview].hex(),
+        })
+    return chunks, total_matching
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     root_dir = "/"  # overridden by main() via a subclass factory
 
@@ -371,6 +417,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
           max_depth   - optional, limit recursion depth (default: unlimited)
           payload_preview - optional, how many bytes of each chunk's payload
                        to include as a hex preview (default 32, max 256)
+          type_filter - optional, comma-separated hex chunk type IDs (e.g.
+                       "0x00123000,0x00123001") to only return matching
+                       chunks -- essential for real game files that can
+                       have tens of thousands of chunks total
+          offset/limit - optional paging over the (possibly filtered) flat
+                       chunk list (limit default 500, max 2000; limit=0
+                       means "no limit", use with care on huge files)
         """
         if inspect_p3d is None:
             return self._send_error_json("inspect_p3d module not available on server", 500)
@@ -390,6 +443,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         max_depth = int(max_depth) if max_depth is not None else None
         payload_preview = int(qs.get("payload_preview", ["32"])[0])
         payload_preview = max(0, min(payload_preview, 256))
+        try:
+            type_filter = _parse_type_filter(qs)
+        except ValueError as e:
+            return self._send_error_json(f"bad type_filter: {e}", 400)
+        offset = int(qs.get("offset", ["0"])[0])
+        limit_raw = int(qs.get("limit", ["500"])[0])
+        limit = None if limit_raw == 0 else max(1, min(limit_raw, 2000))
 
         try:
             with open(target, "rb") as f:
@@ -412,24 +472,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
             out = []
             inspect_p3d.dump_chunk(data, 12, total_size, endian, 0, out, max_depth)
-
-            chunks = []
-            for depth, type_id, hdr_size, tot_size, payload in out:
-                chunks.append({
-                    "depth": depth,
-                    "type_id": f"0x{type_id:08X}",
-                    "header_size": hdr_size,
-                    "total_size": tot_size,
-                    "payload_len": len(payload),
-                    "payload_hex_preview": payload[:payload_preview].hex(),
-                })
+            chunks, total_matching = _chunks_to_json(out, payload_preview, type_filter, offset, limit)
 
             self._send_json({
                 "path": target,
                 "file_size": len(data),
                 "endian": "LE" if endian == "<" else "BE",
                 "declared_total_size": total_size,
-                "chunk_count": len(chunks),
+                "chunk_count": total_matching if type_filter is not None else len(out),
+                "total_chunk_count_unfiltered": len(out),
+                "chunks_shown": len(chunks),
                 "chunks": chunks,
             })
         except Exception as e:  # noqa: BLE001 - surface parse errors to the caller
@@ -539,6 +591,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                    chunk tree (handy for saving out a .p3d/.dds/etc to
                    look at locally, or for chaining into other tools)
           max_depth / payload_preview - same meaning as in /api/p3d
+          type_filter / offset / limit - same meaning as in /api/p3d
+                   (essential for the big real character .p3d files,
+                   which can have tens of thousands of chunks total)
         """
         if rcf_extract is None:
             return self._send_error_json("rcf_extract module not available on server", 500)
@@ -609,20 +664,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         max_depth = int(max_depth) if max_depth is not None else None
         payload_preview = int(qs.get("payload_preview", ["32"])[0])
         payload_preview = max(0, min(payload_preview, 256))
+        try:
+            type_filter = _parse_type_filter(qs)
+        except ValueError as e:
+            return self._send_error_json(f"bad type_filter: {e}", 400)
+        offset_p = int(qs.get("offset", ["0"])[0])
+        limit_raw = int(qs.get("limit", ["500"])[0])
+        limit = None if limit_raw == 0 else max(1, min(limit_raw, 2000))
 
         try:
             out = []
             inspect_p3d.dump_chunk(data, 12, total_size, endian, 0, out, max_depth)
-            chunks = []
-            for depth, type_id, hdr_size, tot_size, payload in out:
-                chunks.append({
-                    "depth": depth,
-                    "type_id": f"0x{type_id:08X}",
-                    "header_size": hdr_size,
-                    "total_size": tot_size,
-                    "payload_len": len(payload),
-                    "payload_hex_preview": payload[:payload_preview].hex(),
-                })
+            chunks, total_matching = _chunks_to_json(out, payload_preview, type_filter, offset_p, limit)
         except Exception as e:  # noqa: BLE001
             return self._send_error_json(f"chunk parse error: {type(e).__name__}: {e}", 500)
 
@@ -636,7 +689,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "was_rz_compressed": is_rz,
             "endian": "LE" if endian == "<" else "BE",
             "declared_total_size": total_size,
-            "chunk_count": len(chunks),
+            "chunk_count": total_matching if type_filter is not None else len(out),
+            "total_chunk_count_unfiltered": len(out),
+            "chunks_shown": len(chunks),
             "chunks": chunks,
         })
 

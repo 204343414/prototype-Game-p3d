@@ -153,6 +153,36 @@ def main():
         status, body = get(base + "/api/p3d?path=/etc/passwd")
         assert status in (400, 403), (status, body)
 
+        # --- /api/p3d: type_filter / offset / limit paging ---
+        # Build a slightly bigger synthetic file with several sibling
+        # chunks of two different types, to exercise filtering real game
+        # files down to just the chunk types you care about (needed since
+        # real .p3d files can have tens of thousands of chunks total).
+        many_children = b"".join(
+            build_chunk(0x00121000 if i % 2 == 0 else 0x00019001, f"chunk-{i}".encode())
+            for i in range(10)
+        )
+        multi_root = build_chunk(0xFF443350, b"", many_children)
+        multi_p3dfile = os.path.join(tmpdir, "multi.p3d")
+        with open(multi_p3dfile, "wb") as f:
+            f.write(multi_root)
+
+        status, body = get(base + f"/api/p3d?path={multi_p3dfile}&type_filter=0x00121000")
+        assert status == 200, (status, body)
+        data = json.loads(body)
+        assert data["chunk_count"] == 5, data
+        assert data["total_chunk_count_unfiltered"] == 10, data
+        assert all(c["type_id"] == "0x00121000" for c in data["chunks"]), data
+
+        status, body = get(base + f"/api/p3d?path={multi_p3dfile}&limit=3")
+        data = json.loads(body)
+        assert data["chunks_shown"] == 3, data
+        assert data["chunk_count"] == 10, data  # unfiltered total, not just what's shown
+
+        status, body = get(base + f"/api/p3d?path={multi_p3dfile}&offset=8")
+        data = json.loads(body)
+        assert data["chunks_shown"] == 2, data
+
         # --- /api/rcf_manifest ---
         # Build a small synthetic .rcf (Cement archive) using the same
         # fixture helper as tools/rcf_unpack/test_rcf_extract.py, then ask
