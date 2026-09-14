@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import math
 import os
@@ -35,6 +36,7 @@ SIG_LE_SWAPPED = struct.unpack("<I", struct.pack(">I", SIG_LE))[0]
 GEOMETRY = 0x00010000
 PRIMITIVE_GROUP = 0x00010020
 MEMORY_VERTEX_LIST = 0x00010012
+MEMORY_VERTEX_DESCRIPTION = 0x00010014
 
 
 def _p3d_string(payload: bytes, offset: int = 0) -> tuple[str, int]:
@@ -99,6 +101,26 @@ def _direct_children(records: list[dict[str, Any]], parent_index: int) -> list[d
     return [record for record in records if record["parent"] == parent_index]
 
 
+def _fingerprint_vertex_description(payload: bytes) -> dict[str, Any]:
+    """Summarize a MemoryImageVertexDescription without returning its bytes.
+
+    Prototype map files contain several packed static vertex layouts.  Until
+    the declaration payload is semantically decoded, a SHA-256 fingerprint
+    plus the opaque header fields gives repeatable, content-free grouping
+    evidence.  It must not be confused with a claimed UV/normal offset.
+    """
+    if len(payload) < 12:
+        raise ValueError("MemoryImageVertexDescription header too short")
+    version, param, declared_data_bytes = struct.unpack_from("<III", payload, 0)
+    return {
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "version": version,
+        "param": param,
+        "declared_data_bytes": declared_data_bytes,
+        "descriptor_payload_bytes": len(payload),
+    }
+
+
 def _bounds_from_memory_vertex_list(payload: bytes, vertex_count: int) -> tuple[int, list[float], list[float]]:
     """Report the stride and POSITION bounds for a packed static vertex list.
 
@@ -161,6 +183,7 @@ def scan_static_geometry(data: bytes) -> dict[str, Any]:
     _walk(data, 12, total_size, None, 0, records)
     result_geometries = []
     stride_counts: Counter[int] = Counter()
+    descriptor_fingerprints: dict[str, dict[str, Any]] = {}
     all_mins = []
     all_maxs = []
     warnings = []
@@ -182,10 +205,27 @@ def scan_static_geometry(data: bytes) -> dict[str, Any]:
             except ValueError as exc:
                 warnings.append(f"Geometry {name!r} PrimitiveGroup#{child_index}: {exc}")
                 continue
+            direct_children = _direct_children(records, child_index)
             memory_lists = [
-                candidate for candidate in _direct_children(records, child_index)
+                candidate for candidate in direct_children
                 if candidate["type_id"] == MEMORY_VERTEX_LIST
             ]
+            descriptions = [
+                candidate for candidate in direct_children
+                if candidate["type_id"] == MEMORY_VERTEX_DESCRIPTION
+            ]
+            if len(descriptions) == 1:
+                try:
+                    fingerprint = _fingerprint_vertex_description(descriptions[0]["payload"])
+                    group["vertex_description"] = fingerprint
+                    aggregate = descriptor_fingerprints.setdefault(
+                        fingerprint["sha256"], {**fingerprint, "primitive_group_count": 0, "vertex_strides": set()})
+                    aggregate["primitive_group_count"] += 1
+                except ValueError as exc:
+                    group["vertex_description_status"] = f"unavailable: {exc}"
+            else:
+                group["vertex_description_status"] = (
+                    f"expected one MemoryImageVertexDescription, found {len(descriptions)}")
             if len(memory_lists) != 1:
                 group["position_bounds_status"] = f"expected one MemoryImageVertexList, found {len(memory_lists)}"
                 groups.append(group)
@@ -198,6 +238,8 @@ def scan_static_geometry(data: bytes) -> dict[str, Any]:
                 group["position_max"] = maximum
                 group["position_bounds_status"] = "ok"
                 stride_counts[stride] += 1
+                if "vertex_description" in group:
+                    descriptor_fingerprints[group["vertex_description"]["sha256"]]["vertex_strides"].add(stride)
                 all_mins.append(minimum)
                 all_maxs.append(maximum)
             except ValueError as exc:
@@ -213,6 +255,13 @@ def scan_static_geometry(data: bytes) -> dict[str, Any]:
         mins = maxs = None
         world_bounds_status = "no POSITION-compatible memory-image groups"
 
+    fingerprint_summary = []
+    for fingerprint in descriptor_fingerprints.values():
+        item = dict(fingerprint)
+        item["vertex_strides"] = sorted(item["vertex_strides"])
+        fingerprint_summary.append(item)
+    fingerprint_summary.sort(key=lambda item: item["sha256"])
+
     return {
         "format": "Pure3D",
         "endian": endian,
@@ -222,6 +271,7 @@ def scan_static_geometry(data: bytes) -> dict[str, Any]:
         "geometry_count": len(result_geometries),
         "position_group_count": sum(stride_counts.values()),
         "vertex_stride_counts": {str(key): value for key, value in sorted(stride_counts.items())},
+        "vertex_description_fingerprints": fingerprint_summary,
         "world_position_bounds_status": world_bounds_status,
         "world_position_min": mins,
         "world_position_max": maxs,

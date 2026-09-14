@@ -900,6 +900,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "geometry_count": scan["geometry_count"],
                     "position_group_count": scan["position_group_count"],
                     "vertex_stride_counts": scan["vertex_stride_counts"],
+                    "vertex_description_fingerprints": scan["vertex_description_fingerprints"],
                     "world_position_bounds_status": scan["world_position_bounds_status"],
                     "world_position_min": scan["world_position_min"],
                     "world_position_max": scan["world_position_max"],
