@@ -343,6 +343,121 @@ uint32            skeleton_joint_id    # 实测恒为 0，推测是"此部位挂
   Dark Angel 文档提到的 `Bundle`/`Object` 概念），以及贴图/材质引用的挂接点，
   仍是本文档"待解码"清单的后续目标。
 
+## 8c. 材质/贴图关联 —— Texture (0x00019000/0x00019006) + NewShader (0x00011015)
+    + 参数子chunk (0x00011016/17/18/20)，已完整解码并链路闭环验证
+
+这块解决了"完整角色"最后一块拼图：怎么从一个 PrimitiveGroup 找到它实际
+贴的图。链路是 `PrimitiveGroup.shader_name` → 同名 `NewShader` chunk →
+其子节点里的贴图/数值参数 → 贴图参数值就是贴图资源名，可直接去同一 p3d
+文件里按名字找到对应的 `Texture` chunk（贴图像素数据在其子节点里，见下）。
+
+### 8c.1 Texture (type_id = 0x00019000) —— 通用P3D标准贴图头，字段来自 netp3dlib `TextureChunk.cs`
+
+```
+StringAlignedU8  name             # 贴图文件名，如 "alex_body_dm.dds"
+uint32           version          # 实测恒为 14000
+uint32           width            # 像素宽，实测均为2的幂（512/128/256等）
+uint32           height           # 像素高
+uint32           bpp              # 实测恒为 8（bits per pixel 的某种编码，非传统意义"8bpp"，
+                                    # 因为实际是压缩纹理，可能是"每通道位数"或版本相关的固定值）
+uint32           alpha_depth      # 8 = 有独立alpha通道（法线贴图/带透明通道贴图），1 = 无
+uint32           num_mipmaps      # 实测恒为 1（可能引擎运行时自动生成mipmap，或没有预生成）
+uint32           texture_type     # 枚举，实测恒为 0 = RGB（真实压缩格式在子节点 0x00019006 里）
+uint32           usage_hint       # 枚举，实测恒为 0 = Static
+uint32           priority         # 实测恒为 0
+```
+（8个样本100%无余数解析验证，涵盖身体/头部/技能特效贴图。样本详见下表。）
+
+### 8c.2 Texture 的子节点 0x00019006 (TextureDDS) + 0x00019002 (Image_Data)
+    —— 已完整验证，可直接拼出合法 .dds 文件
+
+`0x00019006`(TextureDDS，来自 gibbed-prototype 的 `TextureDDS.cs`) 是
+Prototype 专用的 DDS 元数据子节点，紧跟在 0x00019000 之后（depth+1），
+给出真实的压缩格式；它自己的子节点 `0x00019002`(Image_Data，
+`NetP3DLib.ChunkIdentifier` 命名，等价 gibbed 库的 `TextureData`) 的
+payload **就是裸 DXT 压缩字节流本体**（无额外头部，payload_len 即数据
+长度，实测 512x512 DXT1贴图约174908字节，与`512*512/2`的DXT1理论大小
+量级吻合，还含mipmap链）。2个样本100%验证通过：
+
+```
+0x00019006 字段（紧跟 chunk 头部之后）：
+StringAlignedU8  name             # 与父 Texture 同名，如 "alex_body_dm.dds"
+uint32           version          # 实测恒为 1（注意与父 Texture.version=14000 不同，各自独立编号）
+uint32           width
+uint32           height
+uint32           unknown4         # 实测恒为 8
+uint32           unknown5         # 实测取值 1 或 8——观察到与父 Texture.alpha_depth 完全一致
+                                    # （1=无独立alpha如_dm漫反射图, 8=有alpha如_nm/_sm贴图），
+                                    # 推测就是 alpha_depth 在这里的重复记录
+uint32           num_mipmaps      # 实测恒为 10（512→1像素刚好10级，与父 Texture.num_mipmaps=1 不同，
+                                    # 说明父层的num_mipmaps含义可能是"是否含mipmap链"布尔值而非数量，
+                                    # 这里的10才是真实mipmap级数）
+FourCC(4字节ASCII) algorithm      # "DXT1"(0x31545844) / "DXT3" / "DXT5"，实测 _dm→DXT1(无alpha)，
+                                    # _nm(法线贴图)→DXT5(带alpha)，符合行业惯例
+```
+
+**样本**：`alex_body_dm.dds`: 512x512, alpha_depth=1, mipmaps=10, **DXT1**；
+`alex_body_nm.dds`: 512x512, alpha_depth=8, mipmaps=10, **DXT5**。
+
+**拼出合法 .dds 文件的方法**：读取 `0x00019006` 拿到 width/height/mipmaps/
+algorithm，再读其子节点 `0x00019002` 的完整 payload 作为像素数据，按标准
+DDS 文件格式（128字节 `DDS ` magic + `DDS_HEADER` 结构，`dwFourCC` 填
+DXT1/DXT3/DXT5，`dwMipMapCount` 填10，`dwFlags` 加上 `DDSD_MIPMAPCOUNT`）
+拼接文件头再附加像素数据即可直接另存为可被任意图片工具打开的 `.dds` 文件
+——这是贴图导出脚本的完整依据，尚未实际生成文件验证，留待导出脚本阶段执行。
+
+### 8c.3 NewShader (type_id = 0x00011015，**Prototype 游戏专用**，非通用P3D标准 Shader=0x11000)
+
+字段格式（来自 gibbed-prototype 的 `NewShader.cs`，5个样本100%无余数解析验证）：
+```
+StringAlignedU8  name             # 材质哈希名，如 "f9c41998c0ee0204151120620104ac90"
+                                    # ——精确等于 PrimitiveGroup.shader_name 字段的值，这就是关联key
+uint32           unknown2         # 实测恒为 256 (0x100)，用途未知
+StringAlignedU8  shader_template  # 人类可读的着色器模板名，如 "char_alex_cloth"/"char_alex_armor"/"char_alex"
+uint32           unknown4         # 实测取值 10~12，可能是模板变体/版本号
+```
+
+紧随其后（depth+1）的子节点是该材质的参数字典，数量不定：
+- **0x00011016 (纹理参数)**：`StringAlignedU8 param_name + StringAlignedU8 value`
+  ——`value` 为空字符串代表"未设置"，非空则是贴图文件名（对应某个 Texture chunk 的 name）。
+  实测出现的 param_name：`color`（贴图色）、`normal`（法线贴图）、`specular`（高光贴图）、
+  `consume_colour`/`consume_normal`/`consume_refl`（未设置，空值，可能是某种"消耗/覆盖"槽位）。
+- **0x00011017 (浮点参数)**：`StringAlignedU8 param_name + float32 value`
+  ——如 `refl_amounts=0.1`、`rimLightIntensity=1.0`。
+- **0x00011018 (Vector2参数)**：`StringAlignedU8 param_name + float32 x + float32 y`
+  ——如 `spec_params=(0.249,0.656)`、`wrap_flattening=(0.206,0.45)`。
+- **0x00011020 (16字节前，仅4字节payload)**：`uint16 unknown1 + uint16 unknown2`，
+  实测恒为 `(1,1)`，用途未知，紧跟在 NewShader 之后、参数列表之前，可能是"参数数量"或版本标志。
+- **0x0900000A**：payload 是与父 NewShader.name 完全相同的哈希字符串（原始P3D字符串编码），
+  用途未知（可能是某种校验/回显节点），不影响材质关联链路，可先忽略。
+
+### 8c.4 完整链路闭环验证（alex_reg_body_alex_bodyShape 部位）
+
+```
+PrimitiveGroup(139189).shader_name = "f9c41998c0ee0204151120620104ac90"
+        │  （精确字符串匹配，已验证 ==）
+        ▼
+NewShader(global_index=12).name    = "f9c41998c0ee0204151120620104ac90"
+NewShader(global_index=12).shader_template = "char_alex_cloth"
+        │  子节点参数字典（global_index 19~24）
+        ▼
+  color    = "alex_body_dm.dds"   (漫反射贴图 Diffuse Map)
+  normal   = "alex_body_nm.dds"   (法线贴图 Normal Map)
+  specular = "alex_body_sm.dds"   (高光贴图 Specular Map)
+        │  （按贴图名去同一 p3d 文件里找同名 Texture chunk）
+        ▼
+Texture(global_index=0): name="alex_body_dm.dds", 512x512, alpha_depth=1
+Texture(global_index=4): name="alex_body_nm.dds", 512x512, alpha_depth=8 (有alpha，法线贴图常见)
+Texture(global_index=8): name="alex_body_sm.dds", 512x512, alpha_depth=1
+```
+
+**结论：材质关联的完整数据链已打通**——`几何(PrimitiveGroup) → 材质哈希名
+→ NewShader → 贴图参数字典 → 贴图文件名 → Texture chunk → DDS像素数据`。
+命名规律总结（供贴图分类参考）：`_dm`=diffuse/漫反射色贴图，`_nm`=normal/
+法线贴图，`_sm`=specular/高光贴图。导出脚本可以直接把 `color`/`normal`/
+`specular` 三个参数映射为 glTF 的 `baseColorTexture`/`normalTexture`/
+`metallicRoughnessTexture`(或自定义扩展)三个贴图槽位。
+
 ## 9. Skeleton_2 / Skeleton_Joint_2 —— 骨架层级与静止姿势矩阵，已完整解码并验证
 
 Alex 用的是"2"版本骨架格式（`Skeleton_2 = 0x00023000`,
@@ -447,9 +562,16 @@ world[i] = rest_pose[i] * world[parent[i]]   (i != 0)     # 矩阵乘法顺序�
 - `0x00010017` (Render_Status，4字节)：uint32=1，可能是"是否可见/启用"标志，可先忽略。
 - `Skeleton_Partition` (0x00023002, num_partitions=13个)：用途未知，可能与LOD或蒙皮分组优化有关，
   正常渲染流程理论上可以忽略，优先级低。
-- Skin (0x00010001) 与 CompositeDrawable 的关系：需要搞清楚一个角色完整模型是如何从多个
-  PolySkin部位 + 多个Skeleton + 材质/贴图引用组装起来的高层结构，这是下一步写导出脚本前
-  必须理清的"总装配图"。
+- ~~Skin (0x00010001) 与 CompositeDrawable 的关系~~ **已解码，见第8b节**——
+  `Composite_Drawable_2` + `Composite_Drawable_Primitive` 就是比 Skin 更高一层的"部位组"总装配结构。
+- ~~材质/贴图关联~~ **已解码并链路闭环验证，见第8c节**——
+  `PrimitiveGroup.shader_name → NewShader → 参数字典 → Texture chunk → TextureDDS → Image_Data`。
+  剩余待办：尚未实际生成一个 `.dds` 文件验证像素数据能否被标准工具正确打开
+  （已知格式定义，仅未做"落地生成文件"这一步的实测），留待编写贴图导出脚本时一并完成。
+- **下一步优先级**：几何+骨骼+材质/贴图三条数据链均已打通，"总装配图"意义上
+  的拼图已经完整，理论上已具备编写"Alex Mercer完整角色（含贴图）→glTF"导出
+  脚本的全部前置知识。剩余次要待办（Skeleton_Partition用途、0x0900000A节点
+  用途等）优先级较低，可在编写导出脚本时按需回头补充，不阻塞主线推进。
 
 
 ## 验证方法总结（供后续复用）
