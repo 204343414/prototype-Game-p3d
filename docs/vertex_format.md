@@ -458,6 +458,42 @@ Texture(global_index=8): name="alex_body_sm.dds", 512x512, alpha_depth=1
 `specular` 三个参数映射为 glTF 的 `baseColorTexture`/`normalTexture`/
 `metallicRoughnessTexture`(或自定义扩展)三个贴图槽位。
 
+## 8d. memory_imaged=0 变体：老式"独立 List chunk"顶点存储格式
+    —— 首次在 alex_reg_body_AlexVestShape(外套) 上发现，已完整解析验证
+
+**背景**：第1节的 `PrimitiveGroup.memory_imaged` 字段之前只观察到取值1
+（=顶点数据打包进 `Memory_Image_Vertex_List`，见第2-6节）。写导出脚本
+实测 `alex_reg_body` 组的第三个 Skin（`AlexVestShape`，外套）时才发现
+`memory_imaged=0`，此时顶点各属性被拆分成多个独立的 `xxx_List` chunk，
+是每个属性各占一个 chunk 的"旧式"存储方式（对应 netp3dlib 里
+`OldPrimitiveGroupChunk` 一系的 List chunk 定义），而不是第2-6节的打包格式。
+**两种变体承载的字段语义完全相同，只是物理存储布局不同**，导出脚本需要
+分支处理（已在 `tools/p3d_export/export_alex_body.py` 里实现并验证）。
+
+各 List chunk 均为通用形式 `count(uint32) + count 个定长记录`，已用
+`AlexVestShape`（num_vertices=1268, num_indices=3594, num_matrices=10）
+100%验证：
+
+| type_id | 官方名(netp3dlib) | 记录格式 | 验证结果 |
+|---|---|---|---|
+| `0x00010005` | Position_List | count + count×Vector3 | 1268条，坐标范围y∈[1.04,1.72]（外套覆盖身体上半部分，合理） |
+| `0x00010006` | Normal_List | count + count×Vector3 | 1268条，单位向量 |
+| `0x00010007` | UV_List | count(u32)+**channel(u32)**+count×Vector2 | 1268条，channel=0 |
+| `0x00010008` | Colour_List | count + count×uint32(打包RGBA) | 1268条，全部=0xFFFFFFFF(纯白) |
+| `0x0001000B` | (netp3dlib命名Matrix_List，**实测本模型语义是blend_index**) | count + count×byte[4] | 1268条，取值范围[0,9]，精确等于`< num_matrices=10`，与主格式`blend_index`字段语义完全一致 |
+| `0x0001000C` | Weight_List | count + count×Vector3 | 1268条，即`blend_weight[1..3]`，w0=1-sum，sum∈(0.8,1.0]，与主格式weight语义一致 |
+| `0x0001000A` | Index_List | count + count×**uint32**（注意不是16位！） | 3594个，取值范围[0,1267]=`[0,num_vertices-1]` |
+| `0x0001000D` | Matrix_Palette | 同第5节，无变化 | count=10，与`num_matrices`一致 |
+| `0x00010028` | (未在参考库中命名，实测是Tangent+W) | count + count×Vector4 | 1268条，xyz单位向量，w∈{-1,+1} —— 与主格式`tangent+tangent_w`字段完全对应 |
+
+**结论**：导出脚本需要先读 `PrimitiveGroup.memory_imaged` 字段分支：
+`=1` 时按第2-6节的打包格式解析；`=0` 时改为分别读取上表这些独立 List
+chunk，按顶点序号一一对应组装成同样的顶点属性数组，两条路径最终产出的
+数据结构应完全一致，可以直接复用后续的蒙皮/材质处理逻辑。这次发现在
+本轮编写 `export_alex_body.py` 导出脚本、对 `AlexVestShape` 实测时才浮现，
+说明**同一个角色的不同部位/不同版本资源，存储格式变体不能想当然假设一致，
+每个新部位/新角色都应该先检查 `memory_imaged` 标志再决定解析路径**。
+
 ## 9. Skeleton_2 / Skeleton_Joint_2 —— 骨架层级与静止姿势矩阵，已完整解码并验证
 
 Alex 用的是"2"版本骨架格式（`Skeleton_2 = 0x00023000`,
@@ -568,10 +604,14 @@ world[i] = rest_pose[i] * world[parent[i]]   (i != 0)     # 矩阵乘法顺序�
   `PrimitiveGroup.shader_name → NewShader → 参数字典 → Texture chunk → TextureDDS → Image_Data`。
   剩余待办：尚未实际生成一个 `.dds` 文件验证像素数据能否被标准工具正确打开
   （已知格式定义，仅未做"落地生成文件"这一步的实测），留待编写贴图导出脚本时一并完成。
-- **下一步优先级**：几何+骨骼+材质/贴图三条数据链均已打通，"总装配图"意义上
-  的拼图已经完整，理论上已具备编写"Alex Mercer完整角色（含贴图）→glTF"导出
-  脚本的全部前置知识。剩余次要待办（Skeleton_Partition用途、0x0900000A节点
-  用途等）优先级较低，可在编写导出脚本时按需回头补充，不阻塞主线推进。
+- ~~"下一步优先级"~~ **已完成落地验证**：`tools/p3d_export/export_alex_body.py`
+  已成功把 `alex_reg_body` 组（身体+头+外套三个Skin，共享 `alex_reg_body_skeleton`
+  67根骨骼）完整导出成一个可用的 `.glb` 文件（含蒙皮权重/骨骼层级/baseColor贴图），
+  证明本文档记录的全部格式定义可以直接拼装出合法的 glTF 2.0 二进制文件，
+  不只是"理论上正确"。过程中意外发现并解决了第8d节的"老式独立List格式"
+  分支（外套用的是与身体/头部不同的顶点存储变体）。剩余次要待办
+  （Skeleton_Partition用途、0x0900000A节点用途、normal/specular贴图暂未接入
+  glTF输出等）优先级较低，可按需回头补充，不阻塞主线推进。
 
 
 ## 验证方法总结（供后续复用）

@@ -5,7 +5,7 @@
 > 不需要翻聊天记录。**每完成一个阶段性成果就更新这里，不要拖延。**
 > 详细的字节级格式定义不重复贴在这里，只给"结论 + 指向哪个文件/哪一节"。
 
-最后更新：2026-09-14（对应 git commit `16c5bf1`）
+最后更新：2026-09-14（对应 git commit `69786d4`）
 
 ## 项目一句话说明
 
@@ -28,7 +28,59 @@ Alex Mercer 一个角色能看），之后再考虑"道具栏/角色选择界面
 排版预览页面。**预览渲染在 workspace 的 file viewer 里进行**（不是要求
 搭一个复杂的 web app），如果技术上做不到就明说，交给下一个对话接手。
 
-## 当前状态：格式逆向已经打通全部三条数据链，还没有做出实际的可预览文件
+## 当前状态：Alex Mercer 身体部位组(T-pose) 已经能生成 .glb 并在浏览器里预览成功
+
+**本轮完成的关键里程碑**：
+- `tools/p3d_export/export_alex_body.py`：一次性 Python 脚本，把
+  `alex_reg_body` 部位组（身体+头+外套三个Skin，共享67根骨骼的
+  `alex_reg_body_skeleton`）的顶点/索引/蒙皮权重/骨骼层级/baseColor贴图
+  全部拉取、解析、拼装成一个合法的 `.glb` 文件。已跑通验证成功
+  （生成的 glb 约1.87MB，pygltflib能正常load_binary读回，
+  scenes/nodes/meshes/skins/materials/images数量均符合预期）。
+- 过程中发现`alex_reg_body_AlexVestShape`(外套)用的是**跟身体/头部不同的
+  顶点存储格式**(`memory_imaged=0`，老式"独立List chunk"而非"打包
+  Memory_Image格式")——已完整解析并写进 `docs/vertex_format.md` 第8d节，
+  导出脚本已做分支兼容处理。
+- 贴图管线：用 `texture2ddecoder` 库解压DXT1/DXT5裸数据成RGBA，
+  `Pillow`转码成PNG内嵌进glb（第一版只接入了baseColor贴图，normal/specular
+  贴图的转码逻辑已写好但默认关闭，见脚本 `--with-normal-map` 参数）。
+- 预览方案：workspace 文件预览器**不支持直接渲染 .glb 3D文件**（只支持
+  文本/Markdown/HTML/SVG/图片/音频/视频/PDF/CSV/Office几类）。解法是写了
+  一个**自包含单文件HTML**（`viewer/vendor/three/`里下载好的 three.js r128
+  + GLTFLoader.js + OrbitControls.js 全部内嵌进`<script>`标签，模型数据
+  base64编码内嵌），不依赖任何外部CDN/网络，可以在沙盒`allow-scripts`
+  无网络iframe里正常跑 three.js 渲染。生成脚本见下方"如何重新生成预览"。
+- **重要**：导出的 `.glb`/预览用HTML 因为内嵌了游戏原始贴图数据（版权内容），
+  按 `NOTICE.md` 的规定**不提交进git仓库**（已加入 `.gitignore`：
+  `samples/exported/`、`*.glb`、`*.gltf`），只提交生成它们的 Python 脚本
+  源代码。每次新会话需要预览时，重新跑一次导出脚本+HTML打包脚本即可
+  （不到30秒，见下方命令）。
+
+**如何重新生成预览**（新会话如果 `samples/exported/` 下没有文件，跑这个，
+两个脚本都已存成正式文件，不用现场重写）：
+```bash
+cd /home/user/prototype-p3d-toolkit/tools/p3d_export
+pip install pygltflib numpy pillow texture2ddecoder   # 如果还没装
+
+# 1) 从游戏文件导出 .glb
+python3 export_alex_body.py \
+  --base-url "<用户当前隧道URL>" \
+  --rcf-path "/mnt/hdd/新建文件夹/steamapps/common/Prototype/art.rcf" \
+  --entry-name "\art\alex\alex.p3d.rz" \
+  --out /home/user/prototype-p3d-toolkit/samples/exported/alex_reg_body.glb
+
+# 2) 打包成自包含 HTML 预览页 (three.js全部内嵌，无外部依赖)
+python3 pack_preview_html.py \
+  --glb /home/user/prototype-p3d-toolkit/samples/exported/alex_reg_body.glb \
+  --out /home/user/prototype-p3d-toolkit/samples/exported/alex_reg_body_preview.html \
+  --title "Alex Mercer 身体部位组预览" \
+  --subtitle "alex_reg_body (身体+头部+外套, T/A-pose静止姿势)"
+```
+`pack_preview_html.py` 是通用的（不针对Alex专用），传入任意 `.glb` +
+标题/副标题/相机位置参数即可生成对应预览页，后续做其他角色/"道具栏
+多角色选择页"时可以直接复用这个脚本，不用改。
+
+## 格式逆向状态：三条数据链全部打通（几何/骨骼/材质）
 
 ### 已经 100% 解码并验证过的（可以直接拿来写导出代码，不用再猜）：
 
