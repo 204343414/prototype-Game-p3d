@@ -67,6 +67,24 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     margin-top: 12px; padding: 8px 14px; border-radius: 6px; border: none;
     background: #444; color: #fff; cursor: pointer;
   }}
+  #uvPanel {{
+    position: fixed; bottom: 16px; right: 16px; z-index: 10;
+    background: rgba(20,20,24,0.85); border: 1px solid #444; border-radius: 10px;
+    padding: 12px 14px; color: #eee; font-size: 13px; max-width: 280px;
+  }}
+  #uvPanel .title {{ color: #7ad1ff; font-weight: bold; margin-bottom: 8px; }}
+  #uvPanel .row {{ display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }}
+  #uvPanel button {{
+    padding: 6px 10px; font-size: 13px; border-radius: 6px; border: none;
+    background: #3a3a42; color: #fff; cursor: pointer;
+  }}
+  #uvPanel button:hover {{ background: #52525c; }}
+  #uvPanel button.active {{ background: #2f7de1; }}
+  #uvPanel #uvStatus {{
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid #444;
+    line-height: 1.6; color: #bde; font-family: monospace; font-size: 12px;
+  }}
+  #uvPanel .hint2 {{ color: #999; font-size: 11px; margin-top: 6px; }}
 </style>
 </head>
 <body>
@@ -85,6 +103,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <a id="shotDownload" download="preview_screenshot.png"><button>下载这张截图</button></a>
     <button id="shotClose">关闭</button>
   </div>
+</div>
+<div id="uvPanel">
+  <div class="title">UV 调试面板</div>
+  <div class="row">
+    <button id="uvRotBtn">↻ 旋转90°</button>
+    <button id="uvFlipUBtn">⇋ 水平镜像(U)</button>
+    <button id="uvFlipVBtn">⇵ 垂直镜像(V)</button>
+  </div>
+  <div class="row">
+    <button id="uvResetBtn">重置</button>
+  </div>
+  <div id="uvStatus">rot=0° flipU=否 flipV=否</div>
+  <div class="hint2">调到你觉得贴图正确贴合模型的状态后，把上面这行文字原样告诉我即可。</div>
 </div>
 
 <script>
@@ -145,11 +176,78 @@ scene.add(dir2);
 const grid = new THREE.GridHelper(4, 20, 0x555566, 0x333340);
 scene.add(grid);
 
+// ---- UV 调试面板状态: 所有贴图共用同一套 旋转/水平镜像/垂直镜像 变换 ----
+// 用 three.js Texture 自带的 offset/repeat/rotation/center 做 UV 变换
+// (WebGLRenderer 每帧自动用这几个属性重算 texture.matrix, 不需要手动调用
+// updateMatrix/needsUpdate), 完全不改动几何体的UV数据, 纯预览层面调试用。
+let uvState = {{ rot: 0, flipU: false, flipV: false }};
+const allTextures = [];
+
+function collectTextures(root) {{
+  const seen = new Set();
+  root.traverse((obj) => {{
+    if (obj.isMesh && obj.material) {{
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach((mat) => {{
+        if (mat.map && !seen.has(mat.map.uuid)) {{
+          seen.add(mat.map.uuid);
+          allTextures.push(mat.map);
+        }}
+      }});
+    }}
+  }});
+}}
+
+function applyUVTransform() {{
+  const rotation = uvState.rot * Math.PI / 2;
+  const repeatX = uvState.flipU ? -1 : 1;
+  const repeatY = uvState.flipV ? -1 : 1;
+  const offsetX = uvState.flipU ? 1 : 0;
+  const offsetY = uvState.flipV ? 1 : 0;
+  allTextures.forEach((tex) => {{
+    tex.center.set(0.5, 0.5);
+    tex.rotation = rotation;
+    tex.repeat.set(repeatX, repeatY);
+    tex.offset.set(offsetX, offsetY);
+  }});
+}}
+
+function updateUvStatusText() {{
+  const deg = uvState.rot * 90;
+  document.getElementById('uvStatus').textContent =
+    `rot=${{deg}}° flipU=${{uvState.flipU ? '是' : '否'}} flipV=${{uvState.flipV ? '是' : '否'}}`;
+  document.getElementById('uvFlipUBtn').classList.toggle('active', uvState.flipU);
+  document.getElementById('uvFlipVBtn').classList.toggle('active', uvState.flipV);
+}}
+
+document.getElementById('uvRotBtn').addEventListener('click', () => {{
+  uvState.rot = (uvState.rot + 1) % 4;
+  applyUVTransform();
+  updateUvStatusText();
+}});
+document.getElementById('uvFlipUBtn').addEventListener('click', () => {{
+  uvState.flipU = !uvState.flipU;
+  applyUVTransform();
+  updateUvStatusText();
+}});
+document.getElementById('uvFlipVBtn').addEventListener('click', () => {{
+  uvState.flipV = !uvState.flipV;
+  applyUVTransform();
+  updateUvStatusText();
+}});
+document.getElementById('uvResetBtn').addEventListener('click', () => {{
+  uvState = {{ rot: 0, flipU: false, flipV: false }};
+  applyUVTransform();
+  updateUvStatusText();
+}});
+
 const loader = new THREE.GLTFLoader();
 try {{
   const arrayBuffer = base64ToArrayBuffer(GLB_BASE64);
   loader.parse(arrayBuffer, '', function(gltf) {{
     scene.add(gltf.scene);
+    collectTextures(gltf.scene);
+    applyUVTransform();
     statusEl.textContent = '加载完成 ✓';
     setTimeout(() => {{ statusEl.style.opacity = '0'; statusEl.style.transition = 'opacity 1s'; }}, 3000);
   }}, function(error) {{
