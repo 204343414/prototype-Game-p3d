@@ -85,9 +85,11 @@
 
 为避免根据 hash 猜 UV，`tools/world/render_static_uv_candidates.py` 对这个已通过严格三角检查的 group（25,509 顶点、10,704 triangles、68-byte layout）生成了左右并列的私有 WebGL 诊断页：左边读取 `0x00364509 @ offset 24`，右边读取 `0x0036450A @ offset 32`，两者都直接使用文件中的 float2，默认**不**翻转 V；页面只提供一个显式的 V→1−V 对照开关。两组值均为有限 float2（前者范围约 U `-5.000..5.001`、V `0..0.172`；后者 U `-8.993..13.501`、V `0..0.688`）。
 
-workspace 内嵌浏览器无法显示该 WebGL 页时，工具现可同时生成确定性的 CPU/PNG fallback。第二个、信息量更高的回归样本是 Cell 2 的同一 68-byte layout `mergedDrawableRootCastShadow` group 40：24,436 顶点 / 15,837 triangles，shader 的 `color=manhattan_Cell_2_00_plane0` 候选可同 Cell 的 `256×1024` DXT1 Texture 定义匹配。对同一个解码图像、同一份三角形和同一正交相机，原始 `0x00364509 @ 24` 一侧显示出连续、非均一的立面/构件纹理细节；`0x0036450A @ 32` 一侧则在相同区域呈大块近乎纯色/错误采样。该渲染差异足以把 **`0x00364509 @ offset 24` 定为该 68-byte declaration 的“primary color-texture coordinate”候选**，并排除 offset 32 作为这个 color sampler 的等价替代。
+workspace 内嵌浏览器无法显示该 WebGL 页时，工具现可同时生成确定性的 CPU/PNG fallback。第二个、信息量更高的回归样本是 Cell 2 的同一 68-byte layout `mergedDrawableRootCastShadow` group 40：24,436 顶点 / 15,837 triangles，shader 的 `color=manhattan_Cell_2_00_plane0` 候选可同 Cell 的 `256×1024` DXT1 Texture 定义匹配。
 
-这个结论仍有明确上限：尚未决定该 hash 的通用显示名、没有把 32 命名为第二 UV、没有裁定 V 轴方向，也没有将规则套到其余 28 layouts；normal、tangent、vertex color 和完整 shader 公式也仍需单独回归。
+**渲染回归为否定结果。** 用户目检该 PNG 后明确报告：原始 `0x00364509 @ 24` 一侧是“偏黄的雪花/乱码贴图”，`0x0036450A @ 32` 一侧则是“纯白模型”。因此两者都不能被接受为这个 sampler 的已验证 UV；之前基于图像非均一程度作出的 offset-24 候选推断已撤回。此结果也说明“能把某段 bytes 按 float2 读取”与“能以游戏 shader 的真实方式采样贴图”是不同的证据层级，不能混为一谈。
+
+当前必须停在该 68-byte layout 的失败回归上，先检查 NewShader 未解码参数、可能的 UV transform / multi-stream 关系、TextureDDS 颜色/alpha/format处理及候选 attribute 的实际 element encoding；在得到正常的门窗/立面渲染前，不得将任何 offset 命名为 UV0、UV1 或 primary color coordinate，也不扩大到其余 28 layouts。normal、tangent、vertex color 和完整 shader 公式同样仍未验证。
 
 ### `art.rcf` 提供共享美术资源
 
@@ -113,7 +115,7 @@ workspace 内嵌浏览器无法显示该 WebGL 页时，工具现可同时生成
 
 ## 下一步的可验证工作
 
-1. POSITION + uint16 TriangleList 的 core-only 诊断已在 Cell 2 / 3 通过；68-byte declaration 的 primary color-texture candidate 已在 Cell 2 group 40 获得 `0x00364509 @ 24` 的渲染证据。下一步验证 NORMAL / tangent / vertex color，再只把已验证部分扩到相同 declaration；其余 28 layouts 仍不能从 hash 外观猜名称；
+1. POSITION + uint16 TriangleList 的 core-only 诊断已在 Cell 2 / 3 通过；68-byte declaration 的 offset 24 / 32 贴图渲染回归均失败，不能命名 UV。先解码 NewShader 未覆盖参数、可能的 UV transform / multi-stream 与 TextureDDS 颜色/alpha处理，再用正常的门窗/立面输出确证一个 sampler；其余 28 layouts 仍不能从 hash 外观猜名称；
 2. 对照 Cell 的 PrimitiveGroup shader 名和 `art.rcf` 的纹理资源，建立只含引用名的材质依赖表；
 3. 用 `mergedDrawableRoot*` 的 2–4 个空间相邻 Cell 做低细节**有材质**拼装预览，检查 seam / 坐标 / UV；不混入 local-space Geometry 或 gameplay `_ft`；
 4. 只有在相邻 Cell 无错位、UV/纹理绑定正常后，才扩到 143 个有合并世界根的非空基础 Cell；

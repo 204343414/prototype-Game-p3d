@@ -302,8 +302,21 @@ def _software_uv_comparison_png(mesh: CandidateMesh, texture_png: bytes) -> byte
     except ImportError as exc:  # pragma: no cover - setup branch
         raise RuntimeError("software UV fallback needs numpy and Pillow") from exc
 
-    texture = np.asarray(Image.open(io.BytesIO(texture_png)).convert("RGBA"), dtype=np.uint8)
-    texture_height, texture_width = texture.shape[:2]
+    texture_image = Image.open(io.BytesIO(texture_png)).convert("RGBA")
+    # The initial fallback used nearest base-level texel fetches, which turn a
+    # genuinely repeating facade texture into colored snow under minification.
+    # Build a standard box-filtered mip chain and choose a per-triangle level
+    # from the affine UV screen derivatives, matching the diagnostic intent of
+    # WebGL's mipmapped sampler much more closely (still not a game renderer).
+    mipmaps = [np.asarray(texture_image, dtype=np.uint8)]
+    while mipmaps[-1].shape[0] > 1 or mipmaps[-1].shape[1] > 1:
+        previous = mipmaps[-1]
+        resized = Image.fromarray(previous, mode="RGBA").resize(
+            (max(1, previous.shape[1] // 2), max(1, previous.shape[0] // 2)),
+            Image.Resampling.BOX,
+        )
+        mipmaps.append(np.asarray(resized, dtype=np.uint8))
+    texture_height, texture_width = mipmaps[0].shape[:2]
     positions = np.frombuffer(mesh.positions, dtype="<f4").reshape(-1, 3).astype(np.float64)
     indices = np.frombuffer(mesh.indices, dtype="<u2").reshape(-1, 3)
     center = (positions.min(axis=0) + positions.max(axis=0)) * 0.5
@@ -358,10 +371,24 @@ def _software_uv_comparison_png(mesh: CandidateMesh, texture_png: bytes) -> byte
                 continue
             u = weight0 * uv[ids[0], 0] + weight1 * uv[ids[1], 0] + weight2 * uv[ids[2], 0]
             v = weight0 * uv[ids[0], 1] + weight1 * uv[ids[1], 1] + weight2 * uv[ids[2], 1]
-            tex_x = np.floor(np.mod(u, 1.0) * texture_width).astype(np.int64) % texture_width
-            tex_y = np.floor(np.mod(v, 1.0) * texture_height).astype(np.int64) % texture_height
+            weight0_dx, weight0_dy = (py[1] - py[2]) / denominator, (px[2] - px[1]) / denominator
+            weight1_dx, weight1_dy = (py[2] - py[0]) / denominator, (px[0] - px[2]) / denominator
+            weight2_dx, weight2_dy = -weight0_dx - weight1_dx, -weight0_dy - weight1_dy
+            du_dx = weight0_dx * uv[ids[0], 0] + weight1_dx * uv[ids[1], 0] + weight2_dx * uv[ids[2], 0]
+            dv_dx = weight0_dx * uv[ids[0], 1] + weight1_dx * uv[ids[1], 1] + weight2_dx * uv[ids[2], 1]
+            du_dy = weight0_dy * uv[ids[0], 0] + weight1_dy * uv[ids[1], 0] + weight2_dy * uv[ids[2], 0]
+            dv_dy = weight0_dy * uv[ids[0], 1] + weight1_dy * uv[ids[1], 1] + weight2_dy * uv[ids[2], 1]
+            rho = max(
+                math.hypot(du_dx * texture_width, dv_dx * texture_height),
+                math.hypot(du_dy * texture_width, dv_dy * texture_height),
+            )
+            mip_level = min(len(mipmaps) - 1, max(0, int(math.floor(math.log2(max(rho, 1.0))))))
+            sampled_texture = mipmaps[mip_level]
+            sampled_height, sampled_width = sampled_texture.shape[:2]
+            tex_x = np.floor(np.mod(u, 1.0) * sampled_width).astype(np.int64) % sampled_width
+            tex_y = np.floor(np.mod(v, 1.0) * sampled_height).astype(np.int64) % sampled_height
             local_pixels = pixels[min_y:max_y + 1, min_x:max_x + 1]
-            sampled = texture[tex_y, tex_x]
+            sampled = sampled_texture[tex_y, tex_x].copy()
             # Treat texture alpha as opaque intentionally: alpha/material
             # behavior is not within this UV-only diagnostic's claim.
             sampled[:, :, 3] = 255

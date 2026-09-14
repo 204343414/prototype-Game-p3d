@@ -146,11 +146,11 @@ button,input,select,textarea{{font:inherit}} button{{cursor:pointer;color:inheri
 </aside>
 <main class="main">
  <section class="page active" id="overview">
-  <header class="top"><div><div class="eyebrow">Current verified foundation</div><h2>不是“导出了多少”，<br>而是“哪些已经可信”。</h2><p>这里是当前角色、动画和全地图考古的状态面板。城市的 core POSITION 与 uint16 三角连接已在 Cell 2 / 3 严格通过；68-byte layout 的 primary color-texture 坐标已获渲染对照证据。法线、其余 layouts、完整贴图和实例层仍需回归，绝不伪装成完成。</p></div><div class="snapshot">SNAPSHOT<br><b id="snapshotTime">—</b><br><span id="snapshotSource">private local census</span></div></header>
+  <header class="top"><div><div class="eyebrow">Current verified foundation</div><h2>不是“导出了多少”，<br>而是“哪些已经可信”。</h2><p>这里是当前角色、动画和全地图考古的状态面板。城市的 core POSITION 与 uint16 三角连接已在 Cell 2 / 3 严格通过；但 68-byte layout 的两组 float2 贴图采样回归均失败，UV、法线、完整贴图和实例层仍待解码，绝不伪装成完成。</p></div><div class="snapshot">SNAPSHOT<br><b id="snapshotTime">—</b><br><span id="snapshotSource">private local census</span></div></header>
   <div class="grid-stats" id="stats"></div>
   <div class="two-col">
    <article class="card"><h3>当前里程碑 <small>verified / deliberately limited</small></h3><div class="milestones" id="milestones"></div></article>
-   <article class="card"><h3>地图阶段门 <small>no false full-map claim</small></h3><p><b style="color:var(--cyan)">已确认：</b>260 个基础 Cell、149 个静态可渲染 Cell、111 个 placeholder，与用户提供的第三方 viewer 计数一致；Cell 2 / 3 的 92 个 core group、62,088 个三角形通过 POSITION / uint16 index 严格检查；68-byte layout 的 primary color candidate 已由 A/B 贴图对照定位。</p><div class="callout"><b>下一个真实输出：</b>不是一次性倒出纽约，而是 2–4 个相邻 Cell 的带材质拼接预览。必须先通过接缝、法线和 local-instance 隔离检查。</div></article>
+   <article class="card"><h3>地图阶段门 <small>no false full-map claim</small></h3><p><b style="color:var(--cyan)">已确认：</b>260 个基础 Cell、149 个静态可渲染 Cell、111 个 placeholder，与用户提供的第三方 viewer 计数一致；Cell 2 / 3 的 92 个 core group、62,088 个三角形通过 POSITION / uint16 index 严格检查。<b style="color:var(--gold)">受阻：</b>68-byte layout 的两个 float2 贴图采样均未得到正常结果，尚无已验证 UV。</p><div class="callout"><b>下一个真实输出：</b>先解析 shader / texture transform 与 attribute encoding，再重新做一个正常的单 group 材质回归；在此之前不会假造 2–4 Cell 的带材质预览。</div></article>
   </div>
   <div class="two-col">
    <article class="card"><h3>角色物品栏协议 <small>human recognition loop</small></h3><p>已经有 236 个带骨架 P3D 包、491 个 CompositeDrawable 审阅条目。每一项都有稳定 <code>ARC-&lt;hash&gt;-&lt;ordinal&gt;</code>，不靠我猜角色名称。缩略图管线未完成前，卡片只显示结构证据；你勾选后可生成一段可直接发回给我的重点编号。</p></article>
@@ -196,8 +196,8 @@ const milestones=[
  ['done','角色候选全量普查','2,219 P3D → 491 可审阅 CompositeDrawable','verified'],
  ['done','曼哈顿基础 Cell 普查','260 / 260；149 renderable；111 placeholder','verified'],
  ['done','Cell 2 / 3 core 三角连接','92 个 group、115,388 顶点、62,088 triangles；0 errors','verified'],
- ['done','68-byte layout primary color coordinate','Cell 2 A/B texture regression → 0x00364509 @ 24','verified'],
- ['live','静态地图 normal / remaining layouts','shader 定义已关联；法线、接缝、其余 layouts 待回归','active'],
+ ['warn','68-byte layout color-UV sampling','A: 偏黄乱码；B: 纯白；两者均不接受为 UV','blocked'],
+ ['live','静态地图 shader / texture transform','先解码 UV transform、multi-stream 与 DDS 色彩处理','active'],
  ['warn','完整 TRAN 动画标定','未验证的 int16 TRAN 不导出为“正确位移”','blocked'],
 ];
 document.getElementById('milestones').innerHTML=milestones.map(([st,title,note,tag])=>`<div class="milestone"><i class="check ${{st==='done'?'done':''}}">✓</i><div><strong>${{title}}</strong><br><span>${{note}}</span></div><em class="tag ${{tag==='active'?'live':tag==='blocked'?'warn':''}}">${{tag}}</em></div>`).join('');
