@@ -7,9 +7,10 @@
 >
 > `docs/roadmap.md` 是项目最早期（拿到真实游戏文件之前）写的理论规划，
 > **已经严重过时，不要看它，一切以本文件和 `docs/vertex_format.md`/
-> `docs/animation_format.md` 为准**。
+> `docs/animation_format.md` 为准**。项目级目标、建设顺序与验收门槛见
+> `docs/PROJECT_TARGETS.md`。
 
-最后更新：2026-09-14（对应 git commit `58679cb`，已推送到远程 `master`）
+最后更新：2026-09-14（归档文档更新 `2b55a0d` 已合入 GitHub 默认分支 `main`；后续工作以 `main` 为准）
 
 ## 项目一句话说明
 
@@ -24,8 +25,11 @@ Blackwatch黑色守望×2、海军陆战队×2、Hunter猎手、Alpha Hunter大�
 终极猎手、Elizabeth Greene(E妈)、Cross上校、**Alex Mercer(阿哥，当前模板角色)**、
 各类强化感染僵尸。平民NPC可以不做。**若能顺带预览完整游戏地图会更好**。
 
-策略：先把 Alex Mercer 一个角色的完整流程（解析→绑定→贴图→glTF→预览→动画）
-跑通当模板，再横向复制到其他角色；地图解析器要写得通用。
+策略：Alex 的静态流程（解析→绑定→贴图→glTF→预览）已作为模板跑通；现在先完成
+一个可靠的动画垂直切片，再建立全角色/动画/音效的通用资产台账和解析基础。
+设计可同步调研，但最终的批量模型导出与 VRChat 集成要等展览范围、性能预算和体验
+设计基本收敛后再做。详见 `docs/PROJECT_TARGETS.md`；地图解析仍是一条独立、低优先级
+的通用化路线。
 
 ## 当前状态：Alex Mercer 全身角色（T-pose，贴图+UV已修复正确）预览已成功，动画数据结构已完整逆向但尚未接入 glTF
 
@@ -254,9 +258,13 @@ Prototype/`）下 `art.rcf` 里的全部条目名，找出这些角色对应的�
   失效**——如果新会话开始时这个 URL 连不通，需要请用户重新运行
   `run_viewer.sh --tunnel` 并把新 URL 发过来。
 - 该 API 有 `POST /api/self_update` 端点，能让用户那台机器上跑着的
-  server 自己 `git pull` 到最新 commit（无需用户手动操作）。**每次新
-  会话一开始，应该先调用一次这个端点，确认对方代码是最新的**，用法见
-  `README.md` 及 `viewer/server.py` 里 `_handle_self_update` 的实现。
+  server 自己从 **GitHub 远程默认分支** fast-forward 到最新 commit 并原端口重启。
+  **不要把分支名写死为 `master`**：GitHub 当前只保留默认分支 `main`。新版本
+  `viewer/server.py` 会用 `git ls-remote --symref origin HEAD` 自行解析默认分支。
+  如果远程 server 仍是旧版（旧版硬编码拉取已删除的 `origin/master`），这一次
+  需要用户在本机手动执行 `git fetch origin && git switch main && git pull --ff-only
+  origin main` 后重启 `run_viewer.sh --tunnel`；之后才可以继续安全使用 self-update。
+  每次新会话开始时，先 `GET /api/health` 检查 commit，再按需调用该端点。
 - 关键 API：`GET /api/rcf_entry?path=<rcf路径>&name=<归档内路径>&type_filter=
   0x前缀十六进制&offset=&limit=&payload_preview=`——从 `.rcf` 归档里按名字
   取出条目（自动解压`.rz`），解析成chunk树JSON返回，`payload_preview`最大
@@ -273,24 +281,21 @@ Prototype/`）下 `art.rcf` 里的全部条目名，找出这些角色对应的�
 
 ## 本地开发环境 / Git 相关（有个坑，务必看完）
 
-- assistant 自己有一份独立 git clone 在 `/home/user/prototype-p3d-toolkit`
-  （即当前你正在读这份文件的地方），分支 `master`。
+- assistant 自己有一份独立 git clone 在 `/home/user/prototype-p3d-toolkit`；
+  **GitHub 当前唯一远程分支/默认分支是 `main`**，不要再向已删除的 `master` push。
 - 远程仓库：`git@github.com:204343414/prototype-Game-p3d.git`（SSH方式）。
 - **⚠️ 关键坑：`.git/config` 是workspace快照排除的敏感凭据路径之一
   （连同 `.git/credentials`/`.git-credentials`/`.netrc`），不会跨对话
   持久化！这意味着每次开新会话，`git remote` 配置很可能已经丢失
   （`git push`/`git fetch` 会报 "origin does not appear to be a git
-  repository"）。SSH 私钥本身在 `~/.ssh/id_ed25519_prototype`（这个
-  会持久化，不在排除名单里），但其**文件权限可能被重置成过于宽松**
-  （如`0644`），导致SSH客户端直接拒绝使用它。**新会话如果push失败，
-  按顺序检查**：
-  1. `git remote -v` 看是否为空 —— 如果为空，跑
+  repository"）。新会话的固定检查顺序：
+  1. `git remote -v` 看是否为空；为空则运行
      `git remote add origin git@github.com:204343414/prototype-Game-p3d.git`
-  2. `chmod 600 ~/.ssh/id_ed25519_prototype` 修正私钥权限
-  3. 再 `git fetch origin` / `git push origin master` 试试
-  4. `~/.ssh/config` 应该已经配好了 `Host github.com` 的
-     `IdentityFile ~/.ssh/id_ed25519_prototype`（这个文件也会持久化），
-     不需要重新配置，只要私钥权限对了就行。
+  2. 对项目 SSH 私钥执行 `chmod 600 <私钥路径>`；需要指定身份时使用
+     `GIT_SSH_COMMAND='ssh -i <私钥路径> -o IdentitiesOnly=yes'`。
+  3. `git fetch origin && git switch main && git pull --ff-only origin main`
+  4. 最后用 `git push origin main`。不要假设旧的 SSH config、私钥文件名或
+     本地追踪分支在 workspace 快照之后仍存在。
 - **每次做出格式发现，先写进 `docs/vertex_format.md`/`docs/animation_format.md`
   对应章节，再commit+push，再回来更新这份 `HANDOFF.md`**——顺序不要反，
   两份格式文档才是权威来源，这份文件只是"导航牌"。

@@ -71,6 +71,48 @@ def _git_commit():
         return None
 
 
+def _origin_default_branch():
+    """Return origin's advertised default branch without trusting local config.
+
+    A previous implementation hard-coded ``master``. That makes the remote
+    self-update endpoint fail as soon as a repository's default branch is
+    renamed/deleted (as happened when this project's work was merged to
+    ``main``). ``git ls-remote --symref origin HEAD`` is the remote-side
+    source of truth and works even if local ``origin/HEAD`` is stale.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "ls-remote", "--symref", "origin", "HEAD"],
+            cwd=REPO_DIR, capture_output=True, text=True, timeout=15,
+        )
+        if out.returncode == 0:
+            for line in out.stdout.splitlines():
+                # Expected form: "ref: refs/heads/main\tHEAD"
+                fields = line.split()
+                if len(fields) == 3 and fields[0] == "ref:" and fields[2] == "HEAD":
+                    ref = fields[1]
+                    prefix = "refs/heads/"
+                    if ref.startswith(prefix) and len(ref) > len(prefix):
+                        return ref[len(prefix):]
+    except Exception:  # noqa: BLE001
+        pass
+
+    # A local clone may already know the remote default even if the remote
+    # cannot be queried temporarily. This fallback deliberately does not
+    # guess "master" or "main".
+    try:
+        out = subprocess.run(
+            ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+            cwd=REPO_DIR, capture_output=True, text=True, timeout=5,
+        )
+        ref = out.stdout.strip()
+        if out.returncode == 0 and ref.startswith("origin/") and len(ref) > len("origin/"):
+            return ref[len("origin/"):]
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 
 def _parse_type_filter(qs):
     """Parse an optional &type_filter=0x00123000,0x00123001 query param into
@@ -250,33 +292,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             current_branch = None
 
+        update_branch = _origin_default_branch()
+        if not update_branch:
+            return self._send_error_json(
+                "could not determine origin's default branch; refusing to guess a branch for self-update",
+                500,
+            )
+
         def _do_pull():
-            # Explicitly pull from origin/master rather than a bare
-            # `git pull` (which depends on the current branch's configured
-            # upstream/merge remote via `branch.<name>.merge` in .git/config
-            # -- if that's stale, unset, or pointed at the wrong branch
-            # (this repo has both a `main` and a `master` branch upstream,
-            # which has caused exactly this kind of confusion before), a
-            # bare `git pull` can silently report "already up to date"
-            # while origin/master has moved on). Being explicit here makes
-            # self_update's behavior independent of local branch config.
+            # Be explicit about the branch, but resolve it from the remote's
+            # HEAD instead of relying on local branch.<name>.merge settings.
+            # This supports repositories that use main, master, or another
+            # default branch and still avoids a stale local upstream silently
+            # reporting "already up to date".
             return subprocess.run(
-                ["git", "pull", "origin", "master", "--ff-only"],
+                ["git", "pull", "origin", update_branch, "--ff-only"],
                 cwd=REPO_DIR, capture_output=True, text=True, timeout=60,
             )
 
-        def _remote_master_sha():
-            # Ground truth for "what commit does origin/master actually
-            # point at right now", independent of any local fetch/tracking
-            # state. Cross-checking against this detects a stale caching
-            # GitHub mirror/proxy (some networks route git through one,
-            # e.g. ghfast.top, instead of github.com directly) that hasn't
-            # picked up a very recent push yet -- in that case `git pull`
-            # can report "already up to date" even though the real origin
-            # has moved on, which is confusing without this cross-check.
+        def _remote_branch_sha():
+            # Ground truth for the branch selected above, independent of local
+            # fetch/tracking state. Cross-checking it detects a stale caching
+            # mirror/proxy that has not yet observed a recent push.
             try:
                 out = subprocess.run(
-                    ["git", "ls-remote", "origin", "refs/heads/master"],
+                    ["git", "ls-remote", "origin", f"refs/heads/{update_branch}"],
                     cwd=REPO_DIR, capture_output=True, text=True, timeout=15,
                 )
                 if out.returncode == 0 and out.stdout.strip():
@@ -291,14 +331,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send_error_json(f"git pull failed to run: {type(e).__name__}: {e}", 500)
 
         after = _git_commit()
-        remote_sha = _remote_master_sha()
+        remote_sha = _remote_branch_sha()
         retried = False
 
         def _mismatch(local, remote):
             return bool(local and remote and not local.startswith(remote[:7]) and not remote.startswith(local[:7]))
 
         # If the pull "succeeded" but local HEAD still doesn't match what
-        # origin/master actually points at, this is very likely a stale
+        # selected remote default branch actually points at, this is very likely a stale
         # caching mirror/proxy -- wait a moment and retry once before
         # reporting a possibly-false "up to date".
         if result.returncode == 0 and _mismatch(after, remote_sha):
@@ -307,7 +347,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             try:
                 result = _do_pull()
                 after = _git_commit()
-                remote_sha = _remote_master_sha()
+                remote_sha = _remote_branch_sha()
                 retried = True
             except Exception:  # noqa: BLE001
                 pass
@@ -319,7 +359,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "pull_ok": pull_ok,
             "current_branch": current_branch,
             "retried_once": retried,
-            "remote_master_sha_short": remote_sha,
+            "remote_branch": update_branch,
+            "remote_branch_sha_short": remote_sha,
             "mirror_may_be_stale": mirror_stale,
             "git_stdout": result.stdout.strip(),
             "git_stderr": result.stderr.strip(),

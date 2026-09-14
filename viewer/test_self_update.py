@@ -84,8 +84,11 @@ def main():
     run(["git", "add", "-A"], seed)
     run(["git", "commit", "-q", "-m", "seed commit"], seed)
     run(["git", "init", "-q", "--bare", bare], workdir)
+    run(["git", "branch", "-M", "main"], seed)
     run(["git", "remote", "add", "origin", bare], seed)
-    run(["git", "push", "-q", "origin", "HEAD:master"], seed)
+    run(["git", "push", "-q", "origin", "HEAD:main"], seed)
+    # Simulate the normal GitHub setup where the remote default is main.
+    run(["git", "symbolic-ref", "HEAD", "refs/heads/main"], bare)
 
     run(["git", "clone", "-q", bare, clone], workdir)
     commit_v1 = run(["git", "rev-parse", "--short", "HEAD"], clone).strip()
@@ -127,7 +130,7 @@ def main():
             f.write("hello from v2\n")
         run(["git", "add", "-A"], seed)
         run(["git", "commit", "-q", "-m", "v2: add marker file"], seed)
-        run(["git", "push", "-q", "origin", "HEAD:master"], seed)
+        run(["git", "push", "-q", "origin", "HEAD:main"], seed)
 
         status, body = get(base + "/api/self_update", method="POST")
         assert status == 200, (status, body)
@@ -135,6 +138,7 @@ def main():
         print("self_update response:", json.dumps(data, indent=2))
         assert data["pull_ok"] is True, data
         assert data["changed"] is True, data
+        assert data["remote_branch"] == "main", data
 
         # Poll for the new server to come back up, WHILE continuously
         # checking that run_viewer.sh's own process (the thing responsible

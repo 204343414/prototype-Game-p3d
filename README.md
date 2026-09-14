@@ -18,13 +18,21 @@
 > 把它们做成一套能在 Linux（含 CI、容器、沙盒环境）上直接运行的、
 > 面向 Python + Web 的现代工具链。也欢迎后来的人类或 AI 在这个基础上继续修。
 
+> **当前状态与任务顺序（2026-09-14）**：Alex Mercer 全身静态预览（5 个
+> Skin、骨架、贴图、原始 UV）已经真实渲染验证通过；下一项工程里程碑是让
+> Alex 动画可靠播放，而不是重新排查 UV。完整交接见 [`HANDOFF.md`](./HANDOFF.md)，
+> 项目地基/角色/动画/音效/设计/最终导出的顺序和验收门槛见
+> [`docs/PROJECT_TARGETS.md`](./docs/PROJECT_TARGETS.md)。本文后部保留了一些
+> 项目早期调研记录，不能替代前两份当前文档。
+
 ## 现状 TL;DR（写给下一个接手的人，人类或 AI 都一样）
 
 - 《虐杀原形》使用 Radical Entertainment 自家的 **Pure3D 引擎**的一个变种。
   资源都塞在 `.rcf` 归档里，模型/骨骼/动画/贴图都以 `.p3d` chunk 树的形式存在。
-- 目前**没有**任何项目做到「一键起本地 web 服务器 + 浏览器直接看 Prototype 模型」
-  这个体验（不像 CryEngine 类游戏有类似 Hunt1896PAK 那样的先例）。
-  这正是本项目要填的空白。
+- 本项目已用真实 `alex.p3d.rz` 跑通“从本地归档条目导出带蒙皮/贴图的 GLB，
+  再用自包含 three.js 页面真实预览”的最小闭环。当前重点从静态模型验证转为
+  通用解析地基、骨骼动画、角色普查和音效基础设施；最终 VRChat 导出留到展览
+  设计与性能预算收敛之后。
 - Prototype 官方/社区工具年代久远（2009-2012），全部是 Windows-only 的
   .NET / WinForms+DirectX GUI，且**从未真正解决蒙皮网格+动画的导出问题**
   （参见 `references/gibbed-prototype` 的历史 issue 讨论）。
@@ -149,7 +157,11 @@ prototype-p3d-toolkit/
 
 详见 `docs/2009-3dm-tool-findings.md`（完整反编译发现记录）。
 
-## 还没做 / 需要真实游戏资源才能继续验证
+## 历史未完成项（仅作早期研究记录，勿据此排期）
+
+> ⚠️ 以下内容写于拿到真实游戏文件之前，其中“真实 RCF 未验证”“glTF 待写”等
+> 描述已被后续 Alex 实测成果部分推翻。当前任务请只看 `HANDOFF.md` 与
+> `docs/PROJECT_TARGETS.md`。
 
 1. **压缩支持**：`.rcf` 里大部分 `.p3d` 是 LZR 压缩过的（签名 `P3DZ`）。
    `references/netp3dlib` 里有完整的 LZR 解压 C# 实现，需要移植成 Python
