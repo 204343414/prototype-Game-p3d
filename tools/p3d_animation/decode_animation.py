@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Decode Prototype's external-blob skeletal animation data into JSON.
+"""Decode Prototype's external-ZLIB skeletal animation channel family into JSON.
 
-Prototype does *not* store key-frame arrays inside individual channel chunks.
-Each Animation (0x00121000) owns a ZLIB child (0x02F00000); channel locator
-chunks (0x00121120) point into its decompressed byte blob. This module parses
-that representation into JSON-friendly Python dictionaries while retaining
+Prototype has mixed Animation layouts. This module handles the custom channel
+family whose key-frame arrays live in an Animation-owned ZLIB child
+(0x02F00000) and whose locator chunks (0x00121120) point into its decompressed
+byte blob. Some other, standard-style inline channel types also occur in the
+same game assets and remain intentionally unsupported here. The supported
+external representation is parsed into JSON-friendly Python dictionaries with
 strict byte-boundary validation.
 
 It intentionally stops before glTF export: TRAN scale/reference-frame

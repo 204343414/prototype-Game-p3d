@@ -1,6 +1,6 @@
 # Prototype `Animation` (0x00121000) chunk数据组织范式
 
-> 本文档记录对`alex.p3d.rz`内嵌动画数据的完整逆向结果。**重要结论：Prototype的动画数据格式与`netp3dlib`（面向《辛普森一家：亡命天涯》等Radical早期游戏）定义的标准Pure3D Animation格式不同——Prototype把所有关键帧数值数据打包压缩进一个独立的ZLIB blob（`0x02F00000`），channel chunk本身只存"元数据指针"（类型/插值模式/帧数/blob内offset），不直接内联frames/values数组。** 這是理解Prototype动画数据的关键，务必按下文实现，不要照搬netp3dlib的直读字段方式。
+> 本文档首先记录已完整验证的 **Prototype外部 ZLIB channel family**，但不再把它误称为游戏中唯一的 Animation 布局。`alex.p3d` 的 `PTRN` 动画实际混用两类数据：① 本文重点的自定义压缩通道（`0x00121112` / `0x00121114` / `0x00121119`），其 keyframes 位于独立的`0x02F00000` ZLIB blob，由`0x00121120`给出定位信息；② 标准式内联通道（已观察到`0x00121101`–`0x00121104`）以及尚未解码的内联扩展`0x00121118`。因此，不能把`netp3dlib`的直读字段方式套用到第一类，但可将其作为第二类的格式线索。
 
 ## 1. 顶层发现
 
@@ -77,15 +77,18 @@ channel 严格要求对齐后的下一个 offset，对最终 channel 则以未�
 - 相邻 channel 的`(count,offset)`可精确预测下一个 channel 的 offset：`next_offset = offset + align4(count*2) + align4(count*V)`，对全部59个“有后继”的 channel 零误差 ✓；最后一个 channel 允许省略 values 的无意义尾部 padding（见第3节） ✓
 - 骨骼名（`Pelvis`/`Hip_L`/`Knee_L`/`Ankle_L`/`Ball_L`/`Spine_1`/`Spine_2`/`Spine_3`/`Clavicle_L`/`Shoulder_L`/`Elbow_L`/`Wrist_L`/`Index_Base_L`...等）与`alex_reg_body_skeleton`里已解析的67关节骨架的关节名完全对应 ✓
 
-## 5. 与netp3dlib标准定义的差异总结
+## 5. 与 netp3dlib 标准定义的关系与差异
 
-netp3dlib（面向未压缩/内联式Animation格式）里`Animation_Group`直接包含frames+values内联在channel chunk payload里；而Prototype版本把**同一份数据搬到了外部ZLIB blob**，channel chunk payload瘦身为仅剩"类型标识+count+offset"的定位符（`0x00121120`）。这是Prototype对存储做的自定义压缩优化，编写解析器时必须：
-1. 先定位并解压`0x02F00000` blob（每个Animation chunk恰好1个）。
-2. 遍历`Animation_Group_List`下每个`Animation_Group`，读取其channel节点的类型ID + `0x00121120`给出的`(count,offset)`。
-3. 用上表公式去blob里按offset切片解码，而不是尝试从channel chunk自身payload里找frames/values（那里只有12字节的元数据）。
+netp3dlib（面向标准内联式 Animation 格式）中，`Animation_Group` 的标准 channel 会把 frames + values 直接置于自身 payload；这与 Prototype 中**外部 ZLIB channel family**不同：后者的 channel payload 是类型/参数元数据，`0x00121120`给出`(count, offset)`，关键帧实际在 ZLIB blob。解析该 family 必须：
+1. 先定位并解压`0x02F00000` blob。
+2. 遍历`Animation_Group_List`下每个`Animation_Group`，读取外部-family channel 的类型ID + `0x00121120`给出的`(count,offset)`。
+3. 用上表公式在 blob 内按 offset 切片，不能尝试从这种 channel 自身 payload 中读取 frames/values。
+
+这不是对所有 Prototype channel 的一概而论：对同一份私有 `alex.p3d` 的只读清点，已有标准内联样本：`0x00121101`（33个 group，`LCPH` 参数）、`0x00121102`（228个 group，`TRAN`）、`0x00121103`（14个 group，`TRAN`）、`0x00121104`（35个 group，`TRAN`）；它们都只有`0x00121110`插值子节点、没有`0x00121120` locator，并在自身 payload 携带帧和值。`0x00121118`亦有247个内联样本（主要`TRAN`），其完整编码尚待验证。当前 decoder 只接受上文已验证的外部 family，遇到这些内联类型会有意报出 unsupported，而不会静默误解数据。
 
 ## 6. 尚待验证/待办
 
+- 为标准内联 `0x00121101`–`0x00121104` 添加各自经夹具验证的解码分支；为`0x00121118`确定类型、帧和值编码。完成前，不能声称“所有角色动画”均可导出。
 - `0x00121119`用作TRAN时的具体缩放系数（bind pose绝对坐标 vs 相对父骨骼偏移，需要用实际骨骼局部矩阵对照校准）尚未标定，应用动画到glTF前必须先解决。
 - `CAM`(摄像机)类型的Animation结构未单独验证（推测与骨骼动画共用同一套group/channel机制，只是Animation_Group对应摄像机的位置/朝向/FOV等参数而非骨骼，需要时再抓样本验证）。
 - 插值模式恒为`-1`，暂视为线性插值处理（Cyclic标记决定动画是否循环，可直接从Animation chunk头部读取）。
@@ -96,8 +99,10 @@ netp3dlib（面向未压缩/内联式Animation格式）里`Animation_Group`直�
 可独立调用的 decoder。它可以读取私有本地 `.p3d`，或通过用户自己运行的 viewer
 `/api/rcf_entry?raw=1` 在**进程内存**中取得一个条目，然后输出私有的 JSON 诊断数据。
 工具严格校验 P3D/chunk 边界、ZLIB header 与解压长度、group/channel 数、frames 单调性、
-blob offset/对齐连续性和最终无 padding 尾部规则；`test_decode_animation.py` 使用合成
-P3D 夹具覆盖 int16 ROT、TRAN、ZLIB blob 和末尾 2-byte padding 省略场景。
+blob offset/对齐连续性和最终无 padding 尾部规则；同时会无损记录直系
+`AnimationLimbReference (0x00121401)` 的 limb 名和24字节 opaque 数据。`test_decode_animation.py`
+使用合成 P3D 夹具覆盖 int16 ROT、TRAN、ZLIB blob、limb reference 和末尾2-byte
+padding省略场景。标准内联 channel 的解码是独立待办，当前不应把它们伪装成外部 blob。
 
 以真实 `alex_act_block` 的私有数据运行已成功解出 **53 groups / 60 channels**。TRAN
 在输出中同时保留原始 `int16×3` 值以及仅用于检查范围的 `/32767` 归一化值；该归一化
