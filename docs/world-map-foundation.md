@@ -89,9 +89,11 @@ workspace 内嵌浏览器无法显示该 WebGL 页时，工具现可同时生成
 
 这里出现了一个需要明确保留的诊断差异：用户最初观看 **CPU/PNG fallback** 时，报告原始 `0x00364509 @ 24` 一侧像“偏黄的雪花/乱码贴图”，`0x0036450A @ 32` 则像“纯白模型”。因此该 fallback 不能作为 UV 的验收证据；它缺少真正 GPU sampler 的过滤、mip/Lod、透视校正及游戏 shader 处理，只能作为无 WebGL 环境下的粗略可见性工具，不能据此做格式结论。
 
-随后用户实际打开了 `manhattan_cell_3_group18_uv_candidate_diagnostic.html` 的 **WebGL** 对照页，并确认同一个 68-byte layout 的 Cell 3 group 18 中：左侧原始 `0x00364509 @ 24` 明显比右侧 `0x0036450A @ 32` 的贴图关系更正常。这个用户目检结果恢复了一个受限的、相对性的渲染证据：对当前 `zCBV2_env_building_noglass` + `color=manhattan_Cell_3_02_plane0` 样本，offset 24 是比 offset 32 更可信的 color-sampler 坐标候选。
+随后用户实际打开了 `manhattan_cell_3_group18_uv_candidate_diagnostic.html` 的 **WebGL** 对照页，并确认同一个 68-byte layout 的 Cell 3 group 18 中：左侧原始 `0x00364509 @ 24` 明显比右侧 `0x0036450A @ 32` 的贴图关系更正常。第二个 WebGL 样本 `manhattan_cell_2_group30_uv_candidate_diagnostic.html` 使用不同的 Cell、PrimitiveGroup 和 DXT5 texture；用户再次报告左侧呈现有材质的石质外观，而右侧只是灰白纯色。两次独立的用户目检均给出相同方向，因此现在可以把 **`0x00364509 @ offset 24` 确认为这个 68-byte declaration 上、当前 `color` sampler 的 primary coordinate**，并排除 offset 32 是其等价 primary color coordinate。
 
-结论仍严格受限：这不是把 hash 正式命名为 UV0，也没有裁定 V 轴方向、没有证明 Cell 2 group 40 的低清 CPU 图、没有排除 shader 的 transform / multi-stream 处理，更不能自动套给余下 28 layouts。下一步须在 WebGL 中用第二个具有可识别文字的 shader/Texture 样本复现相同相对优势，并继续验证 normal、tangent、vertex color 和完整 shader 公式。
+对同一 68-byte declaration，新增的 `tools/world/probe_static_surface_vectors.py` 也在三个真实 group（Cell 2 group 30、Cell 2 group 40、Cell 3 group 18）测得一致的几何向量关系：`0xC206BCE7 @ 40` 的单位 float3 与三角面法线平均绝对 dot 为 `0.999444`、`0.992478`、`0.999998`（对应的 |dot|≥0.9 比例为 100%、99.981%、100%）；`0xA4176245 @ 52` 的 float3 均为单位向量、与上述向量的顶点 dot 近乎 0，并在 offset 64 有仅为 `-1/+1` 的第四分量。这是很强的 **normal-vector / tangent-vector 结构证据**，但还不是完整的游戏 shader 或 normal-map 渲染验证。
+
+结论仍严格受限：这不是把 hash 通用命名为 UV0，也没有裁定 V 轴方向、没有证明 Cell 2 group 40 的低清 CPU 图、没有排除 shader 的 transform / multi-stream 处理，更不能自动套给余下 28 layouts。这里的“石质/有材质”只说明采样与纯灰失败候选存在可复现区别，不据此断言具体纹理内容或完整游戏 shader 外观。下一步以这个有几何证据的 normal candidate 做定向光渲染回归，并继续检查 vertex color 与完整 shader 公式，然后才将该规则谨慎用于同 declaration 的少量 group。
 
 ### `art.rcf` 提供共享美术资源
 
@@ -117,7 +119,7 @@ workspace 内嵌浏览器无法显示该 WebGL 页时，工具现可同时生成
 
 ## 下一步的可验证工作
 
-1. POSITION + uint16 TriangleList 的 core-only 诊断已在 Cell 2 / 3 通过；用户已在 WebGL 中确认 68-byte declaration 的 offset 24 相对 offset 32 更接近正确 color sampling，但 CPU/PNG fallback 不可作格式验收。先用第二个可识别 shader/Texture 样本复现该相对结果，同时解码 NewShader 未覆盖参数、可能的 UV transform / multi-stream 与 TextureDDS 颜色/alpha处理；其余 28 layouts 仍不能从 hash 外观猜名称；
+1. POSITION + uint16 TriangleList 的 core-only 诊断已在 Cell 2 / 3 通过；两个 WebGL 样本均由用户确认 68-byte declaration 的 `0x00364509 @ 24` 优于 `@ 32` 作为 `color` sampler coordinate，CPU/PNG fallback 不可作格式验收。`0xC206BCE7 @ 40` / `0xA4176245 @ 52` 已有 normal/tangent 的三组几何向量证据；现在做定向光渲染回归、vertex color 和 NewShader transform / multi-stream 检查；其余 28 layouts 仍不能从 hash 外观猜名称；
 2. 对照 Cell 的 PrimitiveGroup shader 名和 `art.rcf` 的纹理资源，建立只含引用名的材质依赖表；
 3. 用 `mergedDrawableRoot*` 的 2–4 个空间相邻 Cell 做低细节**有材质**拼装预览，检查 seam / 坐标 / UV；不混入 local-space Geometry 或 gameplay `_ft`；
 4. 只有在相邻 Cell 无错位、UV/纹理绑定正常后，才扩到 143 个有合并世界根的非空基础 Cell；
