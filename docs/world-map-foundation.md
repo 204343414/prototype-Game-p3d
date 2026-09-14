@@ -28,6 +28,17 @@
 
 因此，外部工具能预览“整个曼哈顿”是合理且可复现的目标：它们必须在某个层次上读取了这组 numbered Cell，而不只是导出了 `art.rcf` 中的一两个 `props.p3d`。
 
+### 基础 Cell 的完整 bounds 普查已完成
+
+`/api/rcf_cell_geometry_manifest` 已对全部 260 个基础 Cell 做了本机、metadata-only 的 Geometry/POSITION census：
+
+- 149 个非 placeholder Cell 全部成功解析，111 个 33-byte placeholder 被显式记录，解析错误为 0；
+- 共得到 7,546 个 Geometry 和 25,900 个具有可读 POSITION bounds 的 PrimitiveGroup；
+- 合并后的 POSITION 范围为 X `[-1759.354, 1751.372]`、Y `[-32.572, 351.150]`、Z `[-2237.141, 1696.998]`；这为“Cell 几何使用同一世界尺度/坐标空间”提供了直接证据，但接缝仍要通过相邻 Cell 实际拼接验证；
+- 静态 MemoryImage 顶点不是一个固定格式：观察到 18 种 stride（20–92 bytes；最常见 68、28、64、36、52 bytes）。因此第一版地图导出不能把 Alex 的 56-byte 蒙皮顶点布局或某一个 Cell 的 static layout 套用到整张地图。
+
+这不是解析错误，而是一个已经量化的格式分支：地图预览器必须先按 static vertex stride/description 分类并验证 POSITION、NORMAL、UV 的实际偏移，才能写入一张正确贴图的 GLB。
+
 ### `art.rcf` 提供共享美术资源
 
 在 `art.rcf` 内已定位到 290 个 `\\art\\locations\\manhattan...` 相关 P3D 包（压缩总量约 87.5 MiB），包括：
