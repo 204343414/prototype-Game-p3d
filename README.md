@@ -124,6 +124,28 @@ prototype-p3d-toolkit/
    （如 `sboez/3D-Models-Load`），把它包进一个本地 HTTP server，
    目录结构已预留 `viewer/`。
 
+## 人类 + AI 协作模式：本地文件隧道
+
+`run_viewer.sh` 支持 `--tunnel` 参数，会自动下载并启动一条
+[Cloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)，
+把 `viewer/server.py` 的目录浏览 / 文件读取 API 通过一个临时公网 URL
+暴露出来。协作的 AI 拿到这个 URL 之后，可以直接读取被 `--root` 限定的
+目录内容（比如整个项目目录），不需要你手动复制粘贴代码或文件结构。
+
+```bash
+./run_viewer.sh 8420 /path/to/prototype-p3d-toolkit --tunnel
+```
+
+终端会打印出一个形如 `https://xxxx-yyyy.trycloudflare.com` 的 URL，
+把它发给协作的 AI 即可（例如让它访问
+`<url>/api/browse?path=/home/you/prototype-p3d-toolkit` 或
+`<url>/api/file?path=/home/you/prototype-p3d-toolkit/README.md`）。
+
+⚠️ **安全提醒**：这条隧道在开着的时候，任何拿到这个 URL 的人都能读取
+`--root` 范围内的所有文件（URL 本身是随机生成、难以被扫到，但不代表
+绝对安全）。用完记得 `Ctrl+C` 关掉；不要把 `--root` 指向包含真实游戏
+资源本体的目录再对外开隧道。
+
 ## 贡献 / 协作方式
 
 这个仓库是"人类 + AI 协作考古"项目。约定：

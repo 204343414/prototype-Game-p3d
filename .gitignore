@@ -14,3 +14,6 @@ extracted/
 
 # OS
 .DS_Store
+
+# cloudflared binary cache (downloaded on demand by run_viewer.sh, not source)
+.cloudflared/
