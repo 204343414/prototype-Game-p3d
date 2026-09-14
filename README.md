@@ -52,7 +52,8 @@ prototype-p3d-toolkit/
 ├── docs/
 │   ├── PROJECT_TARGETS.md     <- 项目目标、建设顺序与阶段验收门槛
 │   ├── vertex_format.md       <- 网格、Skin、贴图、UV、骨架的已验证格式
-│   ├── animation_format.md    <- Prototype 动画/ZLIB blob 的已验证格式
+│   ├── animation_format.md    <- Prototype 混合动画布局与外部 ZLIB family 的已验证格式
+│   ├── p3daddon-static-audit.md <- 用户提供旧 P3DAddon 的只读静态审计与动画线索
 │   ├── asset_inventory_schema.md <- RCF 元数据资产台账规范
 │   ├── pure3d-format.md       <- Pure3D 文件/chunk 格式详细笔记
 │   ├── chunk-id-crosswalk.md  <- Prototype <-> Hit&Run chunk ID 对照表
