@@ -142,13 +142,86 @@ uint32[] bone_indices     # count 个骨骼索引（指向 Skeleton 的骨骼列
 "调色板蒙皮 / palette skinning" 做法，用于让顶点里只需存 1 字节索引
 即可覆盖任意数量的骨骼。）
 
-## 6. 待解码（未来步骤）
+## 6. 0x00010014 Memory_Image_Vertex_Description（顶点声明表）—— 已解码，与独立推导完全吻合
 
-- `0x00010014` ×2（62/113字节payload）：疑似 render state / AABB，需要专门 fetch 分析。
-- `0x00010003`（24字节）：疑似 bounding sphere（center Vector3 + radius float = 16字节，
-  或 min/max AABB = 24字节，需专门验证）。
-- `0x00010004`（16字节）：可能是 bounding sphere（center Vector3 12B + radius float 4B = 16字节，
-  与payload长度精确吻合，是更可能的候选，待验证）。
+官方 chunk 名来自 `references/netp3dlib/.../ChunkIdentifier.cs`：
+`Memory_Image_Vertex_Description = 0x10014`。它是配对在每个
+`Memory_Image_Vertex_List` (0x00010012) 前面的"顶点属性声明表"，
+描述该顶点缓冲每个属性字段的偏移/大小/类型，与我们独立通过统计法
+反推出的字段布局（第3节）**完全交叉验证一致**。
+
+头部（16字节）：
+```
+uint32 version              # 实测=0x00020001
+uint32 param                # 实测与对应 Memory_Image_Vertex_List 的 field_c 相同（2 或 1）
+uint32 ref_buffer_size      # 对应顶点缓冲的数据体大小(不含其12字节头)，实测与0x00010012的data_size字段完全一致
+uint32 desc_size            # 紧随其后声明表的字节数
+```
+
+声明表每条目 17 字节：
+```
+uint32 name_hash    # 属性语义的字符串哈希（如"position"/"normal"等，具体哈希算法待确认，
+                     #  但用途已通过位置和分量数确定，无需破解哈希本身）
+uint32 zero          # 恒为0，用途未知（可能是保留字段）
+uint32 offset        # 该属性在每个顶点记录内的字节偏移
+uint8  vertex_stride # 整个顶点记录的总字节数（对本PrimitiveGroup的所有条目均相同，如56或12）
+uint8  elem_type     # 恒为0，用途未知（可能永远是"float"类型标记，未见其它取值）
+uint8  num_components# 该属性的分量个数（如3=Vector3, 4=Vector4/含w, 1=打包uint32）
+uint16 unknown       # 剩余2字节，观测到 0x0001 或 0x0000，可能是"是否归一化"或"用途子标志"
+```
+
+**56字节/顶点缓冲（field_c=2）的声明表实测（5个属性，与第3a节完全吻合）**：
+| offset | vertex_stride | num_components | 对应字段（已用统计法独立验证） |
+|--------|--------------|-----------------|-------------------------------|
+| 0      | 56           | 3               | position (Vector3)            |
+| 12     | 56           | 3               | normal (Vector3, 单位向量)     |
+| 24     | 56           | 4               | tangent + tangent_w (Vector4) |
+| 40     | 56           | 3               | blend_weight[1..3] (3×float)  |
+| 52     | 56           | 4               | blend_index[0..3] (4×uint8)   |
+
+**12字节/顶点缓冲（field_c=1）的声明表实测（2个属性，与第3b节完全吻合）**：
+| offset | vertex_stride | num_components | 对应字段 |
+|--------|--------------|-----------------|----------|
+| 0      | 12           | 4(打包)         | vertex_color (uint32 RGBA/BGRA) |
+| 4      | 12           | 2               | uv (Vector2)                     |
+
+这是**最强的交叉验证证据**：文件自带的顶点声明表与我们仅凭统计规律
+（单位向量、权重和、索引范围）独立反推出的字段布局逐字节精确吻合，
+证明第3节的顶点格式解读完全正确、可直接用于导出脚本。
+
+## 7. 已解码：0x00010003 Bounding_Box / 0x00010004 Bounding_Sphere
+
+官方枚举名确认（`references/netp3dlib/.../ChunkIdentifier.cs`）：
+`Bounding_Box = 0x10003`，`Bounding_Sphere = 0x10004`。
+
+```
+Bounding_Box (24字节):
+    float min_x, min_y, min_z
+    float max_x, max_y, max_z
+
+Bounding_Sphere (16字节):
+    float center_x, center_y, center_z
+    float radius
+```
+
+实测 alex_reg_body_alex_bodyShape：
+```
+Bounding_Box: min=(-0.2229, -0.0018, -0.2223) max=(0.2229, 1.8849, 0.1717)
+              —— 与顶点缓冲中实际 pos.x/y/z 的 min/max 完全一致（已验证）
+Bounding_Sphere: center=(0.0000, 0.9415, -0.0253) radius=0.9891
+              —— 与从上述AABB计算出的中心点和半对角线长度精确吻合到小数点后6位（已验证）
+```
+
+## 8. 待解码（后续步骤）
+
+- `0x00010001` (Skin) 本体的62字节 payload：从 hex 可见明文字符串
+  `"alex_reg_body_alex_headShape"` + 数字3 + `"alex_reg_body_skeleton"`，
+  推测是"皮肤名 + 关联骨骼数(或版本) + 对应骨架(Skeleton)引用名"的字符串对，
+  需要专门解析字符串对齐规则（用第一节的 StringAlignedU8 规则应该可以直接套用）。
+- `0x00010021` (Vertex_Compression_Hint，32字节)：8个uint32，值全是0或0x20(32)，
+  用途待查（可能是每个属性的量化精度提示，与压缩/量化有关，正常渲染流程可忽略）。
+- `0x00122000` (Sort_Order，8字节)：2个float，值为(0.0, 0.5)，可能是渲染排序权重，可先忽略。
+- `0x00010017` (Render_Status，4字节)：uint32=1，可能是"是否可见/启用"标志，可先忽略。
 
 ## 验证方法总结（供后续复用）
 
