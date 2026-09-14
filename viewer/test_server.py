@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -185,8 +186,46 @@ def main():
         status, body = get(base + "/api/rcf_manifest?path=/etc/passwd")
         assert status in (403, 404, 500), (status, body)
 
+        # --- /api/rcf_entry ---
+        # One-shot "extract by name + auto .rz decompress + parse chunk
+        # tree" endpoint, built on top of the same synthetic .rcf, but this
+        # time one entry's payload is itself a (tiny) synthetic Pure3D file
+        # so we exercise the whole rcf -> rz -> chunk-tree pipeline at once.
+        def build_chunk(type_id, payload, children_bytes=b""):
+            header_size = 12 + len(payload)
+            total_size = header_size + len(children_bytes)
+            return (_struct.pack("<III", type_id, header_size, total_size)
+                    + payload + children_bytes)
+
+        entry_child = build_chunk(0x00019001, b"hello-payload")
+        entry_p3d_bytes = build_chunk(0xFF443350, b"", entry_child)
+
+        rcf2_path = os.path.join(tmpdir, "synthetic2.rcf")
+        rcf2_files = [
+            (r"\art\alex\alex_fig.p3d", plain_data),
+            (r"\art\alex\alex_tod.p3d.rz", make_rz_payload(entry_p3d_bytes)),
+        ]
+        build_synthetic_rcf_fixed(rcf2_path, rcf2_files)
+
+        entry_name_q = urllib.parse.quote(r"\art\alex\alex_tod.p3d.rz")
+        status, body = get(base + f"/api/rcf_entry?path={rcf2_path}&name={entry_name_q}")
+        assert status == 200, (status, body)
+        data = json.loads(body)
+        assert data["was_rz_compressed"] is True, data
+        assert data["chunk_count"] == 1, data
+        assert data["chunks"][0]["type_id"] == "0x00019001", data
+
+        fig_name_q = urllib.parse.quote(r"\art\alex\alex_fig.p3d")
+        status, body = get(base + f"/api/rcf_entry?path={rcf2_path}&name={fig_name_q}&raw=1")
+        assert status == 200, (status, body)
+        assert body == plain_data, body
+
+        status, body = get(base + f"/api/rcf_entry?path={rcf2_path}&name=" + urllib.parse.quote(r"\art\nope.p3d"))
+        assert status == 404, (status, body)
+
         print("OK: viewer/server.py smoke test passed "
-              "(browse + file + hexdump + p3d + rcf_manifest APIs, root confinement, static frontend)")
+              "(browse + file + hexdump + p3d + rcf_manifest + rcf_entry APIs, "
+              "root confinement, static frontend)")
     finally:
         proc.terminate()
         try:

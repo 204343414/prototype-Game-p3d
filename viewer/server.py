@@ -115,6 +115,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_p3d(qs)
         if parsed.path == "/api/rcf_manifest":
             return self._handle_rcf_manifest(qs)
+        if parsed.path == "/api/rcf_entry":
+            return self._handle_rcf_entry(qs)
         if parsed.path == "/api/health":
             return self._send_json({"ok": True, "root": self.root_dir})
 
@@ -392,6 +394,129 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "entries_shown": len(entries_out),
             "entries_truncated": (limit != 0 and (known_count + unknown_count) > limit and not name_filter),
             "entries": entries_out,
+        })
+
+    def _handle_rcf_entry(self, qs):
+        """Extract a single named entry from a local .rcf archive (using
+        rcf_extract.CementFile), auto-decompress it if it's .rz-wrapped
+        (zlib), and return either the raw bytes (?raw=1) or, if it looks
+        like a Pure3D (.p3d) file, its parsed chunk tree as JSON (same
+        shape as /api/p3d).
+
+        This is the one-shot "give me this character's model structure"
+        entry point: no need to unpack the whole archive to disk first.
+
+        Query params:
+          path   - required, absolute path to the .rcf file
+          name   - required, the entry's logical name as stored in the
+                   Cement metadata table, e.g. \\art\\alex\\alex_fig.p3d.rz
+                   (leading backslash optional, matched exactly against
+                   metadata names -- case-sensitive, since that's how the
+                   hash table is keyed)
+          raw    - optional, "1" to return the (decompressed) raw bytes
+                   with an appropriate Content-Type instead of a parsed
+                   chunk tree (handy for saving out a .p3d/.dds/etc to
+                   look at locally, or for chaining into other tools)
+          max_depth / payload_preview - same meaning as in /api/p3d
+        """
+        if rcf_extract is None:
+            return self._send_error_json("rcf_extract module not available on server", 500)
+        if inspect_p3d is None:
+            return self._send_error_json("inspect_p3d module not available on server", 500)
+
+        path = qs.get("path", [None])[0]
+        name = qs.get("name", [None])[0]
+        if not path or not name:
+            return self._send_error_json("missing ?path= or ?name=", 400)
+        try:
+            target = self._safe_resolve(path)
+        except PermissionError as e:
+            return self._send_error_json(str(e), 403)
+        if not os.path.isfile(target):
+            return self._send_error_json(f"not a file: {target}", 404)
+
+        try:
+            cement = rcf_extract.CementFile.load(target)
+        except Exception as e:  # noqa: BLE001
+            return self._send_error_json(f"RCF parse error: {type(e).__name__}: {e}", 500)
+
+        lookup_name = name if name.startswith("\\") else "\\" + name
+        name_hash = rcf_extract.hash_file_name(lookup_name)
+        entry = next((e for e in cement.entries if e.name_hash == name_hash), None)
+        if entry is None:
+            return self._send_error_json(
+                f"entry not found for name={lookup_name!r} (hash=0x{name_hash:08X})", 404)
+
+        with open(target, "rb") as f:
+            f.seek(entry.offset)
+            raw = f.read(entry.size)
+
+        is_rz = lookup_name.lower().endswith(".rz")
+        try:
+            data = rcf_extract.decompress_rz_payload(raw) if is_rz else raw
+        except Exception as e:  # noqa: BLE001
+            return self._send_error_json(f".rz decompression error: {type(e).__name__}: {e}", 500)
+
+        want_raw = qs.get("raw", ["0"])[0] == "1"
+        if want_raw:
+            ctype = "application/octet-stream"
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        if len(data) < 12:
+            return self._send_error_json("entry too small to be a Pure3D file", 400)
+
+        magic, = struct.unpack("<I", data[0:4])
+        if magic == inspect_p3d.SIG_LE:
+            endian = "<"
+        elif magic == inspect_p3d.SIG_LE_SWAPPED:
+            endian = ">"
+        else:
+            return self._send_error_json(
+                f"not a Pure3D file after decompression (magic bytes = {data[0:4].hex()}); "
+                f"pass &raw=1 to fetch the raw decompressed bytes instead", 400)
+
+        header_size, = struct.unpack(endian + "I", data[4:8])
+        total_size, = struct.unpack(endian + "I", data[8:12])
+
+        max_depth = qs.get("max_depth", [None])[0]
+        max_depth = int(max_depth) if max_depth is not None else None
+        payload_preview = int(qs.get("payload_preview", ["32"])[0])
+        payload_preview = max(0, min(payload_preview, 256))
+
+        try:
+            out = []
+            inspect_p3d.dump_chunk(data, 12, total_size, endian, 0, out, max_depth)
+            chunks = []
+            for depth, type_id, hdr_size, tot_size, payload in out:
+                chunks.append({
+                    "depth": depth,
+                    "type_id": f"0x{type_id:08X}",
+                    "header_size": hdr_size,
+                    "total_size": tot_size,
+                    "payload_len": len(payload),
+                    "payload_hex_preview": payload[:payload_preview].hex(),
+                })
+        except Exception as e:  # noqa: BLE001
+            return self._send_error_json(f"chunk parse error: {type(e).__name__}: {e}", 500)
+
+        self._send_json({
+            "rcf_path": target,
+            "entry_name": lookup_name,
+            "entry_name_hash": f"0x{name_hash:08X}",
+            "entry_offset": entry.offset,
+            "entry_size_compressed": entry.size,
+            "decompressed_size": len(data),
+            "was_rz_compressed": is_rz,
+            "endian": "LE" if endian == "<" else "BE",
+            "declared_total_size": total_size,
+            "chunk_count": len(chunks),
+            "chunks": chunks,
         })
 
     def _handle_static(self, url_path):
