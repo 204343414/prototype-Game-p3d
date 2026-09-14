@@ -50,6 +50,23 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     padding: 8px 12px; border-radius: 8px; font-size: 13px;
   }}
   .err {{ color: #ff7a7a !important; }}
+  #shotBtn {{
+    position: fixed; bottom: 16px; left: 16px; z-index: 10;
+    padding: 10px 16px; font-size: 14px; border-radius: 8px; border: none;
+    background: #2f7de1; color: white; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }}
+  #shotBtn:hover {{ background: #4a91ee; }}
+  #shotPanel {{
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 20;
+    display: none; align-items: center; justify-content: center; flex-direction: column;
+  }}
+  #shotPanel.show {{ display: flex; }}
+  #shotPanel img {{ max-width: 90%; max-height: 80%; border: 2px solid #555; background: #000; }}
+  #shotPanel .hint {{ color: #ddd; margin-top: 12px; font-size: 13px; }}
+  #shotPanel button {{
+    margin-top: 12px; padding: 8px 14px; border-radius: 6px; border: none;
+    background: #444; color: #fff; cursor: pointer;
+  }}
 </style>
 </head>
 <body>
@@ -60,6 +77,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div>拖拽=旋转 / 滚轮=缩放 / 右键拖拽=平移</div>
 </div>
 <div id="status">加载中…</div>
+<button id="shotBtn">📷 拍照 (截取当前渲染画面)</button>
+<div id="shotPanel">
+  <img id="shotImg" alt="截图预览" />
+  <div class="hint">这就是 WebGL canvas 当前实际渲染出的像素内容 (非缓存/非外部截图工具)</div>
+  <div>
+    <a id="shotDownload" download="preview_screenshot.png"><button>下载这张截图</button></a>
+    <button id="shotClose">关闭</button>
+  </div>
+</div>
 
 <script>
 {three_js}
@@ -93,7 +119,7 @@ const viewerEl = document.getElementById('viewer');
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 100);
 camera.position.set({cam_x}, {cam_y}, {cam_z});
 
-const renderer = new THREE.WebGLRenderer({{ antialias: true }});
+const renderer = new THREE.WebGLRenderer({{ antialias: true, preserveDrawingBuffer: true }});
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio || 1);
 renderer.outputEncoding = THREE.sRGBEncoding;
@@ -148,6 +174,27 @@ window.addEventListener('resize', () => {{
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+}});
+
+// ---- "拍照"按钮: 直接从 WebGL canvas 读取当前实际渲染的像素, 生成PNG
+// data URL 展示+提供下载。用来自证"页面上到底渲染出了什么", 排除任何
+// 外部截图工具/缓存导致的疑虑。preserveDrawingBuffer 没开的话 toDataURL
+// 可能拿到空白, 所以这里在拍照前先强制多渲染一帧再立刻读取。----
+const shotBtn = document.getElementById('shotBtn');
+const shotPanel = document.getElementById('shotPanel');
+const shotImg = document.getElementById('shotImg');
+const shotDownload = document.getElementById('shotDownload');
+const shotClose = document.getElementById('shotClose');
+
+shotBtn.addEventListener('click', () => {{
+  renderer.render(scene, camera);
+  const dataUrl = renderer.domElement.toDataURL('image/png');
+  shotImg.src = dataUrl;
+  shotDownload.href = dataUrl;
+  shotPanel.classList.add('show');
+}});
+shotClose.addEventListener('click', () => {{
+  shotPanel.classList.remove('show');
 }});
 </script>
 </body>
