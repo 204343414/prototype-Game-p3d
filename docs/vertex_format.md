@@ -538,18 +538,35 @@ Texture(global_index=8): name="alex_body_sm.dds", 512x512, alpha_depth=1
 | `0x00010007` | UV_List | count(u32)+**channel(u32)**+count×Vector2 | 1268条，channel=0 |
 | `0x00010008` | Colour_List | count + count×uint32(打包RGBA) | 1268条，全部=0xFFFFFFFF(纯白) |
 | `0x0001000B` | (netp3dlib命名Matrix_List，**实测本模型语义是blend_index**) | count + count×byte[4] | 1268条，取值范围[0,9]，精确等于`< num_matrices=10`，与主格式`blend_index`字段语义完全一致 |
-| `0x0001000C` | Weight_List | count + count×Vector3 | 1268条，即前三个序列化权重；第4个序列化索引的权重为`1-sum`，sum∈(0.8,1.0]，与主格式weight语义一致 |
+| `0x0001000C` | Weight_List | count + count×Vector3 | 1268条，三个 stored 权重加一个 `1-sum` 隐含权重；**其与原始 Matrix_List 字节的槽位排列不同于 56-byte packed layout**，见紧随说明。 |
 | `0x0001000A` | Index_List | count + count×**uint32**（注意不是16位！） | 3594个，取值范围[0,1267]=`[0,num_vertices-1]` |
 | `0x0001000D` | Matrix_Palette | 同第5节，无变化 | count=10，与`num_matrices`一致 |
 | `0x00010028` | (未在参考库中命名，实测是Tangent+W) | count + count×Vector4 | 1268条，xyz单位向量，w∈{-1,+1} —— 与主格式`tangent+tangent_w`字段完全对应 |
 
+### 8.5.1 `Weight_List` 的独立槽位排列（动态蒙皮已验证）
+
+`AlexVestShape` 使用本节的拆分 List 布局，不能复用第3a节 56-byte packed
+vertex 的 weight 排列。导出器保留 `Matrix_List` 的原始 byte 顺序时，三个
+`Weight_List` float 记作 `[stored0, stored1, stored2]`，隐含值为
+`implicit = 1 - sum`；对应的 glTF `WEIGHTS_0` 必须是：
+
+```text
+[implicit, stored2, stored0, stored1]
+```
+
+用 packed-layout 的 `[stored0, stored1, stored2, implicit]` 套在此处时，
+静态 bind pose 仍会正常显示，因而不能作为验证；播放真实 Alex `ROT` 后，会有
+约 80% 的皮夹克顶点以右锁骨为主影响骨，造成后背僵硬、像套筒般穿模。上述
+专用排列把主要影响恢复到 `Spine_3`、`Spine_2`、`Spine_1` 和双侧锁骨，且已由
+人工播放预览确认皮夹克随躯干正常运动。
+
 **结论**：导出脚本需要先读 `PrimitiveGroup.memory_imaged` 字段分支：
 `=1` 时按第2-6节的打包格式解析；`=0` 时改为分别读取上表这些独立 List
-chunk，按顶点序号一一对应组装成同样的顶点属性数组，两条路径最终产出的
-数据结构应完全一致，可以直接复用后续的蒙皮/材质处理逻辑。这次发现在
-本轮编写 `export_alex_body.py` 导出脚本、对 `AlexVestShape` 实测时才浮现，
-说明**同一个角色的不同部位/不同版本资源，存储格式变体不能想当然假设一致，
-每个新部位/新角色都应该先检查 `memory_imaged` 标志再决定解析路径**。
+chunk，按顶点序号一一对应组装。两条路径的几何属性可复用，但不能假定蒙皮
+weight 槽位排列相同。这次发现在本轮编写 `export_alex_body.py` 导出脚本、对
+`AlexVestShape` 实测时才浮现，说明**同一个角色的不同部位/不同版本资源，
+存储格式变体不能想当然假设一致，每个新部位/新角色都应该先检查
+`memory_imaged` 标志再决定解析与蒙皮路径**。
 
 ## 9. Skeleton_2 / Skeleton_Joint_2 —— 骨架层级与静止姿势矩阵，已完整解码并验证
 

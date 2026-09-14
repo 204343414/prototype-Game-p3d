@@ -139,12 +139,14 @@ python3 tools/p3d_export/export_rotation_animation_experimental.py \
 - 仍以 `LINEAR` 写入关键帧：这是根据当前外部 family 的 `InterpMode=-1`
   观察作出的暂定选择，不外推到未解码的内联 channel family。
 
-这个工具应配合当前版本的静态 Alex 导出器使用。后者已修正一个只有在播放时
-才会暴露的蒙皮槽位错误：P3D 三个序列化 weight 分别对应前三个序列化
-matrix-index 字节，最后一个 index 的 weight 为 `1-sum`，故 glTF
-`WEIGHTS_0` 是 `[stored0, stored1, stored2, 1-sum]`。旧的循环移位排列在
-bind pose 中也会显示正确（所有 skin matrix 都是 identity），但实际 ROT
-播放会使网格严重撕裂；该规律已纳入导出器和合成回归测试。
+这个工具应配合当前版本的静态 Alex 导出器使用。后者已修正两个只有在播放时
+才会暴露的蒙皮槽位错误：56-byte packed vertex 流的 glTF `WEIGHTS_0` 是
+`[stored0, stored1, stored2, 1-sum]`；而独立 legacy `Weight_List`（Alex 的
+皮夹克）在保留原始 `Matrix_List` byte 顺序时必须为
+`[1-sum, stored2, stored0, stored1]`。把 packed 排列误套到皮夹克上会令约
+80% 顶点被右锁骨主导，后背变成僵硬套筒；两种布局都已在真实 ROT 播放和
+合成回归测试中分别验证。bind pose 中所有 skin matrix 都是 identity，不能
+单凭静态外观验证这些槽位。
 
 私有 Alex `alex_act_block` 垂直切片已用于可视化验证：输出 48 条真实骨骼
 ROT track、无 matrix node；四个没有对应静态 node 的 limb ROT 与 8 个

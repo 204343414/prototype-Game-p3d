@@ -41,7 +41,10 @@ import sys
 
 import numpy as np
 
-from skinning import p3d_stored_weights_to_gltf
+from skinning import (
+    p3d_packed_vertex_weights_to_gltf,
+    p3d_weight_list_weights_to_gltf,
+)
 
 try:
     import texture2ddecoder
@@ -576,6 +579,7 @@ def main():
                 and matrix_palette is not None, f"Skin {pname}: 缺子chunk (memory_imaged=1)"
             assert len(matrix_palette) == pg_header["num_matrices"]
 
+            weight_layout = "packed_vertex"
             positions = vbuf_56["position"].astype(np.float32)
             normals = vbuf_56["normal"].astype(np.float32)
             stored_blend_weights = vbuf_56["stored_blend_weights"].astype(np.float32)
@@ -588,6 +592,7 @@ def main():
             # memory_imaged=0: 老式"独立 List chunk"存储方式 (本次在 AlexVestShape
             # 上首次发现，见 docs/vertex_format.md 新增章节)。字段拆分到多个独立
             # chunk 里，每个都是 "count(u32) + count个记录" 的通用格式。
+            weight_layout = "weight_list"
             raw_by_type = {}
             for c in pg_children:
                 raw_by_type.setdefault(c["type_id"], bytes.fromhex(c["payload_hex_preview"]))
@@ -613,6 +618,7 @@ def main():
             positions=positions,
             normals=normals,
             stored_blend_weights=stored_blend_weights,
+            weight_layout=weight_layout,
             blend_index=blend_index,
             uvs=uvs,
             colors=colors,
@@ -888,11 +894,15 @@ def build_glb(out_path, joints, joint_names, world_mats, meshes_data, mesh_textu
         color_bv = add_buffer_view(color_u8.tobytes(), target=pygltflib.ARRAY_BUFFER)
         color_acc = add_accessor(color_bv, pygltflib.FLOAT, n_vert, "VEC4")
 
-        # P3D 的三个序列化权重依次对应前三个原始矩阵索引字节；
-        # 第四个索引对应隐含的 1-sum 权重。绑定姿势中任何槽位排列都
-        # 看不出来，只有实际播放骨骼旋转时才能验证该对齐关系。
+        # 两种已观察到的 P3D 顶点布局不能共用 weight slot 顺序。
+        # 在 bind pose 中两者都看似正确，必须以实际骨骼播放验证。
         stored_weights = m["stored_blend_weights"]
-        weights4 = p3d_stored_weights_to_gltf(stored_weights)
+        if m["weight_layout"] == "packed_vertex":
+            weights4 = p3d_packed_vertex_weights_to_gltf(stored_weights)
+        elif m["weight_layout"] == "weight_list":
+            weights4 = p3d_weight_list_weights_to_gltf(stored_weights)
+        else:
+            raise ValueError(f"unknown P3D weight layout: {m['weight_layout']!r}")
         weights_bv = add_buffer_view(weights4.tobytes(), target=pygltflib.ARRAY_BUFFER)
         weights_acc = add_accessor(weights_bv, pygltflib.FLOAT, n_vert, "VEC4")
 
