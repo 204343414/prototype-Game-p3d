@@ -102,22 +102,44 @@ def _direct_children(records: list[dict[str, Any]], parent_index: int) -> list[d
 
 
 def _fingerprint_vertex_description(payload: bytes) -> dict[str, Any]:
-    """Summarize a MemoryImageVertexDescription without returning its bytes.
+    """Decode the repeatable structural part of a vertex declaration.
 
-    Prototype map files contain several packed static vertex layouts.  Until
-    the declaration payload is semantically decoded, a SHA-256 fingerprint
-    plus the opaque header fields gives repeatable, content-free grouping
-    evidence.  It must not be confused with a claimed UV/normal offset.
+    Real Manhattan samples establish this layout after the 12-byte header:
+    a uint32 description length followed by N fixed 17-byte declarations.
+    Each declaration is ``semantic_hash(u32), source(u32), offset(u32),
+    stride(u16), element_type(u16), usage_index(u8)``.  Semantic-hash meaning
+    (POSITION/NORMAL/UV) is intentionally still not guessed here, but offsets
+    and packed element metadata are preserved for later validated decoding.
     """
-    if len(payload) < 12:
+    if len(payload) < 16:
         raise ValueError("MemoryImageVertexDescription header too short")
-    version, param, declared_data_bytes = struct.unpack_from("<III", payload, 0)
+    version, param, declared_data_bytes, description_bytes = struct.unpack_from("<IIII", payload, 0)
+    if description_bytes != len(payload) - 16:
+        raise ValueError(
+            f"vertex declaration says {description_bytes} bytes, actual {len(payload) - 16}")
+    if description_bytes % 17:
+        raise ValueError(f"vertex declaration length {description_bytes} is not a multiple of 17")
+    attributes = []
+    canonical = bytearray()
+    for offset in range(16, len(payload), 17):
+        semantic_hash, source, attribute_offset, stride, element_type, usage_index = struct.unpack_from(
+            "<IIIHHB", payload, offset)
+        attributes.append({
+            "semantic_hash": f"0x{semantic_hash:08X}",
+            "source": source,
+            "offset": attribute_offset,
+            "stride": stride,
+            "element_type": element_type,
+            "usage_index": usage_index,
+        })
+        canonical.extend(struct.pack("<IIIHHB", semantic_hash, source, attribute_offset, stride, element_type, usage_index))
     return {
-        "sha256": hashlib.sha256(payload).hexdigest(),
+        "layout_sha256": hashlib.sha256(canonical).hexdigest(),
         "version": version,
         "param": param,
         "declared_data_bytes": declared_data_bytes,
-        "descriptor_payload_bytes": len(payload),
+        "attribute_count": len(attributes),
+        "attributes": attributes,
     }
 
 
@@ -219,7 +241,7 @@ def scan_static_geometry(data: bytes) -> dict[str, Any]:
                     fingerprint = _fingerprint_vertex_description(descriptions[0]["payload"])
                     group["vertex_description"] = fingerprint
                     aggregate = descriptor_fingerprints.setdefault(
-                        fingerprint["sha256"], {**fingerprint, "primitive_group_count": 0, "vertex_strides": set()})
+                        fingerprint["layout_sha256"], {**fingerprint, "primitive_group_count": 0, "vertex_strides": set()})
                     aggregate["primitive_group_count"] += 1
                 except ValueError as exc:
                     group["vertex_description_status"] = f"unavailable: {exc}"
@@ -239,7 +261,7 @@ def scan_static_geometry(data: bytes) -> dict[str, Any]:
                 group["position_bounds_status"] = "ok"
                 stride_counts[stride] += 1
                 if "vertex_description" in group:
-                    descriptor_fingerprints[group["vertex_description"]["sha256"]]["vertex_strides"].add(stride)
+                    descriptor_fingerprints[group["vertex_description"]["layout_sha256"]]["vertex_strides"].add(stride)
                 all_mins.append(minimum)
                 all_maxs.append(maximum)
             except ValueError as exc:
@@ -260,7 +282,7 @@ def scan_static_geometry(data: bytes) -> dict[str, Any]:
         item = dict(fingerprint)
         item["vertex_strides"] = sorted(item["vertex_strides"])
         fingerprint_summary.append(item)
-    fingerprint_summary.sort(key=lambda item: item["sha256"])
+    fingerprint_summary.sort(key=lambda item: item["layout_sha256"])
 
     return {
         "format": "Pure3D",

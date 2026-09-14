@@ -30,9 +30,13 @@ def group(shader, positions, stride=16, declared_bytes=None):
                             for point in positions)
     byte_count = len(raw_vertices) if declared_bytes is None else declared_bytes
     memory_vertices = chunk(0x00010012, struct.pack("<III", 1, 2, byte_count) + raw_vertices)
-    # The declaration is deliberately opaque to the bound probe: it should
-    # fingerprint it without pretending the bytes already describe UV layout.
-    vertex_description = chunk(0x00010014, struct.pack("<III", 1, 2, len(raw_vertices)) + b"synthetic-declaration")
+    # The declaration preserves a structural semantic hash and byte offset,
+    # but the probe still does not claim that hash's human-readable meaning.
+    declaration = struct.pack("<IIIHHB", 0xAABBCCDD, 0, 0, stride, 4, 0)
+    vertex_description = chunk(
+        0x00010014,
+        struct.pack("<IIII", 1, 2, len(raw_vertices), len(declaration)) + declaration,
+    )
     pg_header = struct.pack("<I", 1) + p3d_string(shader) + struct.pack(
         "<9I", 0, 0x3011, len(positions), len(positions) * 3, 0, 1, 1, 0, 0)
     return chunk(0x00010020, pg_header, vertex_description + memory_vertices)
@@ -58,6 +62,9 @@ class StaticGeometryProbeTests(unittest.TestCase):
             {tuple(item["vertex_strides"]) for item in result["vertex_description_fingerprints"]},
             {(16,), (20,)},
         )
+        declaration = result["vertex_description_fingerprints"][0]
+        self.assertEqual(declaration["attributes"][0]["semantic_hash"], "0xAABBCCDD")
+        self.assertEqual(declaration["attributes"][0]["offset"], 0)
         self.assertEqual(result["world_position_min"], [-1.0, -5.0, -9.0])
         self.assertEqual(result["world_position_max"], [7.0, 8.0, 6.0])
         self.assertEqual(result["geometries"][0]["primitive_groups"][0]["shader_name"], "building_shader")
