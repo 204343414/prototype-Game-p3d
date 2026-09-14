@@ -62,7 +62,7 @@
 - [ ] 明确开发依赖与版本：Python、`numpy`、`pygltflib`、`Pillow`、`texture2ddecoder`、Playwright/Chromium；提供可重复安装命令或依赖文件。
 - [ ] 建立合成夹具和自动化测试结构：chunk 边界、DDS 头跳过、矩阵/四元数转换、动画 blob 偏移计算均能脱离游戏资产运行。
 - [ ] 定义稳定的中间表示（IR）与序列化/诊断格式：`AssetEntry`、`Skeleton`、`SkinMesh`、`AnimationClip`、`AudioEntry`；导出器和 viewer 不直接依赖临时 JSON/chunk 下标。
-- [ ] 建立**资产清点台账**（推荐 CSV/JSON + 人可读 Markdown）：源归档/条目路径、类别、角色、变体、骨架、动作数、音频数、解析状态、预览状态、备注、来源哈希。
+- [x] 建立**资产清点台账**的 metadata-only schema 与生成器：[`asset_inventory_schema.md`](./asset_inventory_schema.md)、`tools/inventory/rcf_inventory.py` 生成 JSON + 人可读 Markdown；真实游戏资产内容不写入仓库。角色、变体、骨架、动作数、音频数、解析/预览状态、备注和源归档哈希作为后续人工验证层逐步补全。
 - [ ] 约定每个游戏资产都只记录元数据和哈希，原始/导出二进制继续由 `.gitignore` 排除。
 
 **验收门槛**：干净 clone 可运行全部不依赖游戏资产的测试；新接手者只读 `HANDOFF.md` + 本文件即可知道该从哪个命令、哪个数据契约和哪个台账开始。

@@ -58,7 +58,7 @@ prototype-p3d-toolkit/
 │   ├── p3d_parser/            <- 通用 Pure3D chunk 树解析器 (Python)
 │   │   └── inspect_p3d.py     <- 已验证可用：任意 .p3d 文件的 chunk 树 dump 工具
 │   ├── p3d2gltf/              <- p3d (网格/骨骼/动画) -> glTF 转换器（待写）
-│   └── inventory/             <- 资源清点扫描工具（按文件名关键词粗分类）
+│   └── inventory/             <- 解包目录/RCF 元数据清点工具（含测试）
 │       └── scan_assets.py
 ├── viewer/                    <- 本地 web viewer（three.js，浏览器 127.0.0.1 预览，已验证可用）
 │   ├── server.py              <- 纯标准库 HTTP server：目录浏览 + 文件读取 API

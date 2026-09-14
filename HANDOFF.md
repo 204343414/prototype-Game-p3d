@@ -147,6 +147,19 @@ python3 click_shot_and_grab.py --html /home/user/alex_full_preview.html --out /t
 
 ## 下一步要做的事（按用户明确给过的优先顺序）
 
+### 0. 已启动的项目地基：RCF 元数据台账（先维护，勿把扫描猜测当结论）
+
+`tools/inventory/rcf_inventory.py` 已可通过 viewer 的 `/api/rcf_manifest`
+直接拉取**仅元数据**的全量台账（条目名、哈希、偏移、存储大小），输出 JSON +
+Markdown；schema 和版权边界见 `docs/asset_inventory_schema.md`。不请求 raw
+资源、不写入游戏 payload，生成报告默认写到 `/tmp` 或私有研究目录，不提交 Git。
+
+2026-09-14 已对用户真实 `art.rcf` 跑过一次：RCF 版本 2.1、604,812,872 bytes、
+2,601 条目且 metadata 名称全部可解析。该私有台账显示 2,219 个 `.p3d.rz`、19 个
+`.dds`、363 个 `.gfx`；名称启发式统计仅供筛选，**不是**角色/动画身份验证。下一步
+横向角色普查应从台账定位候选条目，再按 chunk/骨架/实际预览确认，而不是相信
+`fig`/`tod` 等文件名后缀。
+
 ### 1.（当前最优先）把动画接入 glTF，让模型真的能动起来
 
 `docs/animation_format.md` 已经把"怎么读懂一个动画"的范式讲清楚了，
