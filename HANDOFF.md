@@ -10,7 +10,7 @@
 > `docs/animation_format.md` 为准**。项目级目标、建设顺序与验收门槛见
 > `docs/PROJECT_TARGETS.md`。
 
-最后更新：2026-09-14（当前权威版本始终以 `origin/main` 的 `git log -1` 为准；归档文档更新 `2b55a0d`、项目地基 `7b3335b`/`17512f6` 及后续动画 decoder 均在该分支）
+最后更新：2026-09-14（当前权威版本始终以 `origin/main` 的 `git log -1` 为准。动画外部 ZLIB decoder、AnimationLimbReference 静态审计和混合布局勘误均已推送并已部署到用户 viewer checkout。）
 
 ## 项目一句话说明
 
@@ -31,7 +31,7 @@ Blackwatch黑色守望×2、海军陆战队×2、Hunter猎手、Alpha Hunter大�
 设计基本收敛后再做。详见 `docs/PROJECT_TARGETS.md`；地图解析仍是一条独立、低优先级
 的通用化路线。
 
-## 当前状态：Alex Mercer 全身角色（T-pose，贴图+UV已修复正确）预览已成功，动画数据结构已完整逆向但尚未接入 glTF
+## 当前状态：Alex Mercer 全身角色（T-pose，贴图+UV已修复正确）预览已成功；外部 ZLIB 动画 family 已解码但尚未接入 glTF
 
 ### ✅ 已经做成、跑通、验证过的（不用再重做，直接复用）
 
@@ -60,18 +60,36 @@ Blackwatch黑色守望×2、海军陆战队×2、Hunter猎手、Alpha Hunter大�
    遗留bug，见下）。**这个结论目前只在 Alex Mercer 一个角色的5个Skin上
    验证过**，换新角色时理论上应该一致，但强烈建议每个新角色第一次导出
    后都用UV调试面板肉眼复核，不要预设所有shader都一样。
-6. **动画数据组织范式已完整逆向，基础 decoder 已落地但尚未接入 glTF**
-   （`docs/animation_format.md`）：`alex.p3d.rz` 文件本体内嵌了634个具名动画
-   chunk（`alex_act_*`系列，如 `alex_act_death`/`alex_act_block`），**不需要
-   额外找动画文件**。已破解 `Animation`(0x121000) 容器的完整层级
-   （Header/Group_List/Group/Channel）+ Prototype 特有的**帧数据外部化压缩
-   存储**方案（所有帧数据打包进一个 `0x02F00000` ZLIB blob，channel chunk
-   本身只留类型+count+offset 定位符）+ 3种channel值编码（int16×3压缩四元数/
-   int8×3压缩四元数/int16×3位移向量）。`tools/p3d_animation/decode_animation.py`
-   已用合成夹具实现并以真实 `alex_act_block` 成功解出53个骨骼group、60个channel；
-   它还验证了真实 blob 最末 values block 可省略对齐尾字节这一细节（见动画文档
-   第3节）。**尚未**把结果转换为 glTF `animation` 轨道，尤其 `TRAN` 位移缩放/
-   参考系尚未标定——这仍是下一步第一优先级。
+6. **动画：外部 ZLIB channel family 已完整解码，尚未接入 glTF；全格式尚未完成**
+   （权威说明见`docs/animation_format.md`）。`alex.p3d.rz` 文件本体内嵌634个
+   具名 Animation chunk，分为533个`PTRN`骨骼动画、67个`CAM`、34个`EXP`，不需
+   额外寻找动画文件。`tools/p3d_animation/decode_animation.py` 已对自定义外部
+   ZLIB family（`0x00121112` int16×3 ROT、`0x00121114` int8×3 ROT、
+   `0x00121119` int16×3 vector；子 locator 为`0x00121120`）实现严格解析；
+   `alex_act_block` 的53个 group/60个 channel 已成功解出，且验证最后一个
+   values block 可省略对齐尾字节。**重要勘误**：游戏同一动画体系还混用标准
+   内联 channel `0x00121101`–`0x00121104`，以及未定编码的内联`0x00121118`；
+   current decoder 对它们会明确报 unsupported，不能再称“所有 keyframes 都在
+   外部 ZLIB blob”。短期 glTF 垂直切片仍可从全为外部-family 的`alex_act_block`
+   继续；全面“所有角色动画”前则必须补齐内联分支。`0x00121119` TRAN 的最终
+   scale/reference-frame 仍未标定，故还不能生成可信 glTF translation。
+
+### 🆕 2026-09-14：旧教程 P3DAddon 的只读静态审计成果
+
+- 已按 archive 原路径重新提取并审阅10个 P3DAddon Python 文件；P1/P2 都是
+  mesh/UV/normal/weight/skeleton 的导入导出路径，没有 animation/keyframe/TRAN/ZLIB
+  实现。旧工具没有被安装、加载或执行。
+- `Nixson.Prototype1.dll` / `Nixson.Prototype2.dll` 的静态元数据同样只显示 mesh/
+  skeleton 操作；未发现 Alex 外部 channel IDs 的实现。
+- 工具包捆绑、比仓库旧源码更丰富的 `Gibbed.Prototype.FileFormats.dll` 则给出一条
+  可验证线索：`[KnownType(0x00121401)]` 精确归属为 `AnimationLimbReference`，其
+  静态 IL 是 `Limb = ReadStringAlignedU8()` 后原样读写固定24字节`Unknown`。
+  私有 Alex 全量只读验证：533个 PTRN 都恰有4项，固定为`leg_left`/`leg_right`/
+  `arm_left`/`arm_right`。decoder 已无损输出它们的 name、chunk offset、24-byte hex，
+  合成测试和全部533个 PTRN 的 reference-outer-layout 检查均通过。
+- 这四项与四个双通道 limb group 共现，是 TRAN 标定的有价值线索；但 DLL 本身没有
+  解释24字节，因此**绝不能**把其中的任何数擅自认定为 translation scale/offset。
+  详情：`docs/p3daddon-static-audit.md` 和`docs/animation_format.md` §2.1。
 
 ### 🐛 本轮修复的两个严重bug（教训写在这里，避免以后重犯同类错误）
 
@@ -242,8 +260,9 @@ Prototype/`）下 `art.rcf` 里的全部条目名，找出这些角色对应的�
 | memory_imaged=0老式顶点格式 | ✅ 完整解码 | vertex_format.md 第8d节 |
 | 骨架层级Skeleton_2 | ✅ 完整解码+落地验证 | vertex_format.md 第9节 |
 | 三份骨架(body/arms/left_arm)等价性 | ✅ 已验证可共享 | 见下方"关键数据点" |
-| 动画数据组织范式 | ✅ 完整逆向，未接入glTF | animation_format.md 全文 |
-| 动画TRAN位移缩放系数 | ❌ 未标定 | animation_format.md 第6节"尚待验证" |
+| 外部 ZLIB animation family | ✅ 严格解码，未接入glTF | animation_format.md 第2–4、7节 |
+| 标准内联 / `0x00121118` animation channels | 🟡 已识别，尚未解码 | animation_format.md 第5–6节 |
+| 动画 TRAN 位移 scale/reference frame | ❌ 未标定 | animation_format.md 第6节"尚待验证" |
 
 ## 关键数据点（避免重新查一遍）
 
@@ -257,19 +276,18 @@ Prototype/`）下 `art.rcf` 里的全部条目名，找出这些角色对应的�
   导出统一用 `alex_reg_body_skeleton` 作为共享骨架（已在
   `export_alex_full.py`里做了运行时断言校验这个假设，换角色时如果
   断言失败会报错提醒，不会静默出错）。
-- **动画数量**：`alex.p3d.rz` 内嵌 **634个** `Animation`(0x121000) chunk，
-  命名规则 `alex_act_<动作名>[_变体][_camN]`，`type`字段为 `PTRN`(骨骼
-  动画)或`CAM `(摄像机动画，未深入分析，理论上应该复用同一套
-  Group/Channel机制)。
+- **动画数量**：`alex.p3d.rz` 内嵌 **634个** `Animation`(0x121000) chunk：
+  533个`PTRN`（骨骼）、67个`CAM`、34个`EXP`。`PTRN` 使用外部 ZLIB 和标准内联
+  channel 的混合布局；不可假定 CAM/EXP 与其结构完全相同。
 
 ## 环境/基础设施现状（怎么连上用户的真实游戏文件）
 
 - 用户本地运行 `run_viewer.sh` 起了一个本地 HTTP API 服务器（代码在
   `viewer/server.py`），通过 Cloudflare Quick Tunnel 暴露一个临时公网 URL。
   **这个 URL 每次用户重开隧道都会变**，当前记录的
-  `https://journalists-fit-snap-buttons.trycloudflare.com` **可能已经
-  失效**——如果新会话开始时这个 URL 连不通，需要请用户重新运行
-  `run_viewer.sh --tunnel` 并把新 URL 发过来。
+  `https://intellectual-delhi-restoration-springfield.trycloudflare.com`；该 URL 每次
+  用户重开隧道都可能变化。若新会话连不通，需要请用户重新运行
+  `run_viewer.sh --tunnel` 并提供新 URL。
 - 该 API 有 `POST /api/self_update` 端点，能让用户那台机器上跑着的
   server 自己从 **GitHub 远程默认分支** fast-forward 到最新 commit 并原端口重启。
   **不要把分支名写死为 `master`**：GitHub 当前只保留默认分支 `main`。新版本
