@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """Synthetic tests for static float2 candidate extraction (not texture decoding)."""
+import io
 import os
 import struct
 import sys
 import unittest
 
+from PIL import Image
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from render_static_uv_candidates import build_metadata_report, extract_candidate_mesh  # noqa: E402
+from render_static_uv_candidates import (  # noqa: E402
+    _software_uv_comparison_png,
+    build_metadata_report,
+    extract_candidate_mesh,
+)
 
 
 def p3d_string(value):
@@ -72,6 +79,13 @@ class StaticUVCandidateTests(unittest.TestCase):
         report = build_metadata_report(mesh, "test.dds", "DXT5", 256, 1024)
         self.assertEqual(report["texture"]["name"], "test.dds")
         self.assertIn("neither offset", report["conclusion_limit"])
+        texture = Image.new("RGBA", (4, 4), (20, 130, 220, 255))
+        texture_stream = io.BytesIO()
+        texture.save(texture_stream, format="PNG")
+        fallback = _software_uv_comparison_png(mesh, texture_stream.getvalue())
+        self.assertTrue(fallback.startswith(b"\x89PNG\r\n\x1a\n"))
+        fallback_image = Image.open(io.BytesIO(fallback))
+        self.assertEqual(fallback_image.size, (880, 616))
 
     def test_refuses_local_geometry_even_if_its_vertex_layout_matches(self):
         data = p3d_file(geometry("vehicleAtOrigin", [group(

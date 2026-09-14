@@ -83,7 +83,11 @@
 
 依赖台账已将 Cell 3 的 `mergedDrawableRootCastShadow` 第 18 个 PrimitiveGroup 的 shader `0c63a8bb069ec0cad9034c69bc28991f` 对应到同 Cell NewShader 的 `color=manhattan_Cell_3_02_plane0` 字符串候选。该 Texture 的嵌入 DDS header 可严格读为 `256×1024`、11 mip、`DXT5`，且带 count-prefixed DDS framing；私有环境已用 DXT5 decoder 成功解码出图像，未将 DDS/PNG 写入仓库。
 
-为避免根据 hash 猜 UV，`tools/world/render_static_uv_candidates.py` 对这个已通过严格三角检查的 group（25,509 顶点、10,704 triangles、68-byte layout）生成了左右并列的私有 WebGL 诊断页：左边读取 `0x00364509 @ offset 24`，右边读取 `0x0036450A @ offset 32`，两者都直接使用文件中的 float2，默认**不**翻转 V；页面只提供一个显式的 V→1−V 对照开关。此时只能确认两组值均为有限 float2（前者范围约 U `-5.000..5.001`、V `0..0.172`；后者 U `-8.993..13.501`、V `0..0.688`），不能据此自动命名 UV0/UV1。需要在该实际渲染页上目检哪一边给出正常的门窗/立面贴图关系，或是否两边都不正确；在获得该证据前不扩大 UV 规则。
+为避免根据 hash 猜 UV，`tools/world/render_static_uv_candidates.py` 对这个已通过严格三角检查的 group（25,509 顶点、10,704 triangles、68-byte layout）生成了左右并列的私有 WebGL 诊断页：左边读取 `0x00364509 @ offset 24`，右边读取 `0x0036450A @ offset 32`，两者都直接使用文件中的 float2，默认**不**翻转 V；页面只提供一个显式的 V→1−V 对照开关。两组值均为有限 float2（前者范围约 U `-5.000..5.001`、V `0..0.172`；后者 U `-8.993..13.501`、V `0..0.688`）。
+
+workspace 内嵌浏览器无法显示该 WebGL 页时，工具现可同时生成确定性的 CPU/PNG fallback。第二个、信息量更高的回归样本是 Cell 2 的同一 68-byte layout `mergedDrawableRootCastShadow` group 40：24,436 顶点 / 15,837 triangles，shader 的 `color=manhattan_Cell_2_00_plane0` 候选可同 Cell 的 `256×1024` DXT1 Texture 定义匹配。对同一个解码图像、同一份三角形和同一正交相机，原始 `0x00364509 @ 24` 一侧显示出连续、非均一的立面/构件纹理细节；`0x0036450A @ 32` 一侧则在相同区域呈大块近乎纯色/错误采样。该渲染差异足以把 **`0x00364509 @ offset 24` 定为该 68-byte declaration 的“primary color-texture coordinate”候选**，并排除 offset 32 作为这个 color sampler 的等价替代。
+
+这个结论仍有明确上限：尚未决定该 hash 的通用显示名、没有把 32 命名为第二 UV、没有裁定 V 轴方向，也没有将规则套到其余 28 layouts；normal、tangent、vertex color 和完整 shader 公式也仍需单独回归。
 
 ### `art.rcf` 提供共享美术资源
 
@@ -109,7 +113,7 @@
 
 ## 下一步的可验证工作
 
-1. POSITION + uint16 TriangleList 的 core-only 诊断已在 Cell 2 / 3 通过；先目检 Cell 3 group 18 的两个真实 float2/texture 渲染候选，再把有证据的 UV 映射扩到同 declaration layout；NORMAL、颜色和其余 29 layouts 仍不能从 hash 外观猜名称；
+1. POSITION + uint16 TriangleList 的 core-only 诊断已在 Cell 2 / 3 通过；68-byte declaration 的 primary color-texture candidate 已在 Cell 2 group 40 获得 `0x00364509 @ 24` 的渲染证据。下一步验证 NORMAL / tangent / vertex color，再只把已验证部分扩到相同 declaration；其余 28 layouts 仍不能从 hash 外观猜名称；
 2. 对照 Cell 的 PrimitiveGroup shader 名和 `art.rcf` 的纹理资源，建立只含引用名的材质依赖表；
 3. 用 `mergedDrawableRoot*` 的 2–4 个空间相邻 Cell 做低细节**有材质**拼装预览，检查 seam / 坐标 / UV；不混入 local-space Geometry 或 gameplay `_ft`；
 4. 只有在相邻 Cell 无错位、UV/纹理绑定正常后，才扩到 143 个有合并世界根的非空基础 Cell；

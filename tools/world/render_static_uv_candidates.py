@@ -287,6 +287,105 @@ canvas.addEventListener('pointerdown',e=>{drag=[e.clientX,e.clientY];canvas.setP
             .replace("__DATA__", data))
 
 
+def _software_uv_comparison_png(mesh: CandidateMesh, texture_png: bytes) -> bytes:
+    """Software-render a private A/B UV comparison for viewers without WebGL.
+
+    This is an orthographic diagnostic rasterizer, not a game renderer: it
+    does no lighting, normal mapping, alpha processing, mip selection or
+    perspective correction.  Its narrow value is that it applies each source
+    float2 stream to the exact same validated triangles and decoded texels,
+    allowing a visible A/B check in the workspace image viewer.
+    """
+    try:
+        import numpy as np
+        from PIL import Image, ImageDraw
+    except ImportError as exc:  # pragma: no cover - setup branch
+        raise RuntimeError("software UV fallback needs numpy and Pillow") from exc
+
+    texture = np.asarray(Image.open(io.BytesIO(texture_png)).convert("RGBA"), dtype=np.uint8)
+    texture_height, texture_width = texture.shape[:2]
+    positions = np.frombuffer(mesh.positions, dtype="<f4").reshape(-1, 3).astype(np.float64)
+    indices = np.frombuffer(mesh.indices, dtype="<u2").reshape(-1, 3)
+    center = (positions.min(axis=0) + positions.max(axis=0)) * 0.5
+    extent = float(np.max(positions.max(axis=0) - positions.min(axis=0)))
+    # Stable diagonal view chosen only from the world bounds; it makes the
+    # compare reproducible without treating an unverified normal as a camera
+    # or culling input.
+    eye = center + np.array([0.95, 0.72, 1.18]) * max(extent, 1.0) * 1.7
+    forward = center - eye
+    forward /= np.linalg.norm(forward)
+    right = np.cross(forward, np.array([0.0, 1.0, 0.0]))
+    right /= np.linalg.norm(right)
+    up = np.cross(right, forward)
+    projected_x = (positions - center) @ right
+    projected_y = (positions - center) @ up
+    depth = (positions - eye) @ forward
+    span_x = float(projected_x.max() - projected_x.min()) or 1.0
+    span_y = float(projected_y.max() - projected_y.min()) or 1.0
+    scale = max(span_x / 420.0, span_y / 500.0) * 1.08
+    pane_width, pane_height, header = 440, 548, 68
+    x = (projected_x - (projected_x.min() + projected_x.max()) * 0.5) / scale + pane_width * 0.5
+    y = -(projected_y - (projected_y.min() + projected_y.max()) * 0.5) / scale + pane_height * 0.5
+
+    def render(uv_bytes: bytes) -> Image.Image:
+        uv = np.frombuffer(uv_bytes, dtype="<f4").reshape(-1, 2).astype(np.float64)
+        pixels = np.zeros((pane_height, pane_width, 4), dtype=np.uint8)
+        pixels[:, :, :] = (6, 18, 27, 255)
+        zbuffer = np.full((pane_height, pane_width), np.inf, dtype=np.float64)
+        for tri in indices:
+            ids = tri.astype(np.int64)
+            px, py = x[ids], y[ids]
+            min_x = max(0, int(math.floor(px.min())))
+            max_x = min(pane_width - 1, int(math.ceil(px.max())))
+            min_y = max(0, int(math.floor(py.min())))
+            max_y = min(pane_height - 1, int(math.ceil(py.max())))
+            if min_x > max_x or min_y > max_y:
+                continue
+            denominator = (py[1] - py[2]) * (px[0] - px[2]) + (px[2] - px[1]) * (py[0] - py[2])
+            if abs(denominator) < 1e-10:
+                continue
+            grid_y, grid_x = np.mgrid[min_y:max_y + 1, min_x:max_x + 1]
+            grid_x = grid_x.astype(np.float64) + 0.5
+            grid_y = grid_y.astype(np.float64) + 0.5
+            weight0 = ((py[1] - py[2]) * (grid_x - px[2]) + (px[2] - px[1]) * (grid_y - py[2])) / denominator
+            weight1 = ((py[2] - py[0]) * (grid_x - px[2]) + (px[0] - px[2]) * (grid_y - py[2])) / denominator
+            weight2 = 1.0 - weight0 - weight1
+            inside = (weight0 >= -1e-8) & (weight1 >= -1e-8) & (weight2 >= -1e-8)
+            tri_depth = weight0 * depth[ids[0]] + weight1 * depth[ids[1]] + weight2 * depth[ids[2]]
+            local_depth = zbuffer[min_y:max_y + 1, min_x:max_x + 1]
+            take = inside & (tri_depth < local_depth)
+            if not np.any(take):
+                continue
+            u = weight0 * uv[ids[0], 0] + weight1 * uv[ids[1], 0] + weight2 * uv[ids[2], 0]
+            v = weight0 * uv[ids[0], 1] + weight1 * uv[ids[1], 1] + weight2 * uv[ids[2], 1]
+            tex_x = np.floor(np.mod(u, 1.0) * texture_width).astype(np.int64) % texture_width
+            tex_y = np.floor(np.mod(v, 1.0) * texture_height).astype(np.int64) % texture_height
+            local_pixels = pixels[min_y:max_y + 1, min_x:max_x + 1]
+            sampled = texture[tex_y, tex_x]
+            # Treat texture alpha as opaque intentionally: alpha/material
+            # behavior is not within this UV-only diagnostic's claim.
+            sampled[:, :, 3] = 255
+            local_pixels[take] = sampled[take]
+            local_depth[take] = tri_depth[take]
+        return Image.fromarray(pixels, mode="RGBA")
+
+    left = render(mesh.uv_streams[0][2])
+    right_image = render(mesh.uv_streams[1][2])
+    canvas = Image.new("RGBA", (pane_width * 2, pane_height + header), (5, 13, 20, 255))
+    canvas.alpha_composite(left, (0, header))
+    canvas.alpha_composite(right_image, (pane_width, header))
+    draw = ImageDraw.Draw(canvas)
+    draw.rectangle((0, 0, pane_width * 2 - 1, header - 1), fill=(11, 31, 42, 255))
+    first, second = mesh.uv_streams
+    draw.text((12, 11), "STATIC UV CANDIDATE A/B - SOFTWARE FALLBACK", fill=(181, 226, 154, 255))
+    draw.text((12, 35), f"A: {first[1]} @ {first[0]}  |  original float2", fill=(218, 233, 242, 255))
+    draw.text((pane_width + 12, 35), f"B: {second[1]} @ {second[0]}  |  original float2", fill=(218, 233, 242, 255))
+    draw.line((pane_width, header, pane_width, pane_height + header), fill=(79, 116, 130, 255), width=1)
+    stream = io.BytesIO()
+    canvas.save(stream, format="PNG")
+    return stream.getvalue()
+
+
 def _fetch_raw(base_url: str, rcf_path: str, entry_name: str, timeout: int) -> bytes:
     query = urllib.parse.urlencode({"path": rcf_path, "name": entry_name, "raw": "1"})
     try:
@@ -316,6 +415,22 @@ def _atomic_text(path: str, content: str) -> None:
         raise
 
 
+def _atomic_bytes(path: str, content: bytes) -> None:
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".static_uv_candidates_", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base-url", required=True)
@@ -327,6 +442,7 @@ def main() -> None:
     parser.add_argument("--texture", required=True, help="exact local Texture name to decode")
     parser.add_argument("--out", required=True, help="metadata-only JSON output")
     parser.add_argument("--preview-html", required=True, help="private derived-payload WebGL output")
+    parser.add_argument("--preview-png", help="optional private software-rendered fallback PNG for viewers without WebGL")
     parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args()
 
@@ -343,8 +459,12 @@ def main() -> None:
     }
     _atomic_json(args.out, output)
     _atomic_text(args.preview_html, _preview_html(mesh, report, png))
+    if args.preview_png:
+        _atomic_bytes(args.preview_png, _software_uv_comparison_png(mesh, png))
     print(f"validated {mesh.geometry_name} group {mesh.group_ordinal}: {len(mesh.positions)//12} vertices, {mesh.triangle_count} triangles")
     print(f"decoded {args.texture}: {width}x{height} {algorithm}; wrote private preview {args.preview_html}")
+    if args.preview_png:
+        print(f"wrote software fallback PNG {args.preview_png}")
     print(f"wrote metadata-only report {args.out}")
 
 
