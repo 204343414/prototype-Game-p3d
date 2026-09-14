@@ -111,3 +111,43 @@ padding省略场景。标准内联 channel 的解码是独立待办，当前不�
 下一步是把 decoder 结果同 Alex bind pose 对照，给 TRAN 建立有证据、可回归的标定，
 然后才增加 glTF animation channels/samplers。生成自真实游戏条目的 `.p3d` 和 JSON
 不可提交进 Git。
+
+## 8. 窄范围 glTF ROT-only 实验导出器（已落地，但不是完整动画支持）
+
+`tools/p3d_export/export_rotation_animation_experimental.py` 将由
+`decode_animation.py` 生成的本地诊断 JSON 追加到一个本地静态 GLB：
+
+```bash
+python3 tools/p3d_export/export_rotation_animation_experimental.py \
+  --static-glb path/to/static.glb \
+  --animation-json path/to/decoded-ptrn.json \
+  --out path/to/animated-rot-only.glb
+```
+
+它的刻意边界如下：
+
+- 仅接受 `PTRN`，且仅写入已验证的 `ROT` 为 glTF `rotation` 通道；解出的
+  `[x,y,z,w]` 四元数按原值写入（无反转、无 bind 乘法）。
+- 按 group/bone 名匹配静态 GLB node；没有相应 node 的 limb ROT 会明确列入
+  `skipped_non_node_rotations`。
+- 静态 Alex 导出器的骨骼 node 是矩阵形式，而 glTF 禁止动画目标同时使用
+  `matrix`。该工具会先把每个无 shear 的仿射 local matrix 无损分解为 TRS；
+  遇到退化或 shear 矩阵会失败，不会猜测近似结果。
+- 所有 `TRAN`，包括 `Character_Root`、`Spine_1`、wrist grapple 以及四个
+  limb reference group，都会明确跳过并列入 `skipped_translation_groups`；
+  因此输出不含根运动，也不能视为动作的完整还原。
+- 仍以 `LINEAR` 写入关键帧：这是根据当前外部 family 的 `InterpMode=-1`
+  观察作出的暂定选择，不外推到未解码的内联 channel family。
+
+这个工具应配合当前版本的静态 Alex 导出器使用。后者已修正一个只有在播放时
+才会暴露的蒙皮槽位错误：P3D 三个序列化 weight 分别对应前三个序列化
+matrix-index 字节，最后一个 index 的 weight 为 `1-sum`，故 glTF
+`WEIGHTS_0` 是 `[stored0, stored1, stored2, 1-sum]`。旧的循环移位排列在
+bind pose 中也会显示正确（所有 skin matrix 都是 identity），但实际 ROT
+播放会使网格严重撕裂；该规律已纳入导出器和合成回归测试。
+
+私有 Alex `alex_act_block` 垂直切片已用于可视化验证：输出 48 条真实骨骼
+ROT track、无 matrix node；四个没有对应静态 node 的 limb ROT 与 8 个
+TRAN group 被显式跳过。以固定的开始、中段、结束时间渲染时，角色始终保持
+连贯人体蒙皮并有可见姿势变化。此验证只证明这个 **ROT-only** 切片以及上述
+weight 对齐；它不标定 `0x00121119`，不代表所有角色/所有动画均已支持。

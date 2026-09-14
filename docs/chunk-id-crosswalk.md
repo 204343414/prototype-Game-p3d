@@ -24,7 +24,7 @@
 | 顶点法线列表 | 同上未知 | — | `0x00010006` (`Normal_List`) | `NormalListChunk` | ❓ | 同上，结构：uint32 Count + Vector3[] |
 | UV 列表 | 同上未知 | — | `0x00010007` (`UV_List`) | `UVListChunk` | ❓ | 结构：int32 NumUVs + uint32 Channel + Vector2[]，注意 Channel 字段在 Count 后面 |
 | 索引列表 | 同上未知 | — | `0x0001000A` (`Index_List`) | `IndexListChunk` | ❓ | 结构：uint32 NumIndices + uint32[] |
-| 权重列表（蒙皮） | 同上未知 | — | `0x0001000C` (`Weight_List`) | `WeightListChunk` | ❓ | 结构：uint32 NumWeights + Vector3[]（每个顶点最多3个权重，第4个隐含为 1-sum） |
+| 权重列表（蒙皮） | 同上未知 | — | `0x0001000C` (`Weight_List`) | `WeightListChunk` | ❓ | 结构：uint32 NumWeights + Vector3[]；Prototype实测：三个序列化权重依次配对前三个原始索引槽，第4槽权重隐含为 `1-sum`。 |
 | 矩阵索引（每顶点绑定的骨骼） | 同上未知 | — | `0x0001000B` (`Matrix_List`) / `0x0001000D` (`Matrix_Palette`) | `MatrixListChunk` / `MatrixPaletteChunk` | ❓ | Matrix_List: 每顶点 4 个 byte（骨骼索引，ABCD 顺序注意是倒序写入 DCBA）；Matrix_Palette: uint32 数组，是 PrimitiveGroup 用到的全局骨骼索引表 |
 | 骨骼容器 | `0x00023000` | `Skeleton` | `0x00023000` (`Skeleton_2`) | `Skeleton2Chunk` | ✅ | 字段一致：Name, Version, NumJoints, NumPartitions, NumLimbs。**注意 H&R 还有一个更老的 `Skeleton`=`0x4500`，Prototype 用的是新版 ID，对应 H&R 的 `Skeleton_2`，不要弄混** |
 | 骨骼关节 | *(子chunk，Prototype端未见对应)* | — | `0x00023001` (`Skeleton_Joint_2`) | `SkeletonJoint2Chunk` | ❓ | 结构：Name(P3DString), Parent(uint32,父关节索引), RestPose(Matrix4x4，绑定姿势矩阵)。**比老版 SkeletonJointChunk (0x4501) 简单很多**，没有 DOF/FreeAxis 等编辑器专用字段 |

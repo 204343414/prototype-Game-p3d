@@ -31,6 +31,8 @@ import sys
 
 import numpy as np
 
+from skinning import p3d_stored_weights_to_gltf
+
 try:
     import texture2ddecoder
 except ImportError:
@@ -230,7 +232,7 @@ def parse_vertex_buffer_56(payload: bytes, num_vertices: int):
         ("normal", "<f4", 3),
         ("tangent", "<f4", 3),
         ("tangent_w", "<f4"),
-        ("blend_weight_123", "<f4", 3),
+        ("stored_blend_weights", "<f4", 3),
         ("blend_index", "u1", 4),
     ])
     arr = np.frombuffer(payload, dtype=dt, count=num_vertices)
@@ -529,7 +531,7 @@ def main():
 
             positions = vbuf_56["position"].astype(np.float32)
             normals = vbuf_56["normal"].astype(np.float32)
-            blend_weight_123 = vbuf_56["blend_weight_123"].astype(np.float32)
+            stored_blend_weights = vbuf_56["stored_blend_weights"].astype(np.float32)
             blend_index = vbuf_56["blend_index"].astype(np.uint8)
             uvs = vbuf_12["uv"].astype(np.float32)
             colors = vbuf_12["color"]
@@ -549,13 +551,13 @@ def main():
             uvs = uvs.astype(np.float32)
             colors = parse_colour_list(raw_by_type["0x00010008"])
             blend_index_arr = parse_blend_index_list(raw_by_type["0x0001000B"])
-            blend_weight_123 = parse_count_prefixed_f32_array(raw_by_type["0x0001000C"], 3).astype(np.float32)
+            stored_blend_weights = parse_count_prefixed_f32_array(raw_by_type["0x0001000C"], 3).astype(np.float32)
             matrix_palette = parse_matrix_palette(raw_by_type["0x0001000D"])
             indices = parse_index_list_u32(raw_by_type["0x0001000A"]).astype(np.uint32)
             blend_index = blend_index_arr.astype(np.uint8)
 
             assert len(positions) == nv and len(normals) == nv and len(uvs) == nv \
-                and len(colors) == nv and len(blend_index) == nv and len(blend_weight_123) == nv, \
+                and len(colors) == nv and len(blend_index) == nv and len(stored_blend_weights) == nv, \
                 f"Skin {pname}: List长度与num_vertices不一致"
             assert len(matrix_palette) == pg_header["num_matrices"]
 
@@ -563,7 +565,7 @@ def main():
             name=pname,
             positions=positions,
             normals=normals,
-            blend_weight_123=blend_weight_123,
+            stored_blend_weights=stored_blend_weights,
             blend_index=blend_index,
             uvs=uvs,
             colors=colors,
@@ -828,10 +830,11 @@ def build_glb(out_path, joints, joint_names, world_mats, meshes_data, mesh_textu
         color_bv = add_buffer_view(color_u8.tobytes(), target=pygltflib.ARRAY_BUFFER)
         color_acc = add_accessor(color_bv, pygltflib.FLOAT, n_vert, "VEC4")
 
-        # 权重: w0 = 1-(w1+w2+w3), 拼成 VEC4
-        w123 = m["blend_weight_123"]
-        w0 = 1.0 - w123.sum(axis=1, keepdims=True)
-        weights4 = np.concatenate([w0, w123], axis=1).astype(np.float32)
+        # P3D 的三个序列化权重依次对应前三个原始矩阵索引字节；
+        # 第四个索引对应隐含的 1-sum 权重。绑定姿势中任何槽位排列都
+        # 看不出来，只有实际播放骨骼旋转时才能验证该对齐关系。
+        stored_weights = m["stored_blend_weights"]
+        weights4 = p3d_stored_weights_to_gltf(stored_weights)
         weights_bv = add_buffer_view(weights4.tobytes(), target=pygltflib.ARRAY_BUFFER)
         weights_acc = add_accessor(weights_bv, pygltflib.FLOAT, n_vert, "VEC4")
 

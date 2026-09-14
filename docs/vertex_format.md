@@ -90,11 +90,16 @@ offset  size  field
 24      12    tangent:  Vector3 (float x,y,z)       # 单位向量，验证：|tangent|≈1.0000 (全部顶点)
 36      4     tangent_w: float                       # 副切线手性(handedness)，只取 -1.0 或 +1.0 两个值
                                                        # (bitangent = cross(normal, tangent) * tangent_w)
-40      4     blend_weight[1]: float                 # 第2根骨骼权重
-44      4     blend_weight[2]: float                 # 第3根骨骼权重
-48      4     blend_weight[3]: float                 # 第4根骨骼权重
-                                                       # 第1根骨骼权重是隐含的: w0 = 1 - (w1+w2+w3)
-                                                       # 验证：w0+w1+w2+w3 恒为1（w0隐含算出恒>=0，无负值溢出）
+40      4     stored_blend_weight[0]: float          # 对应第1个序列化 matrix-index 字节
+44      4     stored_blend_weight[1]: float          # 对应第2个序列化 matrix-index 字节
+48      4     stored_blend_weight[2]: float          # 对应第3个序列化 matrix-index 字节
+                                                       # 第4个序列化 matrix-index 字节的权重隐含为
+                                                       # w3 = 1 - (w0+w1+w2)
+                                                       # 验证：四项权重和恒为1（隐含w3恒>=0，无负值溢出）
+                                                       # 此槽位配对已用真实 Alex 的 ROT 播放验证：
+                                                       # glTF WEIGHTS_0 必须为 [stored0,stored1,stored2,w3]；
+                                                       # 旧的 [w3,stored0,stored1,stored2] 仅在bind pose下看似正常，
+                                                       # 播放时会发生严重错误蒙皮。
 52      1     blend_index[0]: uint8                  # 索引进 Matrix_Palette (0..num_matrices-1)
 53      1     blend_index[1]: uint8
 54      1     blend_index[2]: uint8
@@ -200,7 +205,7 @@ uint16 unknown       # 剩余2字节，观测到 0x0001 或 0x0000，可能是"�
 | 0      | 56           | 3               | position (Vector3)            |
 | 12     | 56           | 3               | normal (Vector3, 单位向量)     |
 | 24     | 56           | 4               | tangent + tangent_w (Vector4) |
-| 40     | 56           | 3               | blend_weight[1..3] (3×float)  |
+| 40     | 56           | 3               | stored_blend_weight[0..2] (3×float；第4项为隐含残差)  |
 | 52     | 56           | 4               | blend_index[0..3] (4×uint8)   |
 
 **12字节/顶点缓冲（field_c=1）的声明表实测（2个属性，与第3b节完全吻合）**：
@@ -533,7 +538,7 @@ Texture(global_index=8): name="alex_body_sm.dds", 512x512, alpha_depth=1
 | `0x00010007` | UV_List | count(u32)+**channel(u32)**+count×Vector2 | 1268条，channel=0 |
 | `0x00010008` | Colour_List | count + count×uint32(打包RGBA) | 1268条，全部=0xFFFFFFFF(纯白) |
 | `0x0001000B` | (netp3dlib命名Matrix_List，**实测本模型语义是blend_index**) | count + count×byte[4] | 1268条，取值范围[0,9]，精确等于`< num_matrices=10`，与主格式`blend_index`字段语义完全一致 |
-| `0x0001000C` | Weight_List | count + count×Vector3 | 1268条，即`blend_weight[1..3]`，w0=1-sum，sum∈(0.8,1.0]，与主格式weight语义一致 |
+| `0x0001000C` | Weight_List | count + count×Vector3 | 1268条，即前三个序列化权重；第4个序列化索引的权重为`1-sum`，sum∈(0.8,1.0]，与主格式weight语义一致 |
 | `0x0001000A` | Index_List | count + count×**uint32**（注意不是16位！） | 3594个，取值范围[0,1267]=`[0,num_vertices-1]` |
 | `0x0001000D` | Matrix_Palette | 同第5节，无变化 | count=10，与`num_matrices`一致 |
 | `0x00010028` | (未在参考库中命名，实测是Tangent+W) | count + count×Vector4 | 1268条，xyz单位向量，w∈{-1,+1} —— 与主格式`tangent+tangent_w`字段完全对应 |
@@ -677,7 +682,7 @@ world[i] = rest_pose[i] * world[parent[i]]   (i != 0)     # 矩阵乘法顺序�
 是否为整数来验证头部大小和记录数假设；对已进入具体字段阶段，进一步用
 物理约束做交叉验证：
 - 法线/切线应为单位向量（模长≈1.0）
-- 骨骼混合权重之和应 ≤ 1.0（含隐含的第一权重）
+- 骨骼混合权重之和应 ≤ 1.0（含第4个索引对应的隐含残差权重）
 - 骨骼索引应在 [0, num_matrices-1] 范围内
 - 顶点色/UV 等值域应落在合理范围（如颜色分量0-255，UV常见于[-1,1]或[0,1]附近）
 
