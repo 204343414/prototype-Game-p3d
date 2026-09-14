@@ -28,10 +28,24 @@ import json
 import mimetypes
 import os
 import socketserver
+import struct
+import sys
 import urllib.parse
+
+# Reuse the already-verified generic Pure3D chunk walker instead of
+# duplicating chunk-tree logic here. This lets a collaborating AI ask the
+# server to parse a real .p3d file server-side and get back structured
+# JSON, instead of having to transfer/hexdump the whole binary file over
+# the (potentially slow/unreliable) tunnel just to see its chunk tree.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "p3d_parser"))
+try:
+    import inspect_p3d  # noqa: E402
+except ImportError:
+    inspect_p3d = None
 
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -88,6 +102,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_browse(qs)
         if parsed.path == "/api/file":
             return self._handle_file(qs)
+        if parsed.path == "/api/hexdump":
+            return self._handle_hexdump(qs)
+        if parsed.path == "/api/p3d":
+            return self._handle_p3d(qs)
         if parsed.path == "/api/health":
             return self._send_json({"ok": True, "root": self.root_dir})
 
@@ -161,6 +179,129 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if not chunk:
                     break
                 self.wfile.write(chunk)
+
+    def _handle_hexdump(self, qs):
+        """Read a byte range of an arbitrary local file and return it as
+        JSON (hex string + best-effort ASCII preview), for safely inspecting
+        binary files (like real game .rcf/.p3d archives) over the tunnel
+        without risking bytes getting mangled by a text/markdown-oriented
+        page fetcher.
+
+        Query params:
+          path   - required, absolute path to the file
+          offset - byte offset to start at (default 0)
+          length - number of bytes to read (default 256, max 65536 to keep
+                   responses small and fast over a tunnel)
+        """
+        path = qs.get("path", [None])[0]
+        if not path:
+            return self._send_error_json("missing ?path=", 400)
+        try:
+            target = self._safe_resolve(path)
+        except PermissionError as e:
+            return self._send_error_json(str(e), 403)
+
+        if not os.path.isfile(target):
+            return self._send_error_json(f"not a file: {target}", 404)
+
+        try:
+            offset = int(qs.get("offset", ["0"])[0])
+            length = int(qs.get("length", ["256"])[0])
+        except ValueError:
+            return self._send_error_json("offset/length must be integers", 400)
+
+        length = max(0, min(length, 65536))
+        file_size = os.path.getsize(target)
+
+        with open(target, "rb") as f:
+            f.seek(offset)
+            data = f.read(length)
+
+        ascii_preview = "".join(chr(b) if 32 <= b < 127 else "." for b in data)
+        self._send_json({
+            "path": target,
+            "file_size": file_size,
+            "offset": offset,
+            "length": len(data),
+            "hex": data.hex(),
+            "ascii": ascii_preview,
+        })
+
+    def _handle_p3d(self, qs):
+        """Parse a local .p3d file server-side using the already-verified
+        tools/p3d_parser/inspect_p3d.py chunk walker, and return the chunk
+        tree as structured JSON. This lets a collaborating AI inspect a
+        real game .p3d file's structure without transferring the whole
+        (potentially large) binary file over the tunnel.
+
+        Query params:
+          path        - required, absolute path to a .p3d file
+          max_depth   - optional, limit recursion depth (default: unlimited)
+          payload_preview - optional, how many bytes of each chunk's payload
+                       to include as a hex preview (default 32, max 256)
+        """
+        if inspect_p3d is None:
+            return self._send_error_json("inspect_p3d module not available on server", 500)
+
+        path = qs.get("path", [None])[0]
+        if not path:
+            return self._send_error_json("missing ?path=", 400)
+        try:
+            target = self._safe_resolve(path)
+        except PermissionError as e:
+            return self._send_error_json(str(e), 403)
+
+        if not os.path.isfile(target):
+            return self._send_error_json(f"not a file: {target}", 404)
+
+        max_depth = qs.get("max_depth", [None])[0]
+        max_depth = int(max_depth) if max_depth is not None else None
+        payload_preview = int(qs.get("payload_preview", ["32"])[0])
+        payload_preview = max(0, min(payload_preview, 256))
+
+        try:
+            with open(target, "rb") as f:
+                data = f.read()
+
+            if len(data) < 12:
+                return self._send_error_json("file too small to be a Pure3D file", 400)
+
+            magic, = struct.unpack("<I", data[0:4])
+            if magic == inspect_p3d.SIG_LE:
+                endian = "<"
+            elif magic == inspect_p3d.SIG_LE_SWAPPED:
+                endian = ">"
+            else:
+                return self._send_error_json(
+                    f"not a Pure3D file (magic bytes = {data[0:4].hex()})", 400)
+
+            header_size, = struct.unpack(endian + "I", data[4:8])
+            total_size, = struct.unpack(endian + "I", data[8:12])
+
+            out = []
+            inspect_p3d.dump_chunk(data, 12, total_size, endian, 0, out, max_depth)
+
+            chunks = []
+            for depth, type_id, hdr_size, tot_size, payload in out:
+                chunks.append({
+                    "depth": depth,
+                    "type_id": f"0x{type_id:08X}",
+                    "header_size": hdr_size,
+                    "total_size": tot_size,
+                    "payload_len": len(payload),
+                    "payload_hex_preview": payload[:payload_preview].hex(),
+                })
+
+            self._send_json({
+                "path": target,
+                "file_size": len(data),
+                "endian": "LE" if endian == "<" else "BE",
+                "declared_total_size": total_size,
+                "chunk_count": len(chunks),
+                "chunks": chunks,
+            })
+        except Exception as e:  # noqa: BLE001 - surface parse errors to the caller
+            return self._send_error_json(f"parse error: {type(e).__name__}: {e}", 500)
 
     def _handle_static(self, url_path):
         if url_path == "/":

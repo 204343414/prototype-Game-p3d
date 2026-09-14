@@ -95,7 +95,62 @@ def main():
         assert status == 200
         assert b"<html" in body.lower()
 
-        print("OK: viewer/server.py smoke test passed (browse + file APIs, root confinement, static frontend)")
+        # --- /api/hexdump ---
+        binfile = os.path.join(tmpdir, "binary.dat")
+        with open(binfile, "wb") as f:
+            f.write(bytes(range(256)))  # 0x00..0xFF, easy to verify hex output
+
+        status, body = get(base + f"/api/hexdump?path={binfile}&offset=0&length=16")
+        assert status == 200, (status, body)
+        data = json.loads(body)
+        assert data["hex"] == bytes(range(16)).hex(), data
+        assert data["file_size"] == 256
+        assert data["length"] == 16
+
+        status, body = get(base + f"/api/hexdump?path={binfile}&offset=250&length=100")
+        data = json.loads(body)
+        assert data["length"] == 6, data  # clamped to actual remaining bytes
+
+        status, body = get(base + "/api/hexdump?path=/etc/passwd")
+        assert status == 403, (status, body)
+
+        # --- /api/p3d ---
+        # Build a minimal synthetic Pure3D file: root chunk containing one
+        # child chunk, matching the format inspect_p3d.py already parses
+        # (and which real .p3d samples in references/gibbed-prototype have
+        # been verified against).
+        import struct as _struct
+
+        def build_chunk(type_id, payload, children_bytes=b""):
+            header_size = 12 + len(payload)
+            total_size = header_size + len(children_bytes)
+            return (_struct.pack("<III", type_id, header_size, total_size)
+                    + payload + children_bytes)
+
+        child = build_chunk(0x00019001, b"hello-payload")
+        root_payload = b""
+        root = build_chunk(0xFF443350, root_payload, child)
+        # inspect_p3d expects the very first 12 bytes to be the file-level
+        # magic/header_size/total_size, then chunk data starting at offset 12
+        p3d_bytes = root
+
+        p3dfile = os.path.join(tmpdir, "sample.p3d")
+        with open(p3dfile, "wb") as f:
+            f.write(p3d_bytes)
+
+        status, body = get(base + f"/api/p3d?path={p3dfile}")
+        assert status == 200, (status, body)
+        data = json.loads(body)
+        assert data["endian"] == "LE", data
+        assert data["chunk_count"] == 1, data
+        assert data["chunks"][0]["type_id"] == "0x00019001", data
+        assert data["chunks"][0]["payload_len"] == len(b"hello-payload")
+
+        status, body = get(base + "/api/p3d?path=/etc/passwd")
+        assert status in (400, 403), (status, body)
+
+        print("OK: viewer/server.py smoke test passed "
+              "(browse + file + hexdump + p3d APIs, root confinement, static frontend)")
     finally:
         proc.terminate()
         try:
