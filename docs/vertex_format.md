@@ -212,16 +212,117 @@ Bounding_Sphere: center=(0.0000, 0.9415, -0.0253) radius=0.9891
               —— 与从上述AABB计算出的中心点和半对角线长度精确吻合到小数点后6位（已验证）
 ```
 
-## 8. 待解码（后续步骤）
+## 9. Skeleton_2 / Skeleton_Joint_2 —— 骨架层级与静止姿势矩阵，已完整解码并验证
+
+Alex 用的是"2"版本骨架格式（`Skeleton_2 = 0x00023000`,
+`Skeleton_Joint_2 = 0x00023001`；老版本 `Skeleton=0x4500` /
+`Skeleton_Joint=0x4501` 在本模型中未使用）。定位方式：
+`type_filter=0x00023000` 枚举出 `alex_reg_arms_skeleton` 等骨架节点。
+
+### 9.1 Skeleton_2 (0x00023000) 头部
+
+```
+StringAlignedU8 name          # 骨架名，如 "alex_reg_arms_skeleton"
+uint32          version       # 实测=1
+uint32          num_joints    # 实测=67
+uint32          num_partitions# 实测=13（对应 Skeleton_Partition 子chunk数，未展开分析）
+uint32          num_limbs     # 实测=4（用途未知，可能与IK链或武器挂点分组有关）
+```
+注意 `StringAlignedU8` 在此处的语义与 gibbed-prototype 的
+`ReadStringAlignedU8`说明文字略有出入但字节布局一致：**长度字节存的
+是"补零对齐到4字节倍数后的字符串字段总长度"（不含长度字节本身），
+不是原始字符串长度**——例如 `"alex_reg_arms_skeleton"` 长22字符，
+长度字节实测为24（22补齐到24），字符串取前22个非零字符即可（用
+`.rstrip(b'\x00')` 简单处理即可，不需要精确计算补零位数）。
+
+### 9.2 Skeleton_Joint_2 (0x00023001) 每个骨骼节点
+
+```
+StringAlignedU8 name           # 骨骼名，如 "Pelvis", "Hip_L", "Knee_L" ...
+uint32          parent          # 父骨骼在本骨架内的顺序索引（0-based，深度优先出现顺序）
+                                 # 根骨骼(idx=0)的 parent 字段等于自己的索引(0)，即"自环"作为根的标记
+float[16]       rest_pose       # 4x4矩阵，行主序(row-major)，是相对于父骨骼的局部变换
+                                 # （不是世界空间！需要沿父链级联相乘才能得到世界/bind pose矩阵）
+byte[54]        trailing        # 額外54字节，在本模型全部67个骨骼中取值完全相同（见下方hex），
+                                 # 推测是与老版本 SkeletonJointChunk 的
+                                 # DOF/FreeAxis/PrimaryAxis/SecondaryAxis/TwistAxis (5×int32=20字节)
+                                 # 类似的关节约束/IK参数，本模型未使用非默认值，
+                                 # 渲染/蒙皮阶段可以直接忽略，无需解析其内部字段。
+                                 # 完整hex(供参考): 00000000 00000000 00000000 0000803f 0000803f 0000803f
+                                 #   00000000 00000000 00000000 00000000 00000000 00000000 01000100 00000000
+```
+
+矩阵是行主序、行向量约定（`v' = v * M`），级联世界矩阵的算法：
+```
+world[0] = rest_pose[0]                                  # 根节点：局部即世界
+world[i] = rest_pose[i] * world[parent[i]]   (i != 0)     # 矩阵乘法顺序：局部矩阵在左
+```
+
+**验证结果（已用实际67骨骼数据完整通过）**：
+1. 层级结构合法：除根节点(idx=0, `Motion_Root`)外，所有 `parent` 索引均严格小于自身索引
+   （保证是深度优先顺序排列的树，无环、无前向引用）。
+2. 骨骼命名完全符合标准人形骨架拓扑：
+   `Motion_Root → Balance_Root → Character_Root → Pelvis` 分叉出
+   `Hip_L/R → Knee_L/R → Ankle_L/R → Ball_L/R`（双腿）和
+   `Spine_1→2→3 → Clavicle_L/R → Shoulder → Elbow → Forarm → Wrist → 5根手指(Base→中节→End)`（双臂+手指）、
+   `Neck → Head → Jaw/Brow/EyeLid/Eye_L/Eye_R`（面部骨骼）、
+   以及 `Root_Grapple` / `L_Wrist_Grapple` / `R_Wrist_Grapple`（游戏内"钩爪"技能用的挂点骨骼，Prototype特有）。
+3. 局部平移量是合理的人体骨长：大腿(Hip→Knee)长0.44、小腿(Knee→Ankle)长0.42，左右腿骨长完全对称（仅x符号相反）。
+4. 级联计算出的世界坐标构成一个合理的站立人形（T/A-pose）：
+   ```
+   Motion_Root: y=1.0000        (根节点位于身体中部略下)
+   Pelvis:      y=1.0669
+   Hip_L:       y=0.9706, x=0.0996
+   Knee_L:      y=0.5305
+   Ankle_L:     y=0.1130        (接近地面，符合脚踝高度)
+   Head:        y=1.6803        (合理的成年男性身高)
+   Wrist_L:     x=+0.5062, Wrist_R: x=-0.5062  (左右手腕对称，符合T-pose/A-pose张开姿态)
+   ```
+5. **与第5节 Matrix_Palette 的骨骼索引精确吻合**：
+   `alex_reg_body_alex_bodyShape` 的调色板索引 `[18,10,11,9,8,3,12,4,...]`
+   对应到本骨架的 `[Forarm_L, Ankle_R, Ball_R, Knee_R, Hip_R, Pelvis, Spine_1, Hip_L, ...]`
+   —— 全部是身体主干和四肢的骨骼，与"身体网格"应该关联的蒙皮骨骼完全符合直觉，
+   证明 Matrix_Palette 里的索引确实是"索引进同一个骨架的关节顺序列表"这一假设正确。
+
+### 9.3 关键结论：蒙皮渲染完整数据链已打通
+
+至此，从顶点到最终变形姿势的完整数据链已经全部解码并交叉验证：
+```
+顶点.blend_index[k] （0..3, 见第3a节）
+    -> 查 PrimitiveGroup 的 Matrix_Palette（0x0001000D, 见第5节）第k项
+    -> 得到该 PrimitiveGroup 所属骨架（Skeleton_2）内的关节顺序索引
+    -> 查该 Skeleton_Joint_2 的世界/bind-pose矩阵（沿父链级联，见9.2节算法）
+    -> 顶点最终位置 = Σ_k blend_weight[k] * (vertex_local_pos * bindpose_inverse[k] * current_pose[k])
+       （标准线性混合蒙皮 LBS 公式；bindpose_inverse 需要对bind-pose世界矩阵求逆）
+```
+后续导出 glTF 时，可以直接：
+- 把每个 Skeleton_Joint_2 映射成一个 glTF `node`（层级关系用 `parent` 字段还原）
+- 把 rest_pose 矩阵（转置或按 glTF 列主序要求调整）作为节点的 local transform
+- 用级联算出的世界矩阵的逆，作为 glTF skin 的 `inverseBindMatrices`
+- 顶点的 blend_index 需要先通过 Matrix_Palette 转换成"骨架关节顺序索引"，
+  再重新映射成"该 mesh 的 glTF skin.joints 数组下标"（glTF 要求 JOINTS_0
+  attribute 里的索引是相对 skin.joints 数组的局部索引，不是全局骨架索引）
+
+## 10. 待解码（后续步骤，更新）
 
 - `0x00010001` (Skin) 本体的62字节 payload：从 hex 可见明文字符串
   `"alex_reg_body_alex_headShape"` + 数字3 + `"alex_reg_body_skeleton"`，
   推测是"皮肤名 + 关联骨骼数(或版本) + 对应骨架(Skeleton)引用名"的字符串对，
   需要专门解析字符串对齐规则（用第一节的 StringAlignedU8 规则应该可以直接套用）。
+  **这是关键的"哪个PolySkin用哪个Skeleton"的绑定信息，需要尽快解码**，
+  因为一个角色可能有多个骨架（如本例中同时出现了 `alex_reg_arms_skeleton`
+  和 hex 里提到的 `alex_reg_body_skeleton`，需要搞清楚它们的关系——
+  是同一骨架的不同引用名，还是身体和手臂真的用了两套独立骨架）。
 - `0x00010021` (Vertex_Compression_Hint，32字节)：8个uint32，值全是0或0x20(32)，
   用途待查（可能是每个属性的量化精度提示，与压缩/量化有关，正常渲染流程可忽略）。
 - `0x00122000` (Sort_Order，8字节)：2个float，值为(0.0, 0.5)，可能是渲染排序权重，可先忽略。
 - `0x00010017` (Render_Status，4字节)：uint32=1，可能是"是否可见/启用"标志，可先忽略。
+- `Skeleton_Partition` (0x00023002, num_partitions=13个)：用途未知，可能与LOD或蒙皮分组优化有关，
+  正常渲染流程理论上可以忽略，优先级低。
+- Skin (0x00010001) 与 CompositeDrawable 的关系：需要搞清楚一个角色完整模型是如何从多个
+  PolySkin部位 + 多个Skeleton + 材质/贴图引用组装起来的高层结构，这是下一步写导出脚本前
+  必须理清的"总装配图"。
+
 
 ## 验证方法总结（供后续复用）
 
