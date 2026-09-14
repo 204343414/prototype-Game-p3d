@@ -281,6 +281,68 @@ single前缀变体）都各自打包了自己的骨架。这说明**装配一个
 可能需要合并多副骨架**，导出脚本需要按 `skeleton_name` 分组处理，而不能
 假设一个 p3d 文件只有一副骨架。
 
+## 8b. Composite_Drawable_2 (0x00123000) + Composite_Drawable_Primitive (0x00123001)
+    —— 真正的"总装配图"，比 Skin 更高一层，**对未来魔改换装/拆件极其重要**
+
+在 Skin 之上还有一层"部位组"结构，把多个 Skin（Primitive）打包成一个
+逻辑整体，并且**每组可以有自己独立的骨架引用**——这正是 Alex Mercer 能
+把手臂单独变形成武器（刀刃/锤子等）而不牵连身体动画的底层机制。已用
+alex.p3d.rz 全部10个样本（payload 50~119字节不等）100%无余数解析验证。
+
+**Composite_Drawable_2 (0x00123000) 字段格式**：
+```
+uint32            version              # 实测恒为 0
+StringAlignedU8   name                 # 部位组名，如 "alex_reg_body"
+StringAlignedU8   skeleton_name        # 该组绑定的骨架名
+uint32            num_primitives       # 下属 Composite_Drawable_Primitive 数量
+```
+（注意字段顺序与 Skin 不同：version 在最前面，name 在 skeleton_name 之前，
+且没有 name 前导的 skin 自身版本号——两者是姊妹结构但字段顺序不能混用。）
+
+**Composite_Drawable_Primitive (0x00123001) 字段格式**（作为 CD2 的直接子节点，
+数量等于父节点的 num_primitives）：
+```
+uint32            version              # 实测恒为 0
+uint32            create_instance      # 实测恒为 0，用途待查（可能与运行时实例化/池化有关）
+StringAlignedU8   name                 # 引用某个 Skin 的名字（精确对应 Skin chunk 的 name 字段）
+uint32            type                 # 实测恒为 2，可能是"这是一个Skin类型的Drawable"
+                                        # （呼应 Dark Angel 文档里 Drawable::Type 枚举
+                                        # {UNKNOWN,COMPOSITE,GEOMETRY,SKIN}，2很可能就是SKIN，
+                                        # 待更多样本验证其他取值）
+uint32            skeleton_joint_id    # 实测恒为 0，推测是"此部位挂载到骨架的第几号关节"
+                                        # （类似 CompositeDrawableProp 的挂载点，武器/道具类
+                                        # 部位可能会用到非0值，人形本体网格恒为0是合理的）
+```
+
+**alex.p3d.rz 完整"总装配图"清单（10组，全部验证通过）**：
+
+| 部位组 (CD2 name) | 绑定骨架 | 下属 Skin(s) |
+|---|---|---|
+| `alex_reg_arms` | `alex_reg_arms_skeleton` | `alex_reg_arms_alex_armsShape` |
+| `alex_reg_body` | `alex_reg_body_skeleton` | `alex_reg_body_alex_headShape`, `alex_reg_body_AlexVestShape`, `alex_reg_body_alex_bodyShape` |
+| `alex_reg_left_arm` | `alex_reg_left_arm_skeleton` | `alex_reg_left_arm_alex_arms1Shape` |
+| `groundspike_large` | `groundspike_large_skeleton` | `groundspike_large_Groundspike_LargeShape` |
+| `groundspike_mid` | `groundspike_mid_skeleton` | `groundspike_mid_Groundspike_MediumShape` |
+| `groundspike_single_large` | `groundspike_single_large_skeleton` | `groundspike_single_large_Groundspike_Single_LargeShape` |
+| `groundspike_single_mid` | `groundspike_single_mid_skeleton` | `groundspike_single_mid_Groundspike_Single_MediumShape` |
+| `groundspike_single_small` | `groundspike_single_small_skeleton` | `groundspike_single_small_Groundspike_Single_SmallShape` |
+| `groundspike_small` | `groundspike_small_skeleton` | `groundspike_small_Groundspike_SmallShape` |
+
+**魔改/换装应用启示（供以后参考）**：
+- 想给 Alex Mercer 换装/替换外套模型，理论上只需替换 `alex_reg_body` 组下
+  `AlexVestShape` 对应的 Skin + 几何数据，保持同名引用即可被 CD2 正确拾取，
+  不需要动骨架或其他两个部位（头/身体）。
+- 手臂（`alex_reg_arms` 右臂 + `alex_reg_left_arm` 左臂）被拆成两个独立
+  CD2 组、各自独立骨架，说明游戏引擎设计上支持"手臂单独换成武器形态的网格
+  +骨架"而不影响身体——这对做"哪个部位能不能单独抽取/替换"的魔改判断
+  非常关键：**同一 CD2 组内的多个 Skin 共享骨架，不同 CD2 组则完全独立**。
+- `groundspike` 系列证明"技能特效模型"和"角色身体部位"用的是完全相同的
+  CD2+Skin+Skeleton 数据结构，没有特殊格式——技能特效模型的替换/新增
+  理论上遵循同一套逻辑，这对以后想做特效类魔改也是好消息。
+- 再往上应该还有把多个 CD2 组合并成一个完整"角色对象"的顶层结构（对应
+  Dark Angel 文档提到的 `Bundle`/`Object` 概念），以及贴图/材质引用的挂接点，
+  仍是本文档"待解码"清单的后续目标。
+
 ## 9. Skeleton_2 / Skeleton_Joint_2 —— 骨架层级与静止姿势矩阵，已完整解码并验证
 
 Alex 用的是"2"版本骨架格式（`Skeleton_2 = 0x00023000`,
