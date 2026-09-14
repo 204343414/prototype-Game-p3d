@@ -11,6 +11,11 @@ dist/
 extracted/
 *.rcf
 *.p3d.bak
+# 导出脚本产出物 (含游戏原始贴图/模型数据，属于游戏本体版权内容，
+# 只提交生成它们的源代码 tools/p3d_export/*.py，不提交产物本身)
+samples/exported/
+*.glb
+*.gltf
 
 # OS
 .DS_Store

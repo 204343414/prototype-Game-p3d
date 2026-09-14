@@ -97,12 +97,29 @@ prototype-p3d-toolkit/
 - `viewer/` — 本地 web 查看器。纯 Python 标准库后端（无需 `pip install`
   任何东西）+ three.js 前端。已用自动化测试（`viewer/test_server.py`）
   验证目录浏览 API、文件读取 API、`--root` 越权访问拦截、静态页面服务
-  均正常工作。
+  均正常工作；另有 `viewer/test_self_update.py` 专门验证下面的自更新接口。
 
   ```bash
   ./run_viewer.sh                              # 默认端口 8420，可浏览整个文件系统
   ./run_viewer.sh 8420 /path/to/unpacked        # 限制只能浏览指定目录（推荐，更安全）
   ```
+
+  额外提供几个供协作 AI 通过隧道 URL 远程调用的只读/半只读 API
+  （均已用合成数据自动化测试覆盖，细节见 `viewer/server.py` 里各
+  `_handle_*` 方法的 docstring）：
+
+  - `GET /api/hexdump?path=...&offset=&length=` — 读任意文件的字节区间
+  - `GET /api/p3d?path=...` — 解析任意 `.p3d` 文件的 chunk 树
+  - `GET /api/rcf_manifest?path=...&name_filter=&limit=` — 解析 `.rcf`
+    归档的完整条目清单（文件名、哈希、offset、size），不解压任何内容
+  - `GET /api/rcf_entry?path=...&name=...&raw=` — 一步到位：按文件名从
+    `.rcf` 里取出一个条目、自动做 `.rz` 解压，返回其 chunk 树（或
+    `&raw=1` 拿解压后的原始字节）
+  - `POST /api/self_update` — 让 server 自己 `git pull` 并在**原端口**
+    原地重启（公网隧道 URL 不变），免去人工 `git pull` + 重开终端的
+    步骤。⚠️ 这意味着拿到隧道 URL 的人也能触发这个操作，风险等级和
+    "隧道本身不加访问口令"这条已知的设计取舍一致，见 `run_viewer.sh`
+    顶部的安全须知。
 
   启动后终端会常驻显示 `http://127.0.0.1:8420/`，在浏览器打开即可：
   左侧输入本地路径 → 浏览目录 → 点击 `.glb`/`.gltf` 文件即可在右侧

@@ -37,6 +37,14 @@
 #     3. 不要把 --root 指向真的包含游戏本体资源的目录再开隧道对外，
 #        版权风险自己承担（另见 NOTICE.md）。
 #     4. 每次重开隧道，Cloudflare 都会分配一个新的随机 URL，旧链接失效。
+#     5. viewer/server.py 还提供了一个 POST /api/self_update 接口：
+#        协作的 AI 可以直接触发"git pull + 在原端口原样重启这个 server
+#        进程"，公网隧道 URL 不会因此改变（不用你手动 git pull / 重开
+#        终端）。这意味着**拿到这个隧道 URL 的任何人也能远程触发这个仓库
+#        的更新和重启**——风险等级和上面第1-4条一样（同一个 URL 泄露就
+#        什么都能做），不是额外新增的攻击面，只是把"能做的事"从"读文件"
+#        扩展到了"更新代码"。不想要这个能力可以不理会这个接口，它不会
+#        自动触发，只有明确收到 POST 请求才会执行。
 #
 # 仅限个人学习与非商业同人创作用途，详见 NOTICE.md。
 
@@ -207,4 +215,31 @@ echo "本地访问: http://127.0.0.1:${PORT}/"
 echo "按 Ctrl+C 停止服务（会同时关闭隧道）"
 echo ""
 
-python3 "${SCRIPT_DIR}/viewer/server.py" --host 127.0.0.1 --port "${PORT}" --root "${ROOT}"
+# Loop around the server process instead of a single exec: viewer/server.py
+# exits with a special code (SELF_UPDATE_EXIT_CODE, currently 78) after a
+# remote POST /api/self_update successfully `git pull`s, to ask us to
+# relaunch it. Handling that restart HERE (still inside this same shell/
+# session) instead of letting server.py spawn a fully detached replacement
+# process is what keeps the tunnel alive across a self-update: since the
+# relaunched python3 stays a child of this same run_viewer.sh, our `trap
+# cleanup EXIT` never fires just because one server instance exited to make
+# room for the next one, so cloudflared/ssh keeps running the whole time on
+# the same URL. Any other exit code (crash, Ctrl+C's SIGINT, etc) falls
+# through and lets this script exit normally (tearing down the tunnel too).
+SELF_UPDATE_EXIT_CODE=78
+while true; do
+  # `set -e` is in effect for the whole script (see top), which would
+  # otherwise abort the script the instant python3 exits non-zero -- before
+  # we ever get to inspect `code` below. Disable it just around this one
+  # command so a self-update's special exit code can actually be handled.
+  set +e
+  python3 "${SCRIPT_DIR}/viewer/server.py" --host 127.0.0.1 --port "${PORT}" --root "${ROOT}"
+  code=$?
+  set -e
+  if [ "${code}" -eq "${SELF_UPDATE_EXIT_CODE}" ]; then
+    echo ""
+    echo "[自更新] 收到重启请求（POST /api/self_update 已完成 git pull），正在原地重启 server（隧道 URL 不变）..."
+    continue
+  fi
+  exit "${code}"
+done

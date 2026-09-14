@@ -29,6 +29,7 @@ import mimetypes
 import os
 import socketserver
 import struct
+import subprocess
 import sys
 import urllib.parse
 
@@ -43,9 +44,90 @@ try:
 except ImportError:
     inspect_p3d = None
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "rcf_unpack"))
+try:
+    import rcf_extract  # noqa: E402
+except ImportError:
+    rcf_extract = None
+
+
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+# The git repo this server itself lives in -- used by /api/self_update to
+# `git pull` and by /api/health to report the currently-running commit, so
+# a remote collaborator can push a fix and confirm it's actually live
+# without asking the human to run commands and paste output back.
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+
+def _git_commit():
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=REPO_DIR, capture_output=True, text=True, timeout=5,
+        )
+        return out.stdout.strip() if out.returncode == 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+
+def _parse_type_filter(qs):
+    """Parse an optional &type_filter=0x00123000,0x00123001 query param into
+    a set of ints, or None if not provided. Used to let a caller pull out
+    just the chunk types they care about (e.g. CompositeDrawable/Skeleton)
+    from a huge real .p3d file (tens of thousands of chunks) without paging
+    through the whole flat chunk list.
+    """
+    raw = qs.get("type_filter", [None])[0]
+    if not raw:
+        return None
+    out = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        out.add(int(part, 16) if part.lower().startswith("0x") else int(part, 16))
+    return out
+
+
+def _chunks_to_json(out, payload_preview, type_filter=None, offset=0, limit=None):
+    """Shared post-processing for dump_chunk() output: turn the raw
+    (depth, type_id, header_size, total_size, payload) tuples into the JSON
+    shape used by both /api/p3d and /api/rcf_entry, with optional
+    type-ID filtering and offset/limit paging (both needed for real game
+    files, which can have tens of thousands of chunks).
+
+    Each returned chunk includes "global_index": its position in the FULL
+    (unfiltered) flat depth-first traversal. Since dump_chunk() emits a
+    node immediately before its children (pre-order), a chunk's entire
+    subtree is the contiguous run starting at its global_index and ending
+    just before the next sibling/ancestor at <= its own depth. So to
+    inspect one specific chunk's full subtree found via type_filter, issue
+    a follow-up request with offset=<that chunk's global_index> and NO
+    type_filter, then stop reading once depth drops back to <= the
+    original chunk's depth.
+    """
+    indexed = list(enumerate(out))
+    if type_filter is not None:
+        indexed = [(i, t) for i, t in indexed if t[1] in type_filter]
+    total_matching = len(indexed)
+    if limit is not None:
+        indexed = indexed[offset:offset + limit]
+    else:
+        indexed = indexed[offset:]
+    chunks = []
+    for global_index, (depth, type_id, hdr_size, tot_size, payload) in indexed:
+        chunks.append({
+            "global_index": global_index,
+            "depth": depth,
+            "type_id": f"0x{type_id:08X}",
+            "header_size": hdr_size,
+            "total_size": tot_size,
+            "payload_len": len(payload),
+            "payload_hex_preview": payload[:payload_preview].hex(),
+        })
+    return chunks, total_matching
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -106,11 +188,163 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_hexdump(qs)
         if parsed.path == "/api/p3d":
             return self._handle_p3d(qs)
+        if parsed.path == "/api/rcf_manifest":
+            return self._handle_rcf_manifest(qs)
+        if parsed.path == "/api/rcf_entry":
+            return self._handle_rcf_entry(qs)
         if parsed.path == "/api/health":
-            return self._send_json({"ok": True, "root": self.root_dir})
+            return self._send_json({
+                "ok": True,
+                "root": self.root_dir,
+                "git_commit": _git_commit(),
+                "pid": os.getpid(),
+            })
 
         # static file serving (frontend)
         return self._handle_static(parsed.path)
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/api/self_update":
+            return self._handle_self_update()
+        return self._send_error_json(f"not found: {parsed.path}", 404)
+
+    # Special exit code used to signal "please relaunch me" to a wrapping
+    # shell loop (run_viewer.sh), as opposed to a real exit (Ctrl+C, crash,
+    # etc). Chosen to be outside the 0-2/126-165/SIGNAL-derived ranges a
+    # process would normally exit with, to avoid ambiguity.
+    SELF_UPDATE_EXIT_CODE = 78
+
+    def _handle_self_update(self):
+        """Pull the latest code for this server's own git repo, then exit
+        this process with a special exit code (SELF_UPDATE_EXIT_CODE) that
+        tells the wrapping shell loop in run_viewer.sh "relaunch me, this
+        wasn't a real shutdown". This keeps the new server process inside
+        run_viewer.sh's own process tree/session, so its `trap cleanup EXIT`
+        (which tears down the Cloudflare/SSH tunnel) does NOT fire -- the
+        tunnel keeps running, unaffected, pointed at the same port, so the
+        public URL stays the same the whole time.
+
+        (An earlier version of this spawned a detached "watcher" subprocess
+        to relaunch the server itself, independently of run_viewer.sh. That
+        orphaned the new server process from run_viewer.sh's process tree,
+        so run_viewer.sh saw its `python3 server.py` child exit, considered
+        itself done, and its EXIT trap killed the tunnel out from under the
+        (still running!) new server. Delegating the relaunch decision to
+        run_viewer.sh itself avoids that whole class of bug.)
+
+        ⚠️ This intentionally lets anyone who has this tunnel's URL trigger
+        `git pull` + a process restart in this repo -- same trust boundary
+        already accepted for the read-only endpoints (no auth token on the
+        tunnel by design, see run_viewer.sh). It does NOT run arbitrary
+        shell commands from the request; it only ever runs a hardcoded
+        `git pull` in REPO_DIR, then exits with a fixed special code.
+        """
+        before = _git_commit()
+        try:
+            branch_out = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=REPO_DIR, capture_output=True, text=True, timeout=5,
+            )
+            current_branch = branch_out.stdout.strip() or None
+        except Exception:  # noqa: BLE001
+            current_branch = None
+
+        def _do_pull():
+            # Explicitly pull from origin/master rather than a bare
+            # `git pull` (which depends on the current branch's configured
+            # upstream/merge remote via `branch.<name>.merge` in .git/config
+            # -- if that's stale, unset, or pointed at the wrong branch
+            # (this repo has both a `main` and a `master` branch upstream,
+            # which has caused exactly this kind of confusion before), a
+            # bare `git pull` can silently report "already up to date"
+            # while origin/master has moved on). Being explicit here makes
+            # self_update's behavior independent of local branch config.
+            return subprocess.run(
+                ["git", "pull", "origin", "master", "--ff-only"],
+                cwd=REPO_DIR, capture_output=True, text=True, timeout=60,
+            )
+
+        def _remote_master_sha():
+            # Ground truth for "what commit does origin/master actually
+            # point at right now", independent of any local fetch/tracking
+            # state. Cross-checking against this detects a stale caching
+            # GitHub mirror/proxy (some networks route git through one,
+            # e.g. ghfast.top, instead of github.com directly) that hasn't
+            # picked up a very recent push yet -- in that case `git pull`
+            # can report "already up to date" even though the real origin
+            # has moved on, which is confusing without this cross-check.
+            try:
+                out = subprocess.run(
+                    ["git", "ls-remote", "origin", "refs/heads/master"],
+                    cwd=REPO_DIR, capture_output=True, text=True, timeout=15,
+                )
+                if out.returncode == 0 and out.stdout.strip():
+                    return out.stdout.split()[0][:7]
+            except Exception:  # noqa: BLE001
+                pass
+            return None
+
+        try:
+            result = _do_pull()
+        except Exception as e:  # noqa: BLE001
+            return self._send_error_json(f"git pull failed to run: {type(e).__name__}: {e}", 500)
+
+        after = _git_commit()
+        remote_sha = _remote_master_sha()
+        retried = False
+
+        def _mismatch(local, remote):
+            return bool(local and remote and not local.startswith(remote[:7]) and not remote.startswith(local[:7]))
+
+        # If the pull "succeeded" but local HEAD still doesn't match what
+        # origin/master actually points at, this is very likely a stale
+        # caching mirror/proxy -- wait a moment and retry once before
+        # reporting a possibly-false "up to date".
+        if result.returncode == 0 and _mismatch(after, remote_sha):
+            import time
+            time.sleep(2)
+            try:
+                result = _do_pull()
+                after = _git_commit()
+                remote_sha = _remote_master_sha()
+                retried = True
+            except Exception:  # noqa: BLE001
+                pass
+
+        pull_ok = result.returncode == 0
+        mirror_stale = _mismatch(after, remote_sha)
+
+        response = {
+            "pull_ok": pull_ok,
+            "current_branch": current_branch,
+            "retried_once": retried,
+            "remote_master_sha_short": remote_sha,
+            "mirror_may_be_stale": mirror_stale,
+            "git_stdout": result.stdout.strip(),
+            "git_stderr": result.stderr.strip(),
+            "commit_before": before,
+            "commit_after": after,
+            "changed": before != after,
+            "will_restart": pull_ok,
+        }
+        self._send_json(response)
+
+        if not pull_ok:
+            return
+
+        try:
+            self.wfile.flush()
+        except Exception:  # noqa: BLE001
+            pass
+
+        def _exit_soon():
+            import time
+            time.sleep(0.2)
+            os._exit(Handler.SELF_UPDATE_EXIT_CODE)
+
+        import threading
+        threading.Thread(target=_exit_soon, daemon=True).start()
 
     def _handle_browse(self, qs):
         path = qs.get("path", ["/"])[0]
@@ -239,6 +473,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
           max_depth   - optional, limit recursion depth (default: unlimited)
           payload_preview - optional, how many bytes of each chunk's payload
                        to include as a hex preview (default 32, max 256)
+          type_filter - optional, comma-separated hex chunk type IDs (e.g.
+                       "0x00123000,0x00123001") to only return matching
+                       chunks -- essential for real game files that can
+                       have tens of thousands of chunks total
+          offset/limit - optional paging over the (possibly filtered) flat
+                       chunk list (limit default 500, max 2000; limit=0
+                       means "no limit", use with care on huge files)
         """
         if inspect_p3d is None:
             return self._send_error_json("inspect_p3d module not available on server", 500)
@@ -258,6 +499,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         max_depth = int(max_depth) if max_depth is not None else None
         payload_preview = int(qs.get("payload_preview", ["32"])[0])
         payload_preview = max(0, min(payload_preview, 256))
+        try:
+            type_filter = _parse_type_filter(qs)
+        except ValueError as e:
+            return self._send_error_json(f"bad type_filter: {e}", 400)
+        offset = int(qs.get("offset", ["0"])[0])
+        limit_raw = int(qs.get("limit", ["500"])[0])
+        limit = None if limit_raw == 0 else max(1, min(limit_raw, 2000))
 
         try:
             with open(target, "rb") as f:
@@ -280,28 +528,232 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
             out = []
             inspect_p3d.dump_chunk(data, 12, total_size, endian, 0, out, max_depth)
-
-            chunks = []
-            for depth, type_id, hdr_size, tot_size, payload in out:
-                chunks.append({
-                    "depth": depth,
-                    "type_id": f"0x{type_id:08X}",
-                    "header_size": hdr_size,
-                    "total_size": tot_size,
-                    "payload_len": len(payload),
-                    "payload_hex_preview": payload[:payload_preview].hex(),
-                })
+            chunks, total_matching = _chunks_to_json(out, payload_preview, type_filter, offset, limit)
 
             self._send_json({
                 "path": target,
                 "file_size": len(data),
                 "endian": "LE" if endian == "<" else "BE",
                 "declared_total_size": total_size,
-                "chunk_count": len(chunks),
+                "chunk_count": total_matching if type_filter is not None else len(out),
+                "total_chunk_count_unfiltered": len(out),
+                "chunks_shown": len(chunks),
                 "chunks": chunks,
             })
         except Exception as e:  # noqa: BLE001 - surface parse errors to the caller
             return self._send_error_json(f"parse error: {type(e).__name__}: {e}", 500)
+
+    def _handle_rcf_manifest(self, qs):
+        """Parse a local .rcf (Cement archive) file server-side using
+        tools/rcf_unpack/rcf_extract.py's CementFile.load(), WITHOUT
+        extracting/decompressing any entry payloads, and return the header
+        fields + a manifest of entries (name, hash, offset, size, whether
+        metadata matched) as JSON.
+
+        This lets a collaborating AI validate the RCF parser against a
+        real, possibly 100s-of-MB .rcf file without transferring the file
+        itself over the tunnel -- only the resulting small JSON manifest
+        crosses the wire.
+
+        Query params:
+          path        - required, absolute path to a .rcf file
+          limit       - optional, max number of entries to include in the
+                        "entries" list (default 200, use 0 for "all" --
+                        careful, entry_count can be in the thousands)
+          name_filter - optional, case-insensitive substring filter applied
+                        to entry names before limiting (handy for e.g.
+                        name_filter=alex to find a specific character's
+                        files without listing thousands of entries)
+        """
+        if rcf_extract is None:
+            return self._send_error_json("rcf_extract module not available on server", 500)
+
+        path = qs.get("path", [None])[0]
+        if not path:
+            return self._send_error_json("missing ?path=", 400)
+        try:
+            target = self._safe_resolve(path)
+        except PermissionError as e:
+            return self._send_error_json(str(e), 403)
+
+        if not os.path.isfile(target):
+            return self._send_error_json(f"not a file: {target}", 404)
+
+        limit = int(qs.get("limit", ["200"])[0])
+        name_filter = qs.get("name_filter", [None])[0]
+
+        try:
+            cement = rcf_extract.CementFile.load(target)
+        except Exception as e:  # noqa: BLE001
+            return self._send_error_json(f"RCF parse error: {type(e).__name__}: {e}", 500)
+
+        entries_out = []
+        known_count = 0
+        unknown_count = 0
+        for entry in cement.entries:
+            metadata = cement.get_metadata(entry.name_hash)
+            if metadata is not None:
+                known_count += 1
+                name = metadata.name
+            else:
+                unknown_count += 1
+                name = None
+
+            if name_filter and (name is None or name_filter.lower() not in name.lower()):
+                continue
+
+            if limit == 0 or len(entries_out) < limit:
+                entries_out.append({
+                    "name_hash": f"0x{entry.name_hash:08X}",
+                    "name": name,
+                    "offset": entry.offset,
+                    "size": entry.size,
+                })
+
+        self._send_json({
+            "path": target,
+            "file_size": os.path.getsize(target),
+            "endian": "LE" if cement.endian == "<" else "BE",
+            "major_version": cement.major_version,
+            "minor_version": cement.minor_version,
+            "entry_count": len(cement.entries),
+            "metadata_count": len(cement.metadatas),
+            "known_count": known_count,
+            "unknown_count": unknown_count,
+            "entries_shown": len(entries_out),
+            "entries_truncated": (limit != 0 and (known_count + unknown_count) > limit and not name_filter),
+            "entries": entries_out,
+        })
+
+    def _handle_rcf_entry(self, qs):
+        """Extract a single named entry from a local .rcf archive (using
+        rcf_extract.CementFile), auto-decompress it if it's .rz-wrapped
+        (zlib), and return either the raw bytes (?raw=1) or, if it looks
+        like a Pure3D (.p3d) file, its parsed chunk tree as JSON (same
+        shape as /api/p3d).
+
+        This is the one-shot "give me this character's model structure"
+        entry point: no need to unpack the whole archive to disk first.
+
+        Query params:
+          path   - required, absolute path to the .rcf file
+          name   - required, the entry's logical name as stored in the
+                   Cement metadata table, e.g. \\art\\alex\\alex_fig.p3d.rz
+                   (leading backslash optional, matched exactly against
+                   metadata names -- case-sensitive, since that's how the
+                   hash table is keyed)
+          raw    - optional, "1" to return the (decompressed) raw bytes
+                   with an appropriate Content-Type instead of a parsed
+                   chunk tree (handy for saving out a .p3d/.dds/etc to
+                   look at locally, or for chaining into other tools)
+          max_depth / payload_preview - same meaning as in /api/p3d
+          type_filter / offset / limit - same meaning as in /api/p3d
+                   (essential for the big real character .p3d files,
+                   which can have tens of thousands of chunks total)
+        """
+        if rcf_extract is None:
+            return self._send_error_json("rcf_extract module not available on server", 500)
+        if inspect_p3d is None:
+            return self._send_error_json("inspect_p3d module not available on server", 500)
+
+        path = qs.get("path", [None])[0]
+        name = qs.get("name", [None])[0]
+        if not path or not name:
+            return self._send_error_json("missing ?path= or ?name=", 400)
+        try:
+            target = self._safe_resolve(path)
+        except PermissionError as e:
+            return self._send_error_json(str(e), 403)
+        if not os.path.isfile(target):
+            return self._send_error_json(f"not a file: {target}", 404)
+
+        try:
+            cement = rcf_extract.CementFile.load(target)
+        except Exception as e:  # noqa: BLE001
+            return self._send_error_json(f"RCF parse error: {type(e).__name__}: {e}", 500)
+
+        lookup_name = name if name.startswith("\\") else "\\" + name
+        name_hash = rcf_extract.hash_file_name(lookup_name)
+        entry = next((e for e in cement.entries if e.name_hash == name_hash), None)
+        if entry is None:
+            return self._send_error_json(
+                f"entry not found for name={lookup_name!r} (hash=0x{name_hash:08X})", 404)
+
+        with open(target, "rb") as f:
+            f.seek(entry.offset)
+            raw = f.read(entry.size)
+
+        is_rz = lookup_name.lower().endswith(".rz")
+        try:
+            data = rcf_extract.decompress_rz_payload(raw) if is_rz else raw
+        except Exception as e:  # noqa: BLE001
+            return self._send_error_json(f".rz decompression error: {type(e).__name__}: {e}", 500)
+
+        want_raw = qs.get("raw", ["0"])[0] == "1"
+        if want_raw:
+            ctype = "application/octet-stream"
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        if len(data) < 12:
+            return self._send_error_json("entry too small to be a Pure3D file", 400)
+
+        magic, = struct.unpack("<I", data[0:4])
+        if magic == inspect_p3d.SIG_LE:
+            endian = "<"
+        elif magic == inspect_p3d.SIG_LE_SWAPPED:
+            endian = ">"
+        else:
+            return self._send_error_json(
+                f"not a Pure3D file after decompression (magic bytes = {data[0:4].hex()}); "
+                f"pass &raw=1 to fetch the raw decompressed bytes instead", 400)
+
+        header_size, = struct.unpack(endian + "I", data[4:8])
+        total_size, = struct.unpack(endian + "I", data[8:12])
+
+        max_depth = qs.get("max_depth", [None])[0]
+        max_depth = int(max_depth) if max_depth is not None else None
+        payload_preview = int(qs.get("payload_preview", ["32"])[0])
+        # /api/rcf_entry is also used to pull full raw data buffers (e.g.
+        # complete vertex/index streams, tens to hundreds of KB) out of a
+        # single chunk for offline analysis, so allow a much larger preview
+        # cap here than the generic /api/p3d endpoint's 256-byte cap.
+        payload_preview = max(0, min(payload_preview, 8 * 1024 * 1024))
+        try:
+            type_filter = _parse_type_filter(qs)
+        except ValueError as e:
+            return self._send_error_json(f"bad type_filter: {e}", 400)
+        offset_p = int(qs.get("offset", ["0"])[0])
+        limit_raw = int(qs.get("limit", ["500"])[0])
+        limit = None if limit_raw == 0 else max(1, min(limit_raw, 2000))
+
+        try:
+            out = []
+            inspect_p3d.dump_chunk(data, 12, total_size, endian, 0, out, max_depth)
+            chunks, total_matching = _chunks_to_json(out, payload_preview, type_filter, offset_p, limit)
+        except Exception as e:  # noqa: BLE001
+            return self._send_error_json(f"chunk parse error: {type(e).__name__}: {e}", 500)
+
+        self._send_json({
+            "rcf_path": target,
+            "entry_name": lookup_name,
+            "entry_name_hash": f"0x{name_hash:08X}",
+            "entry_offset": entry.offset,
+            "entry_size_compressed": entry.size,
+            "decompressed_size": len(data),
+            "was_rz_compressed": is_rz,
+            "endian": "LE" if endian == "<" else "BE",
+            "declared_total_size": total_size,
+            "chunk_count": total_matching if type_filter is not None else len(out),
+            "total_chunk_count_unfiltered": len(out),
+            "chunks_shown": len(chunks),
+            "chunks": chunks,
+        })
 
     def _handle_static(self, url_path):
         if url_path == "/":
