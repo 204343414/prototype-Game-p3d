@@ -97,17 +97,29 @@ def _chunks_to_json(out, payload_preview, type_filter=None, offset=0, limit=None
     shape used by both /api/p3d and /api/rcf_entry, with optional
     type-ID filtering and offset/limit paging (both needed for real game
     files, which can have tens of thousands of chunks).
+
+    Each returned chunk includes "global_index": its position in the FULL
+    (unfiltered) flat depth-first traversal. Since dump_chunk() emits a
+    node immediately before its children (pre-order), a chunk's entire
+    subtree is the contiguous run starting at its global_index and ending
+    just before the next sibling/ancestor at <= its own depth. So to
+    inspect one specific chunk's full subtree found via type_filter, issue
+    a follow-up request with offset=<that chunk's global_index> and NO
+    type_filter, then stop reading once depth drops back to <= the
+    original chunk's depth.
     """
+    indexed = list(enumerate(out))
     if type_filter is not None:
-        out = [t for t in out if t[1] in type_filter]
-    total_matching = len(out)
+        indexed = [(i, t) for i, t in indexed if t[1] in type_filter]
+    total_matching = len(indexed)
     if limit is not None:
-        out = out[offset:offset + limit]
+        indexed = indexed[offset:offset + limit]
     else:
-        out = out[offset:]
+        indexed = indexed[offset:]
     chunks = []
-    for depth, type_id, hdr_size, tot_size, payload in out:
+    for global_index, (depth, type_id, hdr_size, tot_size, payload) in indexed:
         chunks.append({
+            "global_index": global_index,
             "depth": depth,
             "type_id": f"0x{type_id:08X}",
             "header_size": hdr_size,

@@ -173,6 +173,12 @@ def main():
         assert data["chunk_count"] == 5, data
         assert data["total_chunk_count_unfiltered"] == 10, data
         assert all(c["type_id"] == "0x00121000" for c in data["chunks"]), data
+        # global_index must be each chunk's position in the FULL unfiltered
+        # depth-first list (0,2,4,6,8 for our alternating fixture), not its
+        # position within the filtered result set -- this is what lets a
+        # caller follow up with offset=<global_index> to pull a specific
+        # chunk's full subtree out of a huge real file.
+        assert [c["global_index"] for c in data["chunks"]] == [0, 2, 4, 6, 8], data
 
         status, body = get(base + f"/api/p3d?path={multi_p3dfile}&limit=3")
         data = json.loads(body)
