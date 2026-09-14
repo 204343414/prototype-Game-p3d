@@ -632,8 +632,21 @@ def main():
             print(f"       !! {tex_name}: 缺 TextureDDS/Image_Data 子节点")
             return None
         dds_info = parse_texture_dds_header(bytes.fromhex(dds_chunk["payload_hex_preview"]))
-        raw = bytes.fromhex(imgdata_chunk["payload_hex_preview"])
+        raw_full = bytes.fromhex(imgdata_chunk["payload_hex_preview"])
         w, h, algo = dds_info["width"], dds_info["height"], dds_info["algorithm"]
+
+        # 重要修复: 0x00019002 (Image_Data) 的 payload 不是裸 DXT 字节流，而是
+        # "4字节长度前缀 + 标准DDS文件头(DDS_MAGIC 4字节+DDS_HEADER 124字节)"
+        # 共132字节头部 + 裸DXT压缩数据。之前误将头部一起喂给解码器导致花屏。
+        # 详见 docs/vertex_format.md 第8c.2节修订说明。
+        DDS_HEADER_TOTAL = 4 + 4 + 124
+        if raw_full[4:8] != b"DDS ":
+            print(f"       !! {tex_name}: Image_Data 开头不是预期的 DDS 头 "
+                  f"(实际={raw_full[4:8]!r})，按裸DXT流回退处理")
+            raw = raw_full
+        else:
+            raw = raw_full[DDS_HEADER_TOTAL:]
+
         if texture2ddecoder is None:
             print("       !! texture2ddecoder 未安装, 无法解码 DXT, 跳过贴图")
             return None

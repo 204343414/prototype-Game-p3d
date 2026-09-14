@@ -679,8 +679,25 @@ def main():
             print(f"       !! {tex_name}: 缺 TextureDDS/Image_Data 子节点")
             return None
         dds_info = parse_texture_dds_header(bytes.fromhex(dds_chunk["payload_hex_preview"]))
-        raw = bytes.fromhex(imgdata_chunk["payload_hex_preview"])
+        raw_full = bytes.fromhex(imgdata_chunk["payload_hex_preview"])
         w, h, algo = dds_info["width"], dds_info["height"], dds_info["algorithm"]
+
+        # 重要修复 (之前版本的 bug): 0x00019002 (Image_Data) 的 payload **不是**
+        # 裸 DXT 字节流，而是 "4字节长度前缀 + 标准DDS文件 (DDS_MAGIC 4字节 +
+        # DDS_HEADER 124字节 = 128字节头部) + 裸DXT压缩数据"，头部总计132字节。
+        # 用 512x512 DXT1 样本精确核算过: payload_len=174908,
+        # 174908-132=174776，与 512x512 DXT1 完整10级mipmap链理论大小
+        # (174776字节，按 max(1,(w+3)//4)*max(1,(h+3)//4)*8 逐级累加) 完全吻合。
+        # 旧版没有跳过这132字节头部，把 DDS 头也当成 DXT 像素数据喂给解码器，
+        # 导致画面整体错位/花屏 (彩色雪花)。这里必须跳过。
+        DDS_HEADER_TOTAL = 4 + 4 + 124  # 4字节长度前缀 + "DDS " + 124字节DDS_HEADER
+        if raw_full[4:8] != b"DDS ":
+            print(f"       !! {tex_name}: Image_Data 开头不是预期的 DDS 头 "
+                  f"(实际={raw_full[4:8]!r})，可能格式有变化，按裸DXT流回退处理")
+            raw = raw_full
+        else:
+            raw = raw_full[DDS_HEADER_TOTAL:]
+
         if texture2ddecoder is None:
             print("       !! texture2ddecoder 未安装, 无法解码 DXT, 跳过贴图")
             return None

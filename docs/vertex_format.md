@@ -371,13 +371,41 @@ uint32           priority         # 实测恒为 0
 ### 8c.2 Texture 的子节点 0x00019006 (TextureDDS) + 0x00019002 (Image_Data)
     —— 已完整验证，可直接拼出合法 .dds 文件
 
+> **⚠️ 2024勘误 (曾导致贴图渲染为彩色花屏/雪花噪点的重大bug，已修复)**：
+> 下面原文说 `0x00019002` 的 payload "就是裸 DXT 压缩字节流本体，无额外头部"，
+> **这个结论是错的**，是早期只看payload_len数量级"差不多对得上"就下的过早结论，
+> 没有真正逐字节核对开头内容。实际上 `0x00019002` 的 payload 开头是:
+> ```
+> uint32           length_prefix    # =payload_len-4，冗余字段，等于后面全部数据的字节数
+> char[4]          magic            # 固定 "DDS "，标准DDS文件魔数
+> DDS_HEADER       header           # 标准124字节DDS_HEADER结构 (含dwSize/dwFlags/
+>                                    # dwHeight/dwWidth/dwPitch/dwDepth/dwMipMapCount/
+>                                    # 11个保留u32/DDS_PIXELFORMAT 32字节(含dwFourCC)/
+>                                    # 其余caps字段)，跟标准DDS文件格式完全一致，可以
+>                                    # 直接用标准DDS解析库解析
+> ...                                # 之后才是真正的裸DXT压缩像素数据(含mipmap链)
+> ```
+> 即：**payload开头132字节(4+4+124)是"长度前缀+完整DDS文件头"，真正的DXT数据
+> 从offset=132开始**。用512x512 DXT1贴图精确验证：`payload_len - 132 =
+> 174908 - 132 = 174776`，与512x512 DXT1完整10级mipmap链的理论字节数
+> (按每级 `max(1,ceil(w/4))*max(1,ceil(h/4))*8` 累加至1x1，算出恰好174776)
+> **完全吻合，零误差**。之前的导出脚本(`export_alex_body.py`/
+> `export_alex_full.py`)因为没跳过这132字节头部，把DDS文件头也当成DXT像素
+> 数据丢给`texture2ddecoder`，导致整张贴图从第一个block起就全部错位，渲染
+> 出来是彩色雪花噪点（用户实际预览时发现并反馈）。两个脚本均已修复：解码前
+> 先校验`payload[4:8]==b"DDS "`，再跳过前132字节取真正的DXT数据传给解码器。
+> 教训：往后遇到"数量级差不多吻合"就想通过的情况，都应该像本次一样做
+> "预测的确切字节数 vs 实际payload_len精确相减"这种零容差验证，而不是满足
+> 于数量级近似。
+
 `0x00019006`(TextureDDS，来自 gibbed-prototype 的 `TextureDDS.cs`) 是
 Prototype 专用的 DDS 元数据子节点，紧跟在 0x00019000 之后（depth+1），
 给出真实的压缩格式；它自己的子节点 `0x00019002`(Image_Data，
 `NetP3DLib.ChunkIdentifier` 命名，等价 gibbed 库的 `TextureData`) 的
-payload **就是裸 DXT 压缩字节流本体**（无额外头部，payload_len 即数据
-长度，实测 512x512 DXT1贴图约174908字节，与`512*512/2`的DXT1理论大小
-量级吻合，还含mipmap链）。2个样本100%验证通过：
+payload 开头132字节是标准DDS文件头 (见上方勘误)，**之后才是**裸 DXT
+压缩字节流本体（含mipmap链，实测 512x512 DXT1贴图总payload约174908字节，
+减去132字节头部=174776字节，与理论mipmap链大小完全吻合）。2个样本100%
+验证通过：
 
 ```
 0x00019006 字段（紧跟 chunk 头部之后）：
