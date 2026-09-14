@@ -49,7 +49,7 @@ def geometry(name, groups):
 class StaticGeometryProbeTests(unittest.TestCase):
     def test_reports_geometry_group_strides_and_aggregate_position_bounds(self):
         data = file_with(b"".join([
-            geometry("building_a", [group("building_shader", [(-1.0, 2.0, 3.0), (4.0, -5.0, 6.0)])]),
+            geometry("mergedDrawableRootCastShadow", [group("building_shader", [(-1.0, 2.0, 3.0), (4.0, -5.0, 6.0)])]),
             geometry("road_b", [group("road_shader", [(7.0, 8.0, -9.0)], stride=20)]),
         ]))
         result = scan_static_geometry(data)
@@ -67,6 +67,11 @@ class StaticGeometryProbeTests(unittest.TestCase):
         self.assertEqual(declaration["attributes"][0]["offset"], 0)
         self.assertEqual(result["world_position_min"], [-1.0, -5.0, -9.0])
         self.assertEqual(result["world_position_max"], [7.0, 8.0, 6.0])
+        self.assertEqual(result["merged_world_geometry_count"], 1)
+        self.assertEqual(result["merged_world_position_group_count"], 1)
+        self.assertEqual(result["merged_world_position_min"], [-1.0, -5.0, 3.0])
+        self.assertEqual(result["merged_world_position_max"], [4.0, 2.0, 6.0])
+        self.assertTrue(result["geometries"][0]["is_merged_world_geometry"])
         self.assertEqual(result["geometries"][0]["primitive_groups"][0]["shader_name"], "building_shader")
 
     def test_bad_memory_byte_count_is_recorded_without_faking_a_bound(self):

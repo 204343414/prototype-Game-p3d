@@ -904,6 +904,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "world_position_bounds_status": scan["world_position_bounds_status"],
                     "world_position_min": scan["world_position_min"],
                     "world_position_max": scan["world_position_max"],
+                    "merged_world_geometry_count": scan["merged_world_geometry_count"],
+                    "merged_world_position_group_count": scan["merged_world_position_group_count"],
+                    "merged_world_position_bounds_status": scan["merged_world_position_bounds_status"],
+                    "merged_world_position_min": scan["merged_world_position_min"],
+                    "merged_world_position_max": scan["merged_world_position_max"],
                     "warning_count": len(scan["warnings"]),
                 })
                 if detail == "full":

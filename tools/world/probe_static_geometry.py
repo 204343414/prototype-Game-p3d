@@ -37,6 +37,11 @@ GEOMETRY = 0x00010000
 PRIMITIVE_GROUP = 0x00010020
 MEMORY_VERTEX_LIST = 0x00010012
 MEMORY_VERTEX_DESCRIPTION = 0x00010014
+# Verified names in real Manhattan Cells. These merged geometry roots are
+# separately reported because a Cell can also carry local-space reusable mesh
+# definitions (helicopters, lights, etc.) that need instance transforms from a
+# different layer and must not be dumped at world origin in an initial map view.
+WORLD_MERGED_GEOMETRY_PREFIX = "mergeddrawableroot"
 
 
 def _p3d_string(payload: bytes, offset: int = 0) -> tuple[str, int]:
@@ -208,6 +213,10 @@ def scan_static_geometry(data: bytes) -> dict[str, Any]:
     descriptor_fingerprints: dict[str, dict[str, Any]] = {}
     all_mins = []
     all_maxs = []
+    merged_mins = []
+    merged_maxs = []
+    merged_geometry_count = 0
+    merged_position_group_count = 0
     warnings = []
 
     for index, record in enumerate(records):
@@ -267,7 +276,19 @@ def scan_static_geometry(data: bytes) -> dict[str, Any]:
             except ValueError as exc:
                 group["position_bounds_status"] = f"unavailable: {exc}"
             groups.append(group)
-        result_geometries.append({"name": name, "primitive_groups": groups})
+        is_merged_world_geometry = name.casefold().startswith(WORLD_MERGED_GEOMETRY_PREFIX)
+        if is_merged_world_geometry:
+            merged_geometry_count += 1
+            for group in groups:
+                if group.get("position_bounds_status") == "ok":
+                    merged_position_group_count += 1
+                    merged_mins.append(group["position_min"])
+                    merged_maxs.append(group["position_max"])
+        result_geometries.append({
+            "name": name,
+            "is_merged_world_geometry": is_merged_world_geometry,
+            "primitive_groups": groups,
+        })
 
     if all_mins:
         mins = [min(bounds[axis] for bounds in all_mins) for axis in range(3)]
@@ -276,6 +297,14 @@ def scan_static_geometry(data: bytes) -> dict[str, Any]:
     else:
         mins = maxs = None
         world_bounds_status = "no POSITION-compatible memory-image groups"
+
+    if merged_mins:
+        merged_min = [min(bounds[axis] for bounds in merged_mins) for axis in range(3)]
+        merged_max = [max(bounds[axis] for bounds in merged_maxs) for axis in range(3)]
+        merged_bounds_status = "ok"
+    else:
+        merged_min = merged_max = None
+        merged_bounds_status = "no mergedDrawableRoot POSITION-compatible geometry"
 
     fingerprint_summary = []
     for fingerprint in descriptor_fingerprints.values():
@@ -297,6 +326,11 @@ def scan_static_geometry(data: bytes) -> dict[str, Any]:
         "world_position_bounds_status": world_bounds_status,
         "world_position_min": mins,
         "world_position_max": maxs,
+        "merged_world_geometry_count": merged_geometry_count,
+        "merged_world_position_group_count": merged_position_group_count,
+        "merged_world_position_bounds_status": merged_bounds_status,
+        "merged_world_position_min": merged_min,
+        "merged_world_position_max": merged_max,
         "geometries": result_geometries,
         "warnings": warnings,
     }
