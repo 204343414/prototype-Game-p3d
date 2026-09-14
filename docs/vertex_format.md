@@ -212,6 +212,75 @@ Bounding_Sphere: center=(0.0000, 0.9415, -0.0253) radius=0.9891
               —— 与从上述AABB计算出的中心点和半对角线长度精确吻合到小数点后6位（已验证）
 ```
 
+## 8. Skin (type_id = 0x00010001) —— "总装配图"绑定关系，已完整解码并三样本验证
+
+这是回答"哪个网格(PolySkin)用哪副骨架(Skeleton)"的关键 chunk，是编写导出
+脚本前的最后一块拼图。字段顺序（小端，紧跟在 chunk 通用12字节头之后）：
+
+```
+StringAlignedU8   name             # 与所在 PolySkin/父 chunk 同名，1字节长度前缀
+                                    # （含padding，不含结尾计数规则见第327行"验证方法"）
+                                    # + UTF8 内容 + 尾随 \0 补齐
+uint32            version          # 恒为 3（3个样本全部一致）
+StringAlignedU8   skeleton_name    # 绑定的骨架名字符串，用于按名字去同一 p3d 文件里
+                                    # 查找对应的 Skeleton_2 (0x00004500) chunk
+uint32            num_primitive_groups  # 该 Skin 下属 Primitive_Group 数量，
+                                    # 与后续同深度出现的 0x00010020 子节点数一致
+```
+
+字符串编码规则与此前验证过的规则相同：第一字节 = 字符串字节数（若非4的倍数会
+补 `\0` 对齐到4字节倍数，但长度字节记录的是补齐前的原始字节数——本例3个样本
+的名字长度恰好都不需要额外对齐外的整数字节，实测时直接按"长度字节数量的原始
+字符"截取、再 `split('\x00')[0]` 去除可能残留的 padding 即可稳健处理）。
+
+**三样本交叉验证（alex.p3d.rz，全部62字节 payload，全部100%无余数解析完成）**：
+
+| global_index | Skin name (= 所属PolySkin名) | version | skeleton_name | num_primitive_groups |
+|---|---|---|---|---|
+| 139187 | `alex_reg_body_alex_bodyShape` | 3 | `alex_reg_body_skeleton` | 1 |
+| 139202 | `alex_reg_body_alex_headShape` | 3 | `alex_reg_body_skeleton` | 1 |
+| 139217 | `alex_reg_body_AlexVestShape`  | 3 | `alex_reg_body_skeleton` | 1 |
+
+结论：Alex Mercer 身体主模型的所有 PolySkin 部位（身体/头/外套）**全部绑定
+同一副骨架** `alex_reg_body_skeleton`。导出脚本的绑定逻辑可简化为：
+对每个 PolySkin，读取其内部 `Skin` chunk 拿到 `skeleton_name`，再在同一个
+p3d 文件的 chunk 树里按 `NamedChunk.Name == skeleton_name` 查找
+`Skeleton_2` chunk 即完成绑定；`num_primitive_groups` 用于确认/校验该
+PolySkin 下应该有多少个 `Primitive_Group` 子网格（本例均为1，与实测吻合）。
+
+**该字段定义来自 `references/netp3dlib` 的 `SkinChunk.cs` 完整实现**（不同于
+此前 `SkeletonJoint2Chunk.cs` 残缺导致的踩坑，这次读写逻辑
+`Name + Version + SkeletonName + NumPrimitiveGroups` 与实测字节完全吻合，
+三个样本消耗字节数与 payload_len 分毫不差）。
+
+**全文件范围扩展验证（type_filter=0x00010001 拉出 alex.p3d.rz 全部11个 Skin
+chunk，payload_len 从62到102字节不等，全部100%无余数解析成功）**：
+
+| Skin name | skeleton_name |
+|---|---|
+| `alex_reg_arms_alex_armsShape` | `alex_reg_arms_skeleton` |
+| `alex_reg_body_alex_bodyShape` | `alex_reg_body_skeleton` |
+| `alex_reg_body_alex_headShape` | `alex_reg_body_skeleton` |
+| `alex_reg_body_AlexVestShape` | `alex_reg_body_skeleton` |
+| `alex_reg_left_arm_alex_arms1Shape` | `alex_reg_left_arm_skeleton` |
+| `groundspike_large_Groundspike_LargeShape` | `groundspike_large_skeleton` |
+| `groundspike_mid_Groundspike_MediumShape` | `groundspike_mid_skeleton` |
+| `groundspike_single_large_Groundspike_Single_LargeShape` | `groundspike_single_large_skeleton` |
+| `groundspike_single_mid_Groundspike_Single_MediumShape` | `groundspike_single_mid_skeleton` |
+| `groundspike_single_small_Groundspike_Single_SmallShape` | `groundspike_single_small_skeleton` |
+| `groundspike_small_Groundspike_SmallShape` | `groundspike_small_skeleton` |
+
+**关键结论（解决了此前悬而未决的疑问）**：`alex_reg_arms_skeleton`、
+`alex_reg_body_skeleton`、`alex_reg_left_arm_skeleton` 是**三套完全独立的
+骨架**，并非同一骨架的不同引用名——躯干、右臂("arms")、左臂分别使用不同
+骨架文件（推测是为了让手臂能独立于身体做额外的动画混合，例如 Alex Mercer
+将手臂变形为刀刃/锤子等武器形态时不影响身体骨架）。此外还发现
+alex.p3d.rz 里内嵌了6个 "groundspike"（地刺）系列的独立小模型+骨架，
+应为 Alex Mercer 地面突刺类技能的特效模型，每个变体（large/mid/small及
+single前缀变体）都各自打包了自己的骨架。这说明**装配一个角色的完整外观
+可能需要合并多副骨架**，导出脚本需要按 `skeleton_name` 分组处理，而不能
+假设一个 p3d 文件只有一副骨架。
+
 ## 9. Skeleton_2 / Skeleton_Joint_2 —— 骨架层级与静止姿势矩阵，已完整解码并验证
 
 Alex 用的是"2"版本骨架格式（`Skeleton_2 = 0x00023000`,
@@ -305,14 +374,11 @@ world[i] = rest_pose[i] * world[parent[i]]   (i != 0)     # 矩阵乘法顺序�
 
 ## 10. 待解码（后续步骤，更新）
 
-- `0x00010001` (Skin) 本体的62字节 payload：从 hex 可见明文字符串
-  `"alex_reg_body_alex_headShape"` + 数字3 + `"alex_reg_body_skeleton"`，
-  推测是"皮肤名 + 关联骨骼数(或版本) + 对应骨架(Skeleton)引用名"的字符串对，
-  需要专门解析字符串对齐规则（用第一节的 StringAlignedU8 规则应该可以直接套用）。
-  **这是关键的"哪个PolySkin用哪个Skeleton"的绑定信息，需要尽快解码**，
-  因为一个角色可能有多个骨架（如本例中同时出现了 `alex_reg_arms_skeleton`
-  和 hex 里提到的 `alex_reg_body_skeleton`，需要搞清楚它们的关系——
-  是同一骨架的不同引用名，还是身体和手臂真的用了两套独立骨架）。
+- ~~`0x00010001` (Skin) 本体绑定关系~~ **已解码，见第8节**。仍待确认：
+  之前发现的 `alex_reg_arms_skeleton` 与 `alex_reg_body_skeleton` 究竟是
+  同一骨架的不同引用名、还是身体和手臂真的用了两套独立骨架——需要在
+  alex.p3d.rz 全文件范围内搜索所有出现的 `skeleton_name` 取值去重后确认，
+  并逐一核对每个是否都能在同一文件里找到对应的 `Skeleton_2` chunk。
 - `0x00010021` (Vertex_Compression_Hint，32字节)：8个uint32，值全是0或0x20(32)，
   用途待查（可能是每个属性的量化精度提示，与压缩/量化有关，正常渲染流程可忽略）。
 - `0x00122000` (Sort_Order，8字节)：2个float，值为(0.0, 0.5)，可能是渲染排序权重，可先忽略。
