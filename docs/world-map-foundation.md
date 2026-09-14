@@ -51,7 +51,7 @@
 
 用户指出单个 PrimitiveGroup 的 normal/tangent 对照看起来像“房子骨架/线框”，不适合作为场景观感判断。因此新增 `tools/world/render_static_cell_core_material.py`，将一个基础 Cell 内全部严格验证的 `mergedDrawableRoot*` TriangleList 合并进一个可旋转的私有 WebGL 场景，而不是让用户对碎片 group 作判断。
 
-对真实 `manhattan_Cell_2`，它目前合并了 **58** 个 core group（47,510 顶点、28,566 triangles）。其中仅在已证明的 68-byte declaration、`color @ 24`、`normal @ 40` 和同 Cell 可解码的 DXT1/DXT5 color Texture 同时满足时显示贴图；当前为 **25 group / 22 个去重本地贴图**。另 **33 group** 被明确保留为灰色上下文（其他 stride、无本地匹配、或暂不支持的 texture decoder 分支），可在页面中切换“全部 / 仅已贴图 / 仅灰色”，不会用错误的 UV 或跨 archive 猜测填满。
+对真实 `manhattan_Cell_2`，它目前合并了 **58** 个 core group（47,510 顶点、28,566 triangles）。其中仅在已证明的 68-byte declaration、`color @ 24`、`normal @ 40` 和同 Cell 可解码的 DXT1/DXT5 color Texture 同时满足时显示贴图。为避免在 workspace iframe 一次驻留二十余张图片而卡住，页面实行固定的 **8 个 texture resident budget**，优先三角覆盖量较大的引用；当前实际驻留 **7 group / 5 个去重本地贴图**，另 **51 group** 明确保留为灰色上下文，29 个低优先级的有效本地候选被延后。可在页面中切换“全部 / 仅已贴图 / 仅灰色”，不会用错误的 UV 或跨 archive 猜测填满。
 
 这仍是单 Cell、部分材质的 diagnostic：没有 `_ft`、local prop、跨 archive texture fallback、V 轴最终规则或完整 shader 公式，也还没有宣称与相邻 Cell 接缝正确。它的用途是先让用户看到一个合并的真实静态城区块，而非线框式单 mesh 夹具。
 

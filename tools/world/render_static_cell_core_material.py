@@ -75,12 +75,24 @@ def _mesh_records(data: bytes, entry: str):
     return records, children, meshes, skipped
 
 
-def build_preview_data(data: bytes, entry: str):
+def build_preview_data(data: bytes, entry: str, texture_budget: int = 8):
+    if texture_budget < 0:
+        raise ValueError("texture_budget must be non-negative")
     records, children, meshes, skipped = _mesh_records(data, entry)
+    # A workspace preview must stay responsive.  Prefer resources referenced by
+    # the most triangles and leave the remaining *valid but not resident*
+    # groups gray; this is an explicit display budget, never a material guess.
+    demands = Counter()
+    for mesh in meshes:
+        if mesh['color_name'] and mesh['uv'] and mesh['normal']:
+            demands[mesh['color_name']] += mesh['triangles']
+    allowed_textures = {name for name, _count in sorted(demands.items(), key=lambda pair: (-pair[1], pair[0].casefold()))[:texture_budget]}
     texture_index, textures, texture_errors = {}, [], []
     for mesh in meshes:
         name = mesh['color_name']
-        if not name or not mesh['uv'] or not mesh['normal']: continue
+        if not name or not mesh['uv'] or not mesh['normal'] or name not in allowed_textures:
+            mesh['texture'] = None
+            continue
         if name not in texture_index:
             try:
                 algorithm, width, height, png = _decode_local_texture_to_png(records, children, name)
@@ -93,7 +105,7 @@ def build_preview_data(data: bytes, entry: str):
     for mesh in meshes:
         compact.append({'geometry': mesh['geometry'], 'ordinal': mesh['ordinal'], 'shader': mesh['shader'], 'stride': mesh['stride'], 'vertices': mesh['vertices'], 'triangles': mesh['triangles'], 'texture': mesh.get('texture'), 'p': base64.b64encode(mesh['pos']).decode('ascii'), 'i': base64.b64encode(mesh['idx']).decode('ascii'), 'uv': base64.b64encode(mesh['uv']).decode('ascii') if mesh['uv'] else None, 'n': base64.b64encode(mesh['normal']).decode('ascii') if mesh['normal'] else None})
     textured = [m for m in compact if m['texture'] is not None]
-    report = {'entry_name': entry, 'scope': 'all mergedDrawableRoot TriangleLists; 68-byte color@24 + normal@40 only when local color Texture decodes; other groups gray', 'core_group_count': len(compact), 'core_vertex_count': sum(m['vertices'] for m in compact), 'core_triangle_count': sum(m['triangles'] for m in compact), 'textured_68_byte_group_count': len(textured), 'gray_context_group_count': len(compact)-len(textured), 'decoded_local_color_texture_count': len(textures), 'vertex_stride_counts': dict(sorted(Counter(str(m['stride']) for m in compact).items())), 'strict_group_errors': skipped, 'texture_decode_or_resolution_notes': texture_errors, 'conclusion_limit': 'aggregate diagnostic only; no cross-archive textures, non-68 UV rule, gameplay _ft, local props, V-axis decision, or final game shader claim'}
+    report = {'entry_name': entry, 'scope': 'all mergedDrawableRoot TriangleLists; 68-byte color@24 + normal@40 only when local color Texture decodes; other groups gray', 'core_group_count': len(compact), 'core_vertex_count': sum(m['vertices'] for m in compact), 'core_triangle_count': sum(m['triangles'] for m in compact), 'textured_68_byte_group_count': len(textured), 'gray_context_group_count': len(compact)-len(textured), 'decoded_local_color_texture_count': len(textures), 'resident_texture_budget': texture_budget, 'deferred_valid_local_color_texture_count': max(0, len(demands) - len(allowed_textures)), 'vertex_stride_counts': dict(sorted(Counter(str(m['stride']) for m in compact).items())), 'strict_group_errors': skipped, 'texture_decode_or_resolution_notes': texture_errors, 'conclusion_limit': 'aggregate diagnostic only; no cross-archive textures, non-68 UV rule, gameplay _ft, local props, V-axis decision, or final game shader claim'}
     return {'meshes': compact, 'textures': textures}, report
 
 
@@ -116,8 +128,8 @@ def _atomic(path, content, binary=False):
 
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--base-url',required=True);p.add_argument('--rcf-path',required=True);p.add_argument('--entry',required=True);p.add_argument('--out',required=True);p.add_argument('--preview-html',required=True);p.add_argument('--timeout',type=int,default=240);a=p.parse_args()
-    data=_fetch_raw(a.base_url,a.rcf_path,a.entry,a.timeout); display,report=build_preview_data(data,a.entry)
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--base-url',required=True);p.add_argument('--rcf-path',required=True);p.add_argument('--entry',required=True);p.add_argument('--out',required=True);p.add_argument('--preview-html',required=True);p.add_argument('--texture-budget',type=int,default=8,help='maximum decoded local color textures resident in this private preview');p.add_argument('--timeout',type=int,default=240);a=p.parse_args()
+    data=_fetch_raw(a.base_url,a.rcf_path,a.entry,a.timeout); display,report=build_preview_data(data,a.entry,a.texture_budget)
     output={'schema_version':1,'generated_at_utc':dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat(),'source':{'base_url':a.base_url.rstrip('/'),'rcf_path':a.rcf_path},'report':report}
     _atomic(a.out,json.dumps(output,ensure_ascii=False,indent=2)+'\n');_atomic(a.preview_html,_html(display,report));print(f"core groups={report['core_group_count']} textured={report['textured_68_byte_group_count']} textures={report['decoded_local_color_texture_count']} gray={report['gray_context_group_count']}")
 
