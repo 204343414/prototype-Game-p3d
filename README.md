@@ -110,6 +110,28 @@ prototype-p3d-toolkit/
   **注意**：目前还不支持直接预览原始 `.p3d`，需要先用 `tools/p3d2gltf`
   （待写）转换成 `.glb`。
 
+## 重大发现：2009年3DM工作室汉化工具反编译交叉验证
+
+当年汉化组用的《虐杀原形》素材编辑工具（`PackageManager.exe` /
+`P3DManipulator.exe`，2009年3DM工作室出品）是 .NET 程序，已用 `ilspycmd`
+完整反编译出可读源码，**独立验证**了我们的格式假设：
+
+- ✅ **再次证实 `.rz` 是标准 DEFLATE/zlib**：反编译代码里内嵌了一份手写的
+  DEFLATE 编解码器，用的正是 RFC1951 标准参数（286 literal/length符号、
+  30 distance符号、19 code-length符号），与从 Gibbed.Prototype 源码
+  读到的结论完全吻合，双重来源印证。
+- ✅ **P3D chunk 树结构确认**：`type_id + total_size + payload_size` 共
+  12字节头 + payload + 递归子chunk，与我们 `inspect_p3d.py` 的实现一致。
+- 🆕 **新发现两组此前未知的 chunk**：`0x00019002`（贴图，可能是DDS而非
+  只有PNG）配合4字节头、`0x00018201`/`0x00018202`（字符串索引表对，
+  疑似本地化文本相关）。已补充进 `docs/chunk-id-crosswalk.md`。
+- ⚠️ **发现一处需要用真实文件核实的差异**：RCF 文件头的 magic 字段
+  这份反编译代码读的是 32 字节，而我们从 Gibbed 源码实现的是 24字节
+  magic + 8字节独立padding——两者数值上可能等价，但需要真实 `.rcf`
+  文件的 hex dump 才能确认，直接关系到后续所有 offset 计算是否正确。
+
+详见 `docs/2009-3dm-tool-findings.md`（完整反编译发现记录）。
+
 ## 还没做 / 需要真实游戏资源才能继续验证
 
 1. **压缩支持**：`.rcf` 里大部分 `.p3d` 是 LZR 压缩过的（签名 `P3DZ`）。
