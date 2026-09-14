@@ -719,7 +719,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         max_depth = qs.get("max_depth", [None])[0]
         max_depth = int(max_depth) if max_depth is not None else None
         payload_preview = int(qs.get("payload_preview", ["32"])[0])
-        payload_preview = max(0, min(payload_preview, 256))
+        # /api/rcf_entry is also used to pull full raw data buffers (e.g.
+        # complete vertex/index streams, tens to hundreds of KB) out of a
+        # single chunk for offline analysis, so allow a much larger preview
+        # cap here than the generic /api/p3d endpoint's 256-byte cap.
+        payload_preview = max(0, min(payload_preview, 8 * 1024 * 1024))
         try:
             type_filter = _parse_type_filter(qs)
         except ValueError as e:
