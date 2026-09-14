@@ -55,6 +55,19 @@
 - 6 个非空 Cell（5、24、98、126、139、244）没有该根，不能被错误地判为整图缺失；它们保留为单独的实例/特殊内容候选；
 - 首版地图只尝试导出 `mergedDrawableRoot*`，防止将 local-space 的直升机/灯具网格错误堆到世界原点。其余 Geometry 与 `_ft` 层在第二阶段通过实例/MetaObject 关系再加入。
 
+### 第一次严格三角连接诊断：Cell 2 与 Cell 3
+
+在不把任何 P3D 原始数据写入仓库的前提下，新增了只读、core-only 的 `tools/world/export_static_geometry_diagnostic.py`。它只接受名称前缀为 `mergedDrawableRoot` 的 Geometry，并对每个 PrimitiveGroup 同时要求：LE P3D、`primitive_type=0` TriangleList、一个 MemoryImageVertexList、一个 MemoryImageIndexList、一个 VertexDescription、已验证的 offset-0 POSITION 声明，以及严格的 `uint16` 索引字节数、三元分组和索引范围。`primitive_type=0` 的 TriangleList 枚举也可由已存在的 NetP3D 参考子模块交叉查阅；实际 Cell 的索引边界与三元结构由本项目独立检查，不靠枚举名称替代验证。
+
+2026-09-15 对两个真实基础 Cell 的结果如下（metadata-only report 保存于私有研究目录，非仓库资产）：
+
+| Cell | world Geometry | PrimitiveGroup | POSITION 顶点 | uint16 索引 | 三角形 | 严格错误 / 重复索引三角形 / 零面积三角形 |
+|---|---:|---:|---:|---:|---:|---:|
+| `manhattan_Cell_2` | CastShadow、NoShadow | 58 | 47,510 | 85,698 | 28,566 | 0 / 0 / 0 |
+| `manhattan_Cell_3` | CastShadow、NoShadow | 34 | 67,878 | 100,566 | 33,522 | 0 / 0 / 0 |
+
+两者共通过了 92 个 group、115,388 个 POSITION 顶点和 62,088 个三角形；其 bounds 与先前的独立 Cell census 一致。生成器可在显式指定 `--preview-html` 时写一个**私有、无纹理的 WebGL 三角诊断页**，用于拖拽/缩放检查同一世界坐标空间；该页面只含为显示而派生的 POSITION/索引数据，不得提交或分发。它不是材质预览，也尚不构成“接缝已验证”的结论：UV、normal、vertex color 与 shader/texture 关联仍没有经过渲染回归。
+
 ### `art.rcf` 提供共享美术资源
 
 在 `art.rcf` 内已定位到 290 个 `\\art\\locations\\manhattan...` 相关 P3D 包（压缩总量约 87.5 MiB），包括：
@@ -79,9 +92,9 @@
 
 ## 下一步的可验证工作
 
-1. 基于已完成的全 260 Cell POSITION/vertex-declaration census，先为 29 种 static layout 建立经过验证的 POSITION、NORMAL、UV/颜色映射；
+1. POSITION + uint16 TriangleList 的 core-only 诊断已在 Cell 2 / 3 通过；现在为 29 种 static layout 建立经贴图渲染验证的 NORMAL、UV/颜色映射，不能从 hash 外观猜名称；
 2. 对照 Cell 的 PrimitiveGroup shader 名和 `art.rcf` 的纹理资源，建立只含引用名的材质依赖表；
-3. 用 `mergedDrawableRoot*` 的 2–4 个空间相邻 Cell 做低细节拼装预览，验证 seam / 坐标；不混入 local-space Geometry 或 gameplay `_ft`；
+3. 用 `mergedDrawableRoot*` 的 2–4 个空间相邻 Cell 做低细节**有材质**拼装预览，检查 seam / 坐标 / UV；不混入 local-space Geometry 或 gameplay `_ft`；
 4. 只有在相邻 Cell 无错位、UV/纹理绑定正常后，才扩到 143 个有合并世界根的非空基础 Cell；
 5. 再决定其余 6 个特殊 Cell、mini / midgeo / height map / `_ft` 是否作为独立图层和何时加载。
 
