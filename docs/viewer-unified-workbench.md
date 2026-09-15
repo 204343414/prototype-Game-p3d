@@ -25,5 +25,11 @@
 
 服务器 smoke tests 直接运行 `python3 viewer/test_server.py`；self-update 回归是隔离
 临时 Git fixture，不触碰用户主项目。`unittest discover -s viewer` 不会收集这些脚本。
-临时预览路径、端口及证据见根目录 `HANDOFF.md`。原 8420 不变；尚未正式部署或推送。
+临时预览路径、端口及证据见根目录 `HANDOFF.md`。原 8420 不变；原项目尚未正式部署；源码已推送至 openhands/manhattan-workbench-archive 分支。
 前端目前仍依赖原有 unpkg three.js 加载；离线依赖管理留作后续，不在地图任务中重写。
+
+## 地图导航
+
+滚轮按指针方向缩放且保留最小观察距离；左键旋转、右键平移，双击表面聚焦局部，
+重置视角返回总览。地图不会翻转到旋转中心下方；这不是有碰撞的漫游模式。
+静态地图仅在视角/资源变化时绘制，减少空闲时反复渲染整城。

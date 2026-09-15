@@ -181,7 +181,7 @@
       <div id="loading">加载中…</div>
       <div id="map-toolbar" class="hidden">
         <label><input id="map-wireframe" type="checkbox" /> 线框</label>
-        <button id="map-frame" type="button">重置视角</button>
+        <button id="map-frame" type="button" title="恢复全城视角；双击建筑可聚焦局部">重置视角</button>
         <button id="map-clear" type="button">卸载区块</button>
       </div>
       <div id="map-summary" class="hidden" role="status">从左侧读取 cells.rcf，然后选择一个基础 Cell。
@@ -206,7 +206,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { createMapWorkbench } from "./map-view.js?v=shared-recovery";
+import { createMapWorkbench } from "./map-view.js?v=camera-navigation";
 let mapWorkbench = null;
 
 // ---- 视图切换 ----
@@ -341,7 +341,7 @@ camera.position.set(2, 2, 3);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(host.clientWidth, host.clientHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 host.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -364,7 +364,9 @@ function animate() {
   const dt = clock.getDelta();
   if (mixer) mixer.update(dt);
   controls.update();
-  renderer.render(scene, camera);
+  if (currentView !== "map" || !mapWorkbench || mapWorkbench.needsRender()) {
+    renderer.render(scene, camera);
+  }
 }
 animate();
 

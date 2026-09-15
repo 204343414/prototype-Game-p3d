@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createMapNavigation } from './map-camera.js';
 import { getJSON } from './map-request.mjs';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
@@ -47,25 +48,21 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
   let source = '';
   let busy = false;
   let stop = false;
-  let savedCamera = null;
+  let renderRequested = true;
+  let userNavigated = false;
+  controls.addEventListener('change', () => { renderRequested = true; });
+  controls.addEventListener('start', () => { if (layer.visible) userNavigated = true; });
+  window.addEventListener('resize', () => { renderRequested = true; });
+  const navigation = createMapNavigation({ camera, controls, element: renderer.domElement,
+    getBounds: () => new THREE.Box3().setFromObject(layer), getObjects: () => layer.children });
   let geometryBytes = 0;
   let textureBytes = 0;
   let sessionMaterials = null;
   let sessionShared = '';
 
   function frame() {
-    if (!loaded.size || !layer.visible) return;
-    const box = new THREE.Box3().setFromObject(layer);
-    const center = box.getCenter(new THREE.Vector3());
-    const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 1);
-    const halfAngle = Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * Math.min(1, camera.aspect));
-    const distance = radius / Math.sin(halfAngle) * 1.1;
-    controls.target.copy(center);
-    camera.position.copy(center).add(new THREE.Vector3(1, 0.85, 1).normalize().multiplyScalar(distance));
-    camera.near = Math.max(radius / 10000, 0.01);
-    camera.far = Math.max(distance + radius * 10, 100);
-    camera.updateProjectionMatrix();
-    controls.update();
+    navigation.frame();
+    renderRequested = true;
   }
 
   function totals() {
@@ -83,7 +80,7 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
     const empty = completed.filter(v => v.status === 'empty').length;
     const errors = completed.filter(v => v.status === 'error').length;
     const sharedErrors = [...loaded.values()].filter(v => v.materials?.shared_error).length;
-    summary.textContent = `${loaded.size} 个区块 · ${total.triangles.toLocaleString()} 三角形 · ${textures.size} 张去重贴图\n已贴图 ${total.texturedGroups} / ${total.groups} 组 · ${((geometryBytes + textureBytes) / 1048576).toFixed(1)} MiB 驻留估算\n左键旋转 · 滚轮缩放 · 右键平移 | 仅城市主体；未验证布局 / 未解析贴图为灰色，尚非完整游戏材质${sharedErrors ? `\n${sharedErrors} 个区块的共享资源读取失败，请查看报告` : ''}`;
+    summary.textContent = `${loaded.size} 个区块 · ${total.triangles.toLocaleString()} 三角形 · ${textures.size} 张去重贴图\n已贴图 ${total.texturedGroups} / ${total.groups} 组 · ${((geometryBytes + textureBytes) / 1048576).toFixed(1)} MiB 驻留估算\n左键旋转 · 滚轮指向缩放 · 右键平移 · 双击聚焦 | 仅城市主体；未验证布局 / 未解析贴图为灰色，尚非完整游戏材质${sharedErrors ? `\n${sharedErrors} 个区块的共享资源读取失败，请查看报告` : ''}`;
     byId('map-progress').max = Math.max(entries.length, 1);
     byId('map-progress').value = states.size;
     byId('map-progress-text').textContent = `${states.size}/${entries.length} 已处理 · ${loaded.size} 已加载 · ${empty} 无主体 · ${errors} 失败`;
@@ -99,6 +96,7 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
       dispose(group);
     }
     for (const value of textures.values()) value.texture.dispose();
+    renderRequested = true;
     loaded.clear();
     textures.clear();
     states.clear();
@@ -230,6 +228,7 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
       textureBytes += additionalTextures;
       geometryBytes += additionalGeometry;
       layer.add(group);
+      renderRequested = true;
       const texturedGroups = data.meshes.filter(m => m.texture).length;
       loaded.set(cell, { group, report: data.report, materials: data.materials, texturedGroups });
       states.set(cell, { status: 'ready', label: `已加载 · 材质 ${texturedGroups}/${data.meshes.length}` });
@@ -263,6 +262,7 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
     if (busy || !checkSource()) return;
     const materials = materialMode();
     stop = false;
+    userNavigated = false;
     setBusy(true);
     let budget = '';
     try {
@@ -277,13 +277,13 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
           states.set(entry.cell, { status: 'error', label: '解析失败', error: error.message });
         }
         updateSummary();
-        if (loaded.size === 1) frame();
+        if (loaded.size === 1 && !userNavigated) frame();
         // Yield between Cells so pause/navigation stay responsive during a city load.
         await new Promise(resolve => setTimeout(resolve, 30));
       }
     } finally {
       setBusy(false);
-      frame();
+      if (!userNavigated) frame();
       status.textContent = budget || (stop ? '已暂停；点击加载整城可继续，并重试失败项。' : '本轮整城队列结束；请查看已加载/无主体/失败数量，不等同于完整地图验收。');
       if (materials && !s3tc) status.textContent += '\n浏览器不支持 S3TC，本次仅灰模。';
     }
@@ -314,6 +314,7 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
   byId('map-clear').onclick = clear;
   byId('map-frame').onclick = frame;
   byId('map-wireframe').onchange = event => {
+    renderRequested = true;
     layer.traverse(mesh => { if (mesh.isMesh) mesh.material.wireframe = event.target.checked; });
   };
   byId('map-report').onclick = () => {
@@ -329,21 +330,18 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
   };
   updateSummary();
   return {
+    needsRender() {
+      const result = renderRequested;
+      renderRequested = false;
+      return result;
+    },
     setVisible(visible) {
-      if (visible && !layer.visible) savedCamera = { position: camera.position.clone(), target: controls.target.clone(), near: camera.near, far: camera.far };
-      if (!visible && layer.visible && savedCamera) {
-        stop = true;
-        camera.position.copy(savedCamera.position);
-        controls.target.copy(savedCamera.target);
-        camera.near = savedCamera.near;
-        camera.far = savedCamera.far;
-        camera.updateProjectionMatrix();
-        controls.update();
-      }
+      if (!visible) stop = true;
+      navigation.setEnabled(visible);
       layer.visible = visible;
+      renderRequested = true;
       byId('map-toolbar').classList.toggle('hidden', !visible);
       summary.classList.toggle('hidden', !visible);
-      if (visible) frame();
     },
   };
 }
