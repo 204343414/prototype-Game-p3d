@@ -3,9 +3,36 @@
 > 项目目标补充：在角色资料库之外，最终提供可浏览的**全曼哈顿静态场景预览**。
 > 本文只记录用户合法本地安装中的结构元数据和验证计划；不把地图几何、贴图、游戏 archive 或导出的地图提交到仓库。
 
+## 整城 API 与共享贴图增量（2026-09-15）
+
+完整实际 API 核对：260 基础 Cell，143 含 merged world core、117 无 core、0 解析失败；
+4,675,907 三角形，16,898 groups。只表示严格城市主体范围，不包含全部 gameplay/实例。
+
+`cell_materials.py` 通过精确的 NewShader color 名称在用户 `art.rcf` 的 Manhattan
+`textures.p3d.rz` 查找共享纹理，本地 Texture 优先。共享 DDS 仍需完整 framing、尺寸、
+mip、算法和名称校验，不凭相似名称替换。接口 `shared_path` 可留空，有值时受 root 约束。
+
+全量材质绑定从 1,056 增至 9,391 groups（8,335 组共享引用），559 个去重纹理。
+剩余 7,125 组未验证 UV layout、381 组纹理未解析/不支持、1 组 color binding 不明确。
+下一步最大缺口已是其他 UV layout；先按覆盖量和独立预览验证，不解除 layout 白名单盲套规则。
+长期缓存按用户要求推迟；当前只做服务内存里的单共享 archive 索引，重启即消失。
+
+## 最新入口：统一工作台的真实灰模（2026-09-15）
+
+`/api/rcf_cell_preview` 已将现有严格 core 解码器接到 `viewer/static/map-view.js`。
+通过 SSH 在用户电脑解析 Cell 2/3，并在浏览器实际显示单 Cell 与两 Cell 灰模（共
+62,088 triangles）；Cell 0 返回 empty。提供真实归档列表、编号筛选、相机复位、线框、
+最多 4 Cell / 50 万三角形驻留及卸载。材质未导入，显示法线由三角形计算，不是游戏
+NORMAL 语义的新结论。原始世界位置保留，接缝和全城正确性尚未验收。
+
+临时回环入口 `http://127.0.0.1:8421/#map`，部署目录/边界见 `HANDOFF.md`。
+后文合并**材质**诊断归档的历史仍保留，不能把新灰模成功等同于原 shader 问题已解决。
+
 ## 与角色工作并行的边界
 
-地图分支当前只做“定位与台账”：确认档案、Cell 集合、静态几何/游戏逻辑的边界、材质来源和坐标拼装方法。它不抢占既定顺序中的角色蒙皮、角色动画和音效工作，也不提前做最终地图导出。
+2026-09-15 用户将地图与音效列为当前主线，角色/骨骼/ROT-only 播放保持已有基线。
+地图已不止“定位与台账”：有 core 三角、UV、表面向量和单 Cell 合并诊断实现，但尚未
+通过稳定场景显示与相邻 Cell 接缝验收，不提前做整图或最终 VRChat 导出。
 
 一个能可靠使用的整图预览必须按以下层次建立：
 
@@ -14,6 +41,21 @@
 3. **位置与层级**：证明每个 Cell 的坐标/网格编号关系，不能按文件排序硬拼；
 4. **可选的 gameplay/动态物**：生成器、刷兵点、可破坏物、载具、灯光等应与静态城市分开处理；
 5. **全景浏览器**：按距离分批加载/卸载 Cell，避免一次把整座城市塞进浏览器内存。
+
+## 2026-09-15 进度核对：合并场景曾归档，恢复前先复现
+
+较新的 `tools/report/build_progress_dashboard.py` 明确记录：Cell 2 合并 core material
+诊断结构拼装完成，但画面未稳定可见，因此归档；normal/shader transform 的后续渲染
+工作也暂停等待更强证据。下文的三角、UV、向量统计仍有效，**不代表合并场景目检通过**。
+
+本轮只是读取文档/代码与用户本机 API：`cells.rcf` 的 520 条元数据已重新核对，完整
+260 Cell 几何 census 和 WebGL 验收未重跑。用户运行 checkout 为 `8c3bacc`，本轮代码为
+`d35bf87`；较新诊断与报告生成器不能直接视为已部署。未在已检查的项目 samples 和
+游戏目录浅层找到旧 HTML/JSON，不能因此判断原产物不存在。详见根目录 `HANDOFF.md`。
+
+恢复顺序：定位原页面/生成命令 → 复现稳定显示问题 → 验收单 Cell → 依据 bounds
+选择相邻 Cell 拼接。不要在未区分页面交付、WebGL/相机和实际格式错误前重复盲调参数；
+也不要把下面 Cell 2/3 的独立三角诊断自动当作“它们空间相邻、接缝已通过”的证据。
 
 ## 已定位的真实地图来源
 
@@ -53,7 +95,7 @@
 
 对真实 `manhattan_Cell_2`，它目前合并了 **58** 个 core group（47,510 顶点、28,566 triangles）。其中仅在已证明的 68-byte declaration、`color @ 24`、`normal @ 40` 和同 Cell 可解码的 DXT1/DXT5 color Texture 同时满足时显示贴图。为避免在 workspace iframe 一次驻留二十余张图片而卡住，页面实行固定的 **8 个 texture resident budget**，优先三角覆盖量较大的引用；当前实际驻留 **7 group / 5 个去重本地贴图**，另 **51 group** 明确保留为灰色上下文，29 个低优先级的有效本地候选被延后。可在页面中切换“全部 / 仅已贴图 / 仅灰色”，不会用错误的 UV 或跨 archive 猜测填满。
 
-这仍是单 Cell、部分材质的 diagnostic：没有 `_ft`、local prop、跨 archive texture fallback、V 轴最终规则或完整 shader 公式，也还没有宣称与相邻 Cell 接缝正确。它的用途是先让用户看到一个合并的真实静态城区块，而非线框式单 mesh 夹具。
+这仍是单 Cell、部分材质的 diagnostic：没有 `_ft`、local prop、跨 archive texture fallback、V 轴最终规则或完整 shader 公式，也还没有宣称与相邻 Cell 接缝正确。它的设计目标是显示一个合并静态城区块，而非单 mesh 夹具；但最新进度记录表明稳定可见验收未通过，不能将设计目标写成已达成效果。
 
 
 进一步对 `0x00010014` MemoryImageVertexDescription 做了结构解码：所有基础 Cell 的 25,900 个 PrimitiveGroup 收敛为 **29 种稳定的 attribute layout**。每个 layout 明确记录语义哈希、byte offset、stride、element type 和 usage index；尚未给语义哈希擅自命名。所有 29 种 layout 都把同一哈希 `0x2C929929` 放在 offset 0，读取前三个 `float32` 得到上述有意义的世界 POSITION bounds。这是 POSITION 偏移的已验证证据；UV/NORMAL/TANGENT 哈希的最终名字与 glTF 映射仍须以贴图预览回归确认。
@@ -128,6 +170,7 @@ workspace 内嵌浏览器无法显示该 WebGL 页时，工具现可同时生成
 
 ## 下一步的可验证工作
 
+0. 先定位已归档合并诊断的页面/命令并复现显示问题；单 Cell 稳定可见前，不恢复批量材质调参或扩大场景。以下是恢复后的条件队列，不表示本轮已执行。
 1. POSITION + uint16 TriangleList 的 core-only 诊断已在 Cell 2 / 3 通过；两个 WebGL 样本均由用户确认 68-byte declaration 的 `0x00364509 @ 24` 优于 `@ 32` 作为 `color` sampler coordinate，CPU/PNG fallback 不可作格式验收。`0xC206BCE7 @ 40` / `0xA4176245 @ 52` 已有 normal/tangent 的三组几何向量证据；现在做定向光渲染回归、vertex color 和 NewShader transform / multi-stream 检查；其余 28 layouts 仍不能从 hash 外观猜名称；
 2. 对照 Cell 的 PrimitiveGroup shader 名和 `art.rcf` 的纹理资源，建立只含引用名的材质依赖表；
 3. 用 `mergedDrawableRoot*` 的 2–4 个空间相邻 Cell 做低细节**有材质**拼装预览，检查 seam / 坐标 / UV；不混入 local-space Geometry 或 gameplay `_ft`；
