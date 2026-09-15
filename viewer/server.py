@@ -23,7 +23,9 @@ Usage:
     如果你只想暴露某个解包出来的目录，传 --root /path/to/unpacked 更安全）
 """
 import argparse
+from functools import lru_cache
 import http.server
+import gzip
 import json
 import mimetypes
 import os
@@ -32,7 +34,9 @@ import socketserver
 import struct
 import subprocess
 import sys
+import threading
 import urllib.parse
+import zlib
 
 # Reuse the already-verified generic Pure3D chunk walker instead of
 # duplicating chunk-tree logic here. This lets a collaborating AI ask the
@@ -66,9 +70,48 @@ except ImportError:
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "world"))
 try:
     import probe_static_geometry  # noqa: E402
+    import export_static_geometry_diagnostic as cell_geometry  # noqa: E402
+    from cell_materials import attach_local_materials, build_texture_index  # noqa: E402
 except ImportError:
     probe_static_geometry = None
+    cell_geometry = None
 
+
+
+CELL_PREVIEW_LOCK = threading.Lock()
+MAX_CELL_BYTES = 64 * 1024 * 1024
+
+class PreviewBudgetError(ValueError):
+    pass
+
+
+def _read_preview_entry(path, name):
+    archive = rcf_extract.CementFile.load(path)
+    name_hash = rcf_extract.hash_file_name(name)
+    entry = next((e for e in archive.entries if e.name_hash == name_hash), None)
+    if entry is None:
+        raise FileNotFoundError(f"entry not found: {name}")
+    if entry.size > MAX_CELL_BYTES:
+        raise PreviewBudgetError("entry exceeds 64 MiB preview budget")
+    with open(path, "rb") as stream:
+        stream.seek(entry.offset)
+        raw = stream.read(entry.size)
+    if len(raw) != entry.size:
+        raise ValueError("truncated archive entry")
+    if raw[:4] == b"RZ\0\0" and len(raw) >= 16:
+        declared_size = struct.unpack_from("<I", raw, 8)[0]
+        if declared_size == 0:
+            raise ValueError("empty RZ decoded size")
+        if declared_size > MAX_CELL_BYTES:
+            raise PreviewBudgetError("decoded entry exceeds 64 MiB preview budget")
+    return rcf_extract.decompress_rz_payload(raw)
+
+
+@lru_cache(maxsize=1)
+def _shared_texture_index(path, mtime_ns, size):
+    # Process-only reuse avoids reparsing the same shared pack for every Cell.
+    data = _read_preview_entry(path, r"\art\locations\manhattan\textures.p3d.rz")
+    return build_texture_index(data)
 
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -257,6 +300,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_rcf_cell_geometry_manifest(qs)
         if parsed.path == "/api/rcf_entry":
             return self._handle_rcf_entry(qs)
+        if parsed.path == "/api/rcf_cell_preview":
+            return self._handle_cell_preview(qs)
         if parsed.path == "/api/health":
             return self._send_json({
                 "ok": True,
@@ -1062,6 +1107,82 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "chunks_shown": len(chunks),
             "chunks": chunks,
         })
+
+    def _handle_cell_preview(self, qs):
+        """Return strict world-core triangles and optional verified local color textures.
+
+        `path` is an RCF inside --root, `cell` is 0..259. Payload buffers are
+        base64 little-endian float32 POSITION / uint16 index streams. Optional
+        materials=1 includes bounded original DXT mip blocks and known UVs. No files
+        are extracted. Unsupported groups fail the whole preview, not silently
+        disappear from a supposedly complete scene.
+        """
+        if cell_geometry is None or rcf_extract is None:
+            return self._send_error_json("Cell geometry decoder unavailable", 503)
+        path = qs.get("path", [None])[0]
+        cell = qs.get("cell", [""])[0]
+        shared_path = qs.get("shared_path", [""])[0]
+        materials = qs.get("materials", ["0"])[0]
+        if materials not in ("0", "1"):
+            return self._send_error_json("materials must be 0 or 1", 400)
+        if not path or not re.fullmatch(r"[0-9]{1,3}", cell) or int(cell) > 259:
+            return self._send_error_json("requires path and integer cell in 0..259", 400)
+        try:
+            target = os.path.realpath(self._safe_resolve(path))
+            root = os.path.realpath(self.root_dir)
+            if os.path.commonpath([root, target]) != root:
+                raise PermissionError("path escapes configured root directory")
+            if shared_path:
+                shared_path = os.path.realpath(self._safe_resolve(shared_path))
+                if os.path.commonpath([root, shared_path]) != root:
+                    raise PermissionError("shared path escapes configured root directory")
+        except PermissionError as exc:
+            return self._send_error_json(str(exc), 403)
+        if not os.path.isfile(target):
+            return self._send_error_json("archive not found", 404)
+        if not CELL_PREVIEW_LOCK.acquire(blocking=False):
+            return self._send_error_json("another Cell is decoding; retry shortly", 429)
+        try:
+            name = f"\\art\\locations\\manhattan\\manhattan_Cell_{int(cell)}.p3d.rz"
+            data = _read_preview_entry(target, name)
+            groups, report = cell_geometry.scan_core_triangle_geometry(data, name)
+            if report["errors"]:
+                return self._send_json({"error": "unsupported or invalid core geometry", "report": report}, 422)
+            result = cell_geometry._preview_data(groups)
+            result.update(cell=int(cell), status="ready" if groups else "empty", textured=False, report=report)
+            if materials == "1" and groups:
+                shared = None
+                shared_error = None
+                if shared_path:
+                    try:
+                        stat = os.stat(shared_path)
+                        shared = _shared_texture_index(shared_path, stat.st_mtime_ns, stat.st_size)
+                    except (ValueError, OSError, struct.error, zlib.error) as exc:
+                        shared_error = str(exc)
+                textures, material_report = attach_local_materials(data, groups, result["meshes"], shared)
+                material_report["shared_error"] = shared_error
+                result.update(textures=textures, materials=material_report, textured=bool(textures))
+            body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+            use_gzip = bool(re.search(r"(?:^|,)\s*gzip\s*(?:,|$)", self.headers.get("Accept-Encoding", "")))
+            if use_gzip:
+                body = gzip.compress(body, compresslevel=1)
+            self.send_response(200)
+            self.send_header("Vary", "Accept-Encoding")
+            if use_gzip:
+                self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "private, no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except PreviewBudgetError as exc:
+            return self._send_error_json(str(exc), 413)
+        except FileNotFoundError as exc:
+            return self._send_error_json(str(exc), 404)
+        except (ValueError, OSError, struct.error, zlib.error) as exc:
+            return self._send_error_json(f"Cell preview: {exc}", 422)
+        finally:
+            CELL_PREVIEW_LOCK.release()
 
     def _handle_static(self, url_path):
         if url_path == "/":

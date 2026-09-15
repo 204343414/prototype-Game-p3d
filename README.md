@@ -18,21 +18,30 @@
 > 把它们做成一套能在 Linux（含 CI、容器、沙盒环境）上直接运行的、
 > 面向 Python + Web 的现代工具链。也欢迎后来的人类或 AI 在这个基础上继续修。
 
-> **当前状态与任务顺序（2026-09-14）**：Alex Mercer 全身静态预览（5 个
-> Skin、骨架、贴图、原始 UV）已经真实渲染验证通过；下一项工程里程碑是让
-> Alex 动画可靠播放，而不是重新排查 UV。完整交接见 [`HANDOFF.md`](./HANDOFF.md)，
-> 项目地基/角色/动画/音效/设计/最终导出的顺序和验收门槛见
-> [`docs/PROJECT_TARGETS.md`](./docs/PROJECT_TARGETS.md)。本文后部保留了一些
-> 项目早期调研记录，不能替代前两份当前文档。
+> **当前状态与任务顺序（2026-09-15 核对）**：Alex 全身蒙皮、骨架、贴图和
+> ROT-only 动画已有真实播放验证；保留该基线，当前优先推进**曼哈顿地图与音效**。
+> 完整 TRAN / 全角色动画仍有边界，不等于现有播放没做成。角色候选货架、地图
+> Cell 普查与诊断工具均已存在，但合并 Cell 材质场景未通过稳定显示验收。
+> 人物/动画成果目前是独立 Web 样本页，尚无串联成果的统一入口；已有文件查看页
+> 和报告生成器不等于完成产品集成。
+> 详见 [`HANDOFF.md`](HANDOFF.md) 的证据/部署快照、
+> [`项目目标`](docs/PROJECT_TARGETS.md)、[`地图地基`](docs/world-map-foundation.md)
+> 和 [`角色地基`](docs/character-foundation.md)。历史记录不能替代当前状态。
+
+### 地图最新进展（2026-09-15）
+
+统一地图页已支持整城队列、暂停/重试、精确共享材质引用和元数据报告。完整本机 API
+验证为 260 基础 Cell / 143 城市主体 / 117 无主体 / 0 解析失败，共 4,675,907 三角形。
+材质引用已覆盖 9,391/16,898 groups；剩余主要是未验证 UV layout，不宣称完整材质。
+用户要求长期资产缓存稍后再做；当前只有进程内共享贴图索引。部署与验证边界见 `HANDOFF.md`。
 
 ## 现状 TL;DR（写给下一个接手的人，人类或 AI 都一样）
 
 - 《虐杀原形》使用 Radical Entertainment 自家的 **Pure3D 引擎**的一个变种。
   资源都塞在 `.rcf` 归档里，模型/骨骼/动画/贴图都以 `.p3d` chunk 树的形式存在。
 - 本项目已用真实 `alex.p3d.rz` 跑通“从本地归档条目导出带蒙皮/贴图的 GLB，
-  再用自包含 three.js 页面真实预览”的最小闭环。当前重点从静态模型验证转为
-  通用解析地基、骨骼动画、角色普查和音效基础设施；最终 VRChat 导出留到展览
-  设计与性能预算收敛之后。
+  再用自包含 three.js 页面真实预览”的最小闭环，并已有 ROT-only 动画导出及
+  播放时蒙皮修复。当前推进地图和音效；最终 VRChat 导出留到展览设计与性能预算收敛之后。
 - Prototype 官方/社区工具年代久远（2009-2012），全部是 Windows-only 的
   .NET / WinForms+DirectX GUI，且**从未真正解决蒙皮网格+动画的导出问题**
   （参见 `references/gibbed-prototype` 的历史 issue 讨论）。
@@ -55,6 +64,8 @@ prototype-p3d-toolkit/
 │   ├── animation_format.md    <- Prototype 混合动画布局与外部 ZLIB family 的已验证格式
 │   ├── p3daddon-static-audit.md <- 用户提供旧 P3DAddon 的只读静态审计与动画线索
 │   ├── asset_inventory_schema.md <- RCF 元数据资产台账规范
+│   ├── character-foundation.md <- 角色候选、rigged census 与审阅货架
+│   ├── world-map-foundation.md <- Cell / 几何 / 材质证据与渲染阻塞
 │   ├── pure3d-format.md       <- Pure3D 文件/chunk 格式详细笔记
 │   ├── chunk-id-crosswalk.md  <- Prototype <-> Hit&Run chunk ID 对照表
 │   └── roadmap.md             <- 早期历史路线图（已过时）
@@ -64,7 +75,9 @@ prototype-p3d-toolkit/
 │   ├── p3d_export/            <- Alex 静态 GLB 导出、HTML 预览和截图验证脚本
 │   ├── p3d_animation/         <- Prototype 外部 ZLIB 动画 blob decoder（诊断 JSON）
 │   ├── p3d2gltf/              <- 通用 p3d -> glTF 解析/导出层（动画工程化待建）
-│   └── inventory/             <- 解包目录/RCF 元数据清点工具（含测试）
+│   ├── inventory/             <- RCF/rigged census 与稳定 review shelf
+│   ├── world/                 <- Manhattan Cell 普查与静态几何/材质诊断
+│   └── report/                <- 元数据进度主页生成器（不是完整 3D 地图）
 ├── viewer/                    <- 本地 web viewer（three.js）
 ├── run_viewer.sh              <- 一键启动本地查看器
 ├── samples/                   <- 测试/样例资源（不含受版权保护的游戏本体资源）
@@ -95,8 +108,17 @@ prototype-p3d-toolkit/
 - `tools/p3d_animation/decode_animation.py` — 读取 Prototype `Animation`
   的外部 ZLIB blob 并输出私有诊断 JSON；已用合成夹具和真实
   `alex_act_block`（53 groups / 60 channels）验证。它保留 TRAN 原始整数值，
-  目前**不**声称已完成 TRAN 标定或 glTF animation 导出；详见
-  `docs/animation_format.md`。
+  TRAN 标定仍未完成，但配套 `export_rotation_animation_experimental.py` 已能
+  输出 glTF rotation；详见 `docs/animation_format.md` §8，不等于完整 TRS 支持。
+
+- `tools/inventory/rigged_inventory.py` / `build_rigged_shelf.py` — 已有全量结构普查
+  和稳定审阅 ID；历史记录为 2,219 P3D 包 → 236 命中包 / 491 项，非 491 个已验收人物。
+- `tools/world/` — 已有 260 基础 Cell 普查、29 layout 分组、Cell 2/3 core 三角和
+  部分 68-byte 材质坐标证据；合并 Cell 稳定显示仍待解决，不能声称整图已完成。
+- `tools/report/build_progress_dashboard.py` — 由私有元数据 JSON 生成审阅主页；
+  记录 11 个 ROT-only 动作和地图诊断归档状态，本次未重新播放旧产物。
+- 音效入口已只读复核：`00audio.rcf` + `01audio.rcf` 共 14,614 条 `.p3d` 名称；
+  这是 archive 条目数，实际 codec、去重数量、试听均待验证。
 
 - `tools/inventory/scan_assets.py` — 扫描一个已解包目录，按文件名/路径
   关键词把资源粗分类为角色/武器/形态变身/动画/关卡/音频/贴图/UI等，
@@ -182,6 +204,12 @@ prototype-p3d-toolkit/
    目录结构已预留 `viewer/`。
 
 ## 人类 + AI 协作模式：本地文件隧道
+
+**当前推荐：SSH 调度本机计算，网页保留验收。** 用户已提供 Cloudflare SSH 通道；
+在资源所在机器调用 `http://127.0.0.1:8420` 的原有 API，减少公网来回，勿为切换通道
+重写查看器。服务器身份必须核对，SSH 权限不受 viewer `--root` 约束；具体路径、
+依赖与两端版本见 `HANDOFF.md`。未经确认不要 self-update、覆盖用户修改或重启服务。
+下面的 Quick Tunnel / SSH 隧道说明是**HTTP 查看器的发布方式**，不是远程 shell 登录。
 
 `run_viewer.sh` 支持 `--tunnel` 参数，会启动一条公网隧道，把
 `viewer/server.py` 的目录浏览 / 文件读取 API 通过一个临时公网 URL

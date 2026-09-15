@@ -2,57 +2,195 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
-<title>Prototype P3D 本地查看器</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prototype 资源查看器</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #14161a; color: #e6e6e6; font-family: -apple-system, "Segoe UI", "PingFang SC", sans-serif; overflow: hidden; }
-  #app { display: flex; height: 100%; }
-  #sidebar { width: 340px; min-width: 340px; background: #1c1f26; border-right: 1px solid #2c313c; display: flex; flex-direction: column; }
-  #sidebar h1 { font-size: 15px; padding: 14px 14px 6px; margin: 0; color: #7fd4ff; }
-  #sidebar .sub { padding: 0 14px 10px; font-size: 12px; color: #8a93a3; line-height: 1.5; }
-  #pathbar { display: flex; padding: 8px; gap: 6px; border-top: 1px solid #2c313c; border-bottom: 1px solid #2c313c; }
-  #pathinput { flex: 1; background: #11131a; border: 1px solid #333a47; color: #e6e6e6; padding: 6px 8px; border-radius: 4px; font-size: 13px; }
-  #gobtn, #upbtn { background: #2c313c; border: none; color: #e6e6e6; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 13px; }
-  #gobtn:hover, #upbtn:hover { background: #394254; }
+  html, body { margin: 0; height: 100%; background: #0a0d12; color: #e6e6e6; font-family: -apple-system, "Segoe UI", "PingFang SC", sans-serif; overflow: hidden; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+
+  /* 顶部导航栏 */
+  #topnav { background: #161d2b; border-bottom: 1px solid #1f2937; display: flex; align-items: center; height: 44px; padding: 0 14px; gap: 20px; }
+  #topnav .title { font-size: 14px; color: #7fd4ff; font-weight: 600; margin-right: auto; }
+  #topnav .tabs { display: flex; gap: 4px; }
+  #topnav .tab { background: transparent; border: none; color: #8a93a3; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.15s; }
+  #topnav .tab:hover { background: #1f2937; color: #e6e6e6; }
+  #topnav .tab.active { background: #2c313c; color: #7fd4ff; }
+  #topnav .connection { font-size: 11px; color: #6b7280; }
+
+  #main { display: flex; flex: 1; overflow: hidden; }
+  #sidebar { width: 340px; min-width: 340px; background: #0f131c; border-right: 1px solid #1f2937; display: flex; flex-direction: column; }
+  #sidebar h2 { font-size: 13px; padding: 12px 14px 8px; margin: 0; color: #9ca3af; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  #sidebar .sub { padding: 0 14px 10px; font-size: 12px; color: #6b7280; line-height: 1.5; }
+
+  /* 文件浏览器（角色与动画） */
+  #pathbar { display: flex; padding: 8px; gap: 6px; border-bottom: 1px solid #1f2937; }
+  #pathinput { flex: 1; background: #161d2b; border: 1px solid #2c313c; color: #e6e6e6; padding: 6px 8px; border-radius: 4px; font-size: 12px; }
+  #gobtn, #upbtn { background: #1f2937; border: none; color: #e6e6e6; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  #gobtn:hover, #upbtn:hover { background: #2c313c; }
   #filelist { flex: 1; overflow-y: auto; padding: 4px 0; }
-  .entry { padding: 7px 14px; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
-  .entry:hover { background: #262b35; }
-  .entry .icon { width: 16px; text-align: center; opacity: 0.8; }
-  .entry.dir { color: #ffd479; }
-  .entry.model { color: #7fffb0; font-weight: 600; }
-  .entry .size { margin-left: auto; color: #6b7280; font-size: 11px; }
-  #status { padding: 8px 14px; font-size: 12px; color: #8a93a3; border-top: 1px solid #2c313c; min-height: 34px; }
-  #viewer { flex: 1; position: relative; }
+  .entry { padding: 7px 14px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  .entry:hover { background: #161d2b; }
+  .entry .icon { width: 14px; text-align: center; opacity: 0.7; font-size: 12px; }
+  .entry.dir { color: #fbbf24; }
+  .entry.model { color: #6ee7b7; font-weight: 500; }
+  .entry .size { margin-left: auto; color: #6b7280; font-size: 10px; }
+
+  /* 快捷样本区 */
+  #samples { padding: 8px; }
+  .sample-item { padding: 8px 12px; background: #161d2b; border-radius: 4px; margin-bottom: 6px; cursor: pointer; font-size: 12px; border: 1px solid #1f2937; }
+  .sample-item:hover { background: #1f2937; border-color: #2c313c; }
+  .sample-item .label { color: #e6e6e6; display: block; margin-bottom: 2px; }
+  .sample-item .desc { color: #6b7280; font-size: 11px; }
+
+  /* Cell 选择器 */
+  #celllist { flex: 1; overflow-y: auto; padding: 4px 8px; }
+  .cell-item { padding: 8px 12px; background: #161d2b; border-radius: 4px; margin-bottom: 4px; cursor: pointer; font-size: 12px; border: 1px solid #1f2937; }
+  .cell-item:hover { background: #1f2937; border-color: #2c313c; }
+  .cell-item .name { color: #e6e6e6; display: block; font-weight: 500; }
+  .cell-item .info { color: #6b7280; font-size: 10px; margin-top: 2px; }
+
+  #status { padding: 10px 14px; font-size: 11px; color: #6b7280; border-top: 1px solid #1f2937; }
+
+  #viewer { flex: 1; position: relative; background: #0a0d12; }
   #canvas-host { position: absolute; inset: 0; }
-  #hint { position: absolute; top: 12px; left: 12px; font-size: 12px; color: #8a93a3; background: rgba(0,0,0,0.35); padding: 8px 12px; border-radius: 6px; max-width: 420px; line-height: 1.6; }
-  #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 14px; color: #7fd4ff; display: none; }
-  a { color: #7fd4ff; }
+  #hint { position: absolute; top: 12px; left: 12px; font-size: 11px; color: #9ca3af; background: rgba(10,13,18,0.85); padding: 10px 14px; border-radius: 6px; max-width: 420px; line-height: 1.6; border: 1px solid #1f2937; }
+  #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 13px; color: #7fd4ff; display: none; }
+
+  .placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #6b7280; }
+  .placeholder .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.3; }
+  .placeholder .text { font-size: 13px; }
+
+  .panel { display:flex; flex-direction:column; flex:1; min-height:0; overflow:auto; }
+  #main, #viewer { min-width:0; min-height:0; }
+  #pathinput { min-width:0; }
+  #celllist { min-height:100px; }
+  .map-fields { padding:8px 12px; display:grid; gap:8px; }
+  .map-fields input[type=text], .map-fields input[type=search] { box-sizing:border-box; width:100%; background:#161d2b; border:1px solid #364452; color:#e6e6e6; padding:8px; }
+  .map-fields button, #map-toolbar button { background:#253345; color:#e6e6e6; border:1px solid #405269; padding:6px 10px; cursor:pointer; }
+  .map-fields label { color:#b2bdca; font-size:12px; }
+  button.cell-item { display:block; text-align:left; width:100%; color:inherit; }
+  button.cell-item[aria-pressed=true] { border-color:#7fd4ff; background:#25364a; }
+  button:disabled { opacity:.45; cursor:default; }
+  #map-status { padding:12px; border-top:1px solid #293643; font-size:12px; line-height:1.6; color:#bbc6d0; white-space:pre-wrap; }
+  #map-toolbar { position:absolute; top:12px; right:12px; display:flex; align-items:center; gap:12px; background:#0a0d12df; padding:8px; border:1px solid #33414e; font-size:12px; }
+  #map-summary { position:absolute; bottom:16px; left:16px; max-width:calc(100% - 64px); padding:10px 14px; background:#0a0d12e8; border-left:2px solid #7fd4ff; font-size:12px; line-height:1.7; color:#c0ccd8; white-space:pre-wrap; pointer-events:none; }
+  @media(max-width:800px) { #sidebar { width:260px; min-width:260px; } #topnav { gap:8px; height:auto; min-height:44px; flex-wrap:wrap; } #topnav .tab { padding:8px; } #topnav .connection { display:none; } }
+
+  .hidden { display: none !important; }
+  a { color: #7fd4ff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { background: #161d2b; padding: 2px 5px; border-radius: 3px; font-size: 11px; }
 </style>
 </head>
 <body>
 <div id="app">
-  <div id="sidebar">
-    <h1>🗂 Prototype P3D 本地查看器</h1>
-    <div class="sub">
-      在下方输入任意本地路径（比如解包出来的 <code>art/</code> 目录），
-      浏览并点击 <b>.glb</b> / <b>.gltf</b> 文件即可预览。<br/>
-      仅供个人研究与同人创作使用，详见项目根目录 <code>NOTICE.md</code>。
+  <div id="topnav">
+    <div class="title">🎮 Prototype 资源查看器</div>
+    <div class="tabs">
+      <button class="tab active" data-view="characters">角色与动画</button>
+      <button class="tab" data-view="map">曼哈顿地图</button>
+      <button class="tab" data-view="audio">音效</button>
+      <button class="tab" data-view="tools">工具</button>
     </div>
-    <div id="pathbar">
-      <button id="upbtn" title="上一级目录">⬆</button>
-      <input id="pathinput" type="text" value="/" />
-      <button id="gobtn">Go</button>
-    </div>
-    <div id="filelist"></div>
-    <div id="status">就绪。</div>
+    <div class="connection">127.0.0.1:8420</div>
   </div>
-  <div id="viewer">
-    <div id="canvas-host"></div>
-    <div id="hint">
-      鼠标左键拖动＝旋转，滚轮＝缩放，右键拖动＝平移。<br/>
-      当前还不支持直接预览 <code>.p3d</code> 原始格式，
-      需要先用 <code>tools/p3d2gltf</code>（开发中）转换成 <code>.glb</code>。
+
+  <div id="main">
+    <!-- 左侧面板容器 -->
+    <div id="sidebar">
+      <!-- 角色与动画面板 -->
+      <div id="panel-characters" class="panel">
+        <h2>已验证样本</h2>
+        <div id="samples">
+          <div class="sample-item" data-note="placeholder">
+            <div class="label">Alex 人物与动画样本 · 待接入</div>
+            <div class="desc">既有成果尚未接入此页；可浏览已有 GLB</div>
+          </div>
+        </div>
+        <h2>文件浏览</h2>
+        <div class="sub">浏览本地 .glb / .gltf 文件</div>
+        <div id="pathbar">
+          <button id="upbtn" title="上一级目录">⬆</button>
+          <input id="pathinput" type="text" value="/" />
+          <button id="gobtn">Go</button>
+        </div>
+        <div id="filelist"></div>
+        <div id="status">就绪</div>
+      </div>
+
+      <div id="panel-map" class="panel hidden">
+        <h2>曼哈顿 / 静态城区</h2>
+        <div class="sub">整城按 Cell 顺序加载。已验证布局使用本地 / 共享 color 贴图；未知材质保留灰色，不含局部道具或 _ft。</div>
+        <div class="map-fields">
+          <label for="map-archive">服务器上的 cells.rcf 路径</label>
+          <input id="map-archive" type="text" placeholder="连接后自动填写，可修改" />
+          <label for="map-shared">共享贴图 art.rcf（可留空）</label>
+          <input id="map-shared" type="text" placeholder="与 cells.rcf 同目录的 art.rcf" />
+          <button id="map-list-load" type="button">读取 Cell 列表</button>
+          <label><input id="map-materials" type="checkbox" checked /> 加载已验证的本地 / 共享材质（256px mip）</label>
+          <button id="map-all" type="button" disabled>加载整城 / 继续</button>
+          <button id="map-stop" type="button" disabled>暂停（当前 Cell 完成后）</button>
+          <progress id="map-progress" value="0" max="260" aria-label="整城加载进度" style="width:100%"></progress>
+          <div id="map-progress-text" class="sub">尚未开始 · 驻留预算 512 MiB</div>
+          <button id="map-report" type="button">导出加载报告（仅元数据）</button>
+          <input id="map-search" type="search" aria-label="筛选 Cell 编号" placeholder="筛选编号，例如 2、18…" />
+          <label><input id="map-append" type="checkbox" /> 保留已加载区块</label>
+        </div>
+        <div id="celllist" aria-label="基础 Cell 列表"></div>
+        <div id="map-status" role="status">尚未读取归档。选择 Cell 后才解析几何，不扫描整座城市。</div>
+      </div>
+
+      <!-- 音效面板 -->
+      <div id="panel-audio" class="panel hidden">
+        <h2>音频归档</h2>
+        <div class="sub">两个 audio archive 已复核，解码待实现</div>
+        <div style="padding: 8px;">
+          <div class="cell-item" data-note="placeholder">
+            <div class="name">00audio.rcf</div>
+            <div class="info">归档统计已完成</div>
+          </div>
+          <div class="cell-item" data-note="placeholder">
+            <div class="name">01audio.rcf</div>
+            <div class="info">归档统计已完成</div>
+          </div>
+        </div>
+        <div class="sub">音频解码和试听功能开发中</div>
+      </div>
+
+      <!-- 工具面板 -->
+      <div id="panel-tools" class="panel hidden">
+        <h2>研究工具</h2>
+        <div class="sub">通用文件检查和诊断</div>
+        <div id="pathbar-tools">
+          <button id="upbtn-tools" title="上一级目录">⬆</button>
+          <input id="pathinput-tools" type="text" value="/" />
+          <button id="gobtn-tools">Go</button>
+        </div>
+        <div id="filelist-tools"></div>
+        <div class="sub">工具面板尚未接入；文件访问受服务器根目录限制</div>
+      </div>
     </div>
-    <div id="loading">加载中…</div>
+
+    <!-- 右侧预览区 -->
+    <div id="viewer">
+      <div id="canvas-host"></div>
+      <div id="hint">
+        鼠标左键拖动＝旋转，滚轮＝缩放，右键拖动＝平移<br/>
+        当前支持 .glb / .gltf 预览，原始 .p3d 需先转换
+      </div>
+      <div id="loading">加载中…</div>
+      <div id="map-toolbar" class="hidden">
+        <label><input id="map-wireframe" type="checkbox" /> 线框</label>
+        <button id="map-frame" type="button" title="恢复全城视角；双击建筑可聚焦局部">重置视角</button>
+        <button id="map-clear" type="button">卸载区块</button>
+      </div>
+      <div id="map-summary" class="hidden" role="status">从左侧读取 cells.rcf，然后选择一个基础 Cell。
+真实城市几何 · 已验证 color 贴图 · 不等于完整游戏 shader</div>
+      <div id="placeholder-audio" class="placeholder hidden">
+        <div class="icon">🔊</div>
+        <div class="text">音频播放器开发中</div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -68,7 +206,59 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { createMapWorkbench } from "./map-view.js?v=camera-navigation";
+let mapWorkbench = null;
 
+// ---- 视图切换 ----
+let currentView = "characters";
+const tabs = document.querySelectorAll("#topnav .tab");
+const panels = {
+  characters: document.getElementById("panel-characters"),
+  map: document.getElementById("panel-map"),
+  audio: document.getElementById("panel-audio"),
+  tools: document.getElementById("panel-tools")
+};
+const placeholders = {
+  audio: document.getElementById("placeholder-audio")
+};
+
+function switchView(view) {
+  currentView = view;
+  if (mapWorkbench) mapWorkbench.setVisible(view === "map");
+  if (currentModel) currentModel.visible = view !== "map" && view !== "audio";
+  if (skeletonHelper) skeletonHelper.visible = view === "characters";
+  grid.visible = view === "characters" || view === "tools";
+  tabs.forEach(t => t.classList.toggle("active", t.dataset.view === view));
+  Object.entries(panels).forEach(([k, p]) => p.classList.toggle("hidden", k !== view));
+
+  // 隐藏所有占位符
+  Object.values(placeholders).forEach(p => p.classList.add("hidden"));
+
+  // 显示相应占位符或 canvas
+  if (view === "map") {
+    document.getElementById("hint").classList.add("hidden");
+  } else if (view === "audio") {
+    placeholders.audio.classList.remove("hidden");
+    document.getElementById("hint").classList.add("hidden");
+  } else {
+    document.getElementById("hint").classList.remove("hidden");
+  }
+}
+
+tabs.forEach(tab => {
+  tab.addEventListener("click", () => switchView(tab.dataset.view));
+});
+
+// ---- 已验证样本点击事件 ----
+document.querySelectorAll(".sample-item[data-path]").forEach(item => {
+  item.style.cursor = "pointer";
+  item.addEventListener("click", () => {
+    const path = item.dataset.path;
+    loadModel(path);
+  });
+});
+
+// ---- 角色与动画面板 ----
 const filelistEl = document.getElementById("filelist");
 const pathInput = document.getElementById("pathinput");
 const statusEl = document.getElementById("status");
@@ -131,17 +321,27 @@ document.getElementById("upbtn").onclick = async () => {
 };
 pathInput.addEventListener("keydown", (e) => { if (e.key === "Enter") browse(pathInput.value); });
 
-// ---- three.js viewer setup ----
+// 样本占位符点击提示
+document.querySelectorAll(".sample-item[data-note='placeholder']").forEach(item => {
+  item.onclick = () => setStatus("样本加载功能即将接入，当前可通过文件浏览器手动选择 .glb 文件");
+});
+
+// Cell 和音频占位符点击提示
+document.querySelectorAll(".cell-item[data-note='placeholder']").forEach(item => {
+  item.onclick = () => setStatus("该功能开发中，当前显示的是已知进度摘要");
+});
+
+// ---- three.js 查看器 ----
 const host = document.getElementById("canvas-host");
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x14161a);
+scene.background = new THREE.Color(0x0a0d12);
 
 const camera = new THREE.PerspectiveCamera(50, host.clientWidth / host.clientHeight, 0.01, 1000);
 camera.position.set(2, 2, 3);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(host.clientWidth, host.clientHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 host.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -164,7 +364,9 @@ function animate() {
   const dt = clock.getDelta();
   if (mixer) mixer.update(dt);
   controls.update();
-  renderer.render(scene, camera);
+  if (currentView !== "map" || !mapWorkbench || mapWorkbench.needsRender()) {
+    renderer.render(scene, camera);
+  }
 }
 animate();
 
@@ -175,17 +377,65 @@ window.addEventListener("resize", () => {
 });
 
 const loader = new GLTFLoader();
+let skeletonHelper = null;
 
 function loadModel(path) {
   loadingEl.style.display = "block";
   setStatus("加载模型：" + path);
-  const url = `/api/file?path=${encodeURIComponent(path)}`;
+  // 如果是相对路径（静态文件），直接用；否则走 API
+  const url = path.startsWith('/') ? `/api/file?path=${encodeURIComponent(path)}` : path;
   loader.load(url, (gltf) => {
     if (currentModel) scene.remove(currentModel);
+    if (skeletonHelper) {
+      scene.remove(skeletonHelper);
+      skeletonHelper = null;
+    }
+
     currentModel = gltf.scene;
     scene.add(currentModel);
+    currentModel.visible = currentView === "characters" || currentView === "tools";
 
-    // auto-frame camera to fit model
+    // 使用 SkeletonHelper 并强制覆盖颜色
+    let foundSkeleton = false;
+    currentModel.traverse((child) => {
+      if (child.isSkinnedMesh && child.skeleton) {
+        console.log("✅ 找到蒙皮网格，骨骼数:", child.skeleton.bones.length);
+
+        // 创建 SkeletonHelper
+        const rootBone = child.skeleton.bones[0];
+        skeletonHelper = new THREE.SkeletonHelper(rootBone);
+
+        // 方法1: 直接修改材质颜色
+        skeletonHelper.material.color.set(0xff8844);
+
+        // 方法2: 强制遍历所有子对象，修改颜色属性
+        skeletonHelper.traverse((obj) => {
+          if (obj.material && obj.material.color) {
+            obj.material.color.set(0xff8844);
+          }
+        });
+
+        scene.add(skeletonHelper);
+        foundSkeleton = true;
+
+        // 方法3: 渲染后再次强制设置颜色
+        setTimeout(() => {
+          if (skeletonHelper && skeletonHelper.geometry && skeletonHelper.geometry.attributes.color) {
+            const colors = skeletonHelper.geometry.attributes.color.array;
+            for (let i = 0; i < colors.length; i += 3) {
+              colors[i] = 1.0;     // R
+              colors[i+1] = 0.533; // G (#88 = 0.533)
+              colors[i+2] = 0.267; // B (#44 = 0.267)
+            }
+            skeletonHelper.geometry.attributes.color.needsUpdate = true;
+          }
+          console.log("✅ 已强制设置橙色 #ff8844");
+        }, 100);
+
+        console.log("✅ 骨骼辅助对象已添加");
+      }
+    });
+
     const box = new THREE.Box3().setFromObject(currentModel);
     const size = box.getSize(new THREE.Vector3()).length();
     const center = box.getCenter(new THREE.Vector3());
@@ -198,10 +448,10 @@ function loadModel(path) {
     if (gltf.animations && gltf.animations.length > 0) {
       mixer = new THREE.AnimationMixer(currentModel);
       mixer.clipAction(gltf.animations[0]).play();
-      setStatus(`已加载：${path}（含 ${gltf.animations.length} 个动画片段，正在播放第一个）`);
+      setStatus(`已加载：${path}（${gltf.animations.length} 动画，播放第一个）`);
     } else {
       mixer = null;
-      setStatus(`已加载：${path}（无动画数据）`);
+      setStatus(`已加载：${path}（无动画）`);
     }
     loadingEl.style.display = "none";
   }, undefined, (err) => {
@@ -211,7 +461,13 @@ function loadModel(path) {
   });
 }
 
-// initial browse at root (or wherever the server restricts us to)
+mapWorkbench = createMapWorkbench({ scene, camera, controls, renderer });
+fetch('/api/health').then(r => r.json()).then(health => {
+  document.querySelector('.connection').textContent = `${location.host} · ${health.git_commit || '临时预览'}`;
+  document.getElementById('map-archive').value = health.root.replace(/\/$/, '') + '/cells.rcf';
+  document.getElementById('map-shared').value = health.root.replace(/\/$/, '') + '/art.rcf';
+}).catch(() => { document.querySelector('.connection').textContent = '后端未连接'; });
+if (location.hash === '#map') switchView('map');
 browse(pathInput.value);
 </script>
 </body>

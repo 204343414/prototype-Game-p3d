@@ -10,28 +10,155 @@
 > `docs/animation_format.md` 为准**。项目级目标、建设顺序与验收门槛见
 > `docs/PROJECT_TARGETS.md`。
 
-最后更新：2026-09-14（当前权威版本始终以 `origin/main` 的 `git log -1` 为准。动画外部 ZLIB decoder、AnimationLimbReference 静态审计和混合布局勘误均已推送并已部署到用户 viewer checkout。）
+最后核对：2026-09-15。当前接手顺序是**保留已验收角色/骨骼/动画，推进地图与音效**。
+不要再按旧文档重开 Alex 静态或“第一次接入动画”的任务；完整 TRAN 与全角色动画覆盖仍须单独标为未完成。
 
-## 项目一句话说明
+## 新会话先读：用户最新验收与下一步
 
-给《Prototype》(2009) 游戏的 `.p3d` (Pure3D引擎) 资源文件做逆向解析，
-最终目标是把角色模型（含骨骼动画、贴图）导出成 glTF，用于制作一个
-VRChat 内的《Prototype》游戏考古展览/纪念馆（预览角色 + 如果可能预览地图）。
+2026-09-15 用户目检反馈：**大部分可见材质/贴图已显示，马路仍为灰白色**。
+这是对当前视觉效果的用户确认，不等于全部 shader/接缝/材质逐项通过。下一步优先定位
+道路 PrimitiveGroup 的 layout、NewShader template/color 引用和贴图来源，选一个代表样本
+验证；不要重新调查 RCF 位置、重写地图几何，或盲目把 68-byte UV 规则套给其他布局。
+长期缓存按用户要求暂缓，先补道路等主要可见缺口；橙色骨骼线细节不要抢占地图主线。
 
-## 最终用户需求（务必记住，别偏离）
+**交接保存状态**：已按用户授权推送至 GitHub 分支
+`openhands/manhattan-workbench-archive`，首个恢复点 **`4cf4f84`**；后续相机修复在同一分支。
+新聊天应选择该分支而非 `main`。存档只含源码、合成测试及文档，未提交游戏资产或密钥。
+用户机器最新运行代码仍在 `/tmp/prototype-map-preview.LRlPDWCg`，主项目/8420 未修改。
 
-用户是想做 **VRChat 展览**，角色优先级（原话）：
-Blackwatch黑色守望×2、海军陆战队×2、Hunter猎手、Alpha Hunter大猎手、
-终极猎手、Elizabeth Greene(E妈)、Cross上校、**Alex Mercer(阿哥，当前模板角色)**、
-各类强化感染僵尸。平民NPC可以不做。**若能顺带预览完整游戏地图会更好**。
+**起步检查**：读根目录 `AGENTS.md` 与本文最新段落 → 确认当前工作区/版本/dirty状态 →
+检查 SSH 私钥是否仍在当前环境（不要打印内容或默认重新生成）→ 核对用户机器 8421 健康
+状态。之前已成功登录 `liang@8700k.top`；环境变了不等于过去没有连上。
 
-策略：Alex 的静态流程（解析→绑定→贴图→glTF→预览）已作为模板跑通；现在先完成
-一个可靠的动画垂直切片，再建立全角色/动画/音效的通用资产台账和解析基础。
-设计可同步调研，但最终的批量模型导出与 VRChat 集成要等展览范围、性能预算和体验
-设计基本收敛后再做。详见 `docs/PROJECT_TARGETS.md`；地图解析仍是一条独立、低优先级
-的通用化路线。
+## 地图缩放/拖拽修复（2026-09-15）
 
-## 当前状态：Alex Mercer 全身角色（T-pose，贴图+UV已修复正确）预览已成功；外部 ZLIB 动画 family 已解码但尚未接入 glTF
+用户反馈滚轮放大后视角异常且无法正常拖动。对实际 Three.js r160 OrbitControls 的
+浏览器测试复现：旧默认 `minDistance=0` 下，240 次滚轮将相机与 target 距离压到
+0.0156 个世界单位；平移步长随该距离缩小。当前新增 `map-camera.js`：
+
+- 最小距离按场景尺度设定（至少 2），限制最大距离及极角，启用鼠标指向缩放；
+- 双击实际表面重新聚焦，重置视角回到当前地图范围；重置前清理残余阻尼；
+- 离开地图标签恢复原相机/控制参数，避免影响人物预览；
+- 静态地图按需重绘，用户开始操作后整城队列结束不强行覆盖其视角。
+
+真实浏览器回归使用 city-scale 合成几何、实际 OrbitControls/CDP 鼠标事件（非 mock），
+240 次滚轮后距离维持 2.8289，左键旋转、右键平移、总览复位和双击聚焦均通过。
+新前端也已在用户真实 Cell 2 上加载并截图确认；本轮未重新跑完整城市性能基准。
+这不是碰撞检测或第一人称漫游，不能承诺相机永不穿建筑。
+
+已更新用户 8421 的前端文件，无需重启服务器；打开
+`http://127.0.0.1:8421/?v=camera-navigation#map` 获取新版本。原 8420 和游戏文件保持不动。
+
+## 最新增量：整城核对与共享材质（2026-09-15）
+
+用户要求先完整加载地图，再设计长期缓存；本轮没有生成持久几何/贴图缓存。
+
+- 用户机器上实际完整 API 核对 **260/260** 基础 Cell：**143 ready、117 empty、0 error**。
+  empty 包含既有 111 placeholder 与 6 个无 merged world root 的特殊 Cell；不等于缺失。
+- 城市主体合计 **7,784,242 顶点 / 4,675,907 三角形 / 16,898 PrimitiveGroup**。
+- 在 `art.rcf` 的 `\art\locations\manhattan\textures.p3d.rz` 找到 192 个共享 Texture 名称。
+  只在本 Cell 没有同名 Texture 时按 **NewShader color 精确名称**查共享资源；本地优先、
+  歧义/坏 DDS 不猜。接口新增 `shared_path=<art.rcf>`，受 root 和 realpath 约束。
+- 共享材质接入后：**9,391/16,898 组**有可绑定贴图（原为 1,056）；其中 8,335 组来自共享源。
+  559 张按内容去重的压缩纹理 mip，总计 26,298,624 bytes。按组数约 55.6%，不是画面面积覆盖率。
+- 剩余灰色：7,125 组 UV layout 未验证，381 组纹理缺失/不支持，1 组 color binding 不明确。
+  不宣称全部材质、全部 shader、_ft/局部实例、无接缝或 VRChat 可直接使用。
+- 私有统计报告：用户机器 `/tmp/prototype-map-preview.LRlPDWCg/whole-city-audit.json`。
+  仅统计/布局/缺失原因，不含顶点、索引或纹理 payload。整轮本机 API 审核约 55 秒，非浏览器加载耗时。
+- `map-request.mjs` 对网络断线/超时、429、5xx 有限重试；422 等格式错误不反复请求。
+  整城继续按钮重试失败项。压缩响应降低隧道传输量，不能把网络等待解释成路径编码错误。
+- 共享纹理只有**进程内、单 archive 索引**，按路径+mtime_ns+size 失效；服务器重启消失，
+  与用户要求推迟的长期 Cell 缓存不是一回事。前端全城驻留预算仍为 512 MiB / 1000 万三角形。
+- 当前入口仍为用户本机 `http://127.0.0.1:8421/?v=shared-recovery#map`，原项目/8420 未修改。
+  如有旧页需刷新加载新版代码；新版本地图 API 与前端必须配套，不能只复制 index.html。
+- 浏览器整城队列已结束：143 个区块、4,675,907 三角形、559 张贴图、9,391/16,898 组材质，
+  驻留估算 316.1 MiB，与本机 API 核对一致。已在中途截图看到共享贴图补齐后的楼体和屋顶；
+  最终整城截图工具未返回图像，不能据队列成功声称逐块视觉/接缝验收完成。
+- 测试：viewer smoke、7 项真实合成材质单测、4 项 Node 原生 HTTP 重试测试（无 fetch mock）通过。
+
+## 历史里程碑：单 Cell 灰模接入（后续已扩展整城）
+
+本轮撤掉了错误的 `/api/heightmap_preview`（任意 P3D 字节转灰度图不是地图），
+改为 `/api/rcf_cell_preview?path=<cells.rcf>&cell=N`，复用严格 core 三角解析器。
+`viewer/static/map-view.js` 从真实 manifest 列出基础 Cell，按需加载、保留源坐标，
+提供编号筛选、线框、重置视角和卸载；最多驻留 4 Cell / 50 万三角形。
+未知布局/坏索引拒绝整个预览，不静默省略为“完整场景”；接口限制单 Cell 64 MiB。
+
+- SSH 在用户机器真实验证：Cell 2 = 58 groups / 47,510 顶点 / 28,566 triangles；
+  Cell 3 = 34 / 67,878 / 33,522；各约 0.31 秒本机请求时间（不是公网加载耗时）。
+- 浏览器经私有 SSH 转发，实际看到 Cell 2 灰模和 Cell 2+3 合并视图，共 62,088 triangles。
+  码头、建筑、吊机可见；源坐标保留，两个区块未强行拼合。Cell 0 API 返回 empty。
+- 这解锁的是**无贴图灰模显示**，不是旧材质诊断已修好、接缝通过或全城完成。
+  当前测试浏览器中文字体缺失，截图有方框；不作为模型问题继续反复调参。
+- 用户本机预览入口：`http://127.0.0.1:8421/#map`。临时源码目录
+  `/tmp/prototype-map-preview.LRlPDWCg`，日志 `server.log`，PID 文件 `server.pid`。
+  仅绑定回环，用户原项目及 8420 未修改；临时环境重启后可能消失，尚未正式部署。
+- 只传输了明确列出的源码文件到用户主机；没有将游戏资源提交 Git 或放到公开目录。
+  此前容器上 `0.0.0.0:12000 --root /` 的宽权限测试服务已停止。
+- 测试：`python3 viewer/test_server.py`（真实合成 RCF→RZ→几何 HTTP 链路，含
+  越界、symlink、坏索引、空 Cell、超预算/坏压缩输入）及 core decoder 3 项测试通过。
+  本轮未验证人物样本/骨骼新实现，不沿用此前“所有功能完美”的结论。
+
+## 用户补充：样本页不等于统一入口
+
+2026-09-15 用户明确：所示全城截图来自 B 站他人的收费预览器，仅作能力参照，
+不是本项目的运行结果。用户希望独立开发并在 GitHub 公开工具项目；这不等于授权
+本轮推送、改变仓库可见性或公开游戏资产，也不依赖获取收费工具源码。
+
+此前 agent 已做出人物与动画样本，但以独立 Web 子页面提供，**尚无串联这些成果的
+统一产品入口**。`viewer/static/index.html` 是已有的基础文件查看页，
+`build_progress_dashboard.py` 是报告生成器，二者都不能据名称推断为已整合的首页。
+样本页存在由用户确认；人物/动画产物位置与可重复生成入口仍待定位；已找回的地图子页见下节。
+
+后续建议先补轻量导航与样本登记，复用已有页面，不另做一套模型渲染器；地图与音效
+入口如实显示当前状态，不用占位图伪装成可用预览。该入口工作尚未实现。
+
+### 已找回的私有样本：Cell 3 group 18 UV 对照页
+
+用户上传 `/workspace/manhattan_cell_3_group18_uv_candidate_diagnostic.html`，
+1,251,552 bytes，SHA-256 `a64c583b18f94442a978971e95a85a2fddf74222631e9fe6bdbbdff6375bbc19`。
+这是本项目独立的 UV 诊断子页，不是第三方收费预览器、整图、完整 Cell 或动画样本。
+
+本次直接读取嵌入数据并验证：25,509 顶点、32,112 个 uint16 索引 / 10,704 三角形，
+索引最大 25,508；POSITION 和两组 float2 UV 长度及有限值检查通过；内嵌 PNG header
+为 256×1024。元数据将源纹理记为 DXT5；本次未重新解码源 DDS，也未做 WebGL 目检。
+左右分别比较 68-byte layout 的 offset 24 / 32，不能据结构检查重新裁定 V 轴规则。
+
+主体使用自包含原生 WebGL，无 CDN 库依赖；尾部另有 Cloudflare 注入的 challenge
+脚本，会动态请求 `/cdn-cgi/challenge-platform/scripts/jsd/main.js`，不是渲染依赖。
+原件保持不变，尚未执行脚本或发布页面。该文件含游戏派生几何/纹理，留在仓库外；
+后续清理应通过原创生成器或经确认编辑，不把整个产物纳入公开 Git。
+
+## 本次核对的证据与部署边界
+
+| 来源 | 核对结果 | 验证边界 |
+|---|---|---|
+| 本轮工作区 | `d35bf87`（Archive homepage 链接修复），浅克隆 | 不代表用户机器已部署，也非实时查询远端最新分支 |
+| 用户 checkout / `GET /api/health` | 均为 `8c3bacc`；本机 8420 返回 200；`run_viewer.sh` 有未提交修改 | 未覆盖、pull 或重启 |
+| 两端 SHA-256 | `viewer/server.py`、`viewer/static/index.html`、ROT-only exporter 内容一致 | 后续地图诊断和 report 工具不能视为已部署 |
+| 用户反馈 + 动画格式文档 §8 | 用户确认骨骼/动画已解决；已有 Alex ROT-only 播放和蒙皮修复记录 | 不等于全部 TRAN、全部角色/动作已支持 |
+| `tools/report/build_progress_dashboard.py` | 记录 11 个真实外部 PTRN 动作可预览；Cell 2 合并场景未稳定可见、已归档 | 本轮未重新播放历史画面；生成器不等于已部署页面 |
+| 本轮只读归档 API | 复核 `art.rcf` 2,601 条、`cells.rcf` 520 条及两个 audio archive 的条目统计 | 未重跑全量几何普查、导出、渲染或音频解码 |
+
+用户项目 `samples/` 只有 `.gitkeep`；游戏根目录与下一层未发现 HTML/JSON 预览产物。
+未搜索整个 home 或其他 agent 私有空间，除用户随后上传的 Cell 3 UV 子页外，其他旧页面/缓存路径仍待定位。
+不要把“本轮没找到产物”误写成“以前没有做成”。本轮未安装远端依赖、修改远端文件或上传游戏资源。
+
+## 项目与当前优先级
+
+研究《Prototype》(2009) 的 RCF/Pure3D 资源，建立本地考古预览器，最终用于私人的
+VRChat 展览。角色、地图、音效各自维护来源、验证状态和缺口，不提交原始/派生游戏资产。
+
+- **已建立的角色基线**：Alex 全身静态、骨架、贴图、播放时 weight 对齐和 ROT-only 动画；保持回归，不重复猜 UV/蒙皮规则。
+- **角色候选库**：2,219 个 P3D 包结构普查记录了 236 包 / 491 个 rigged CompositeDrawable 和稳定 review ID；是元数据货架，不是 491 个已验证人物模型。见 [角色地基](docs/character-foundation.md)。
+- **当前地图主线**：260 基础 Cell 普查、Cell 2/3 core 三角与部分 68-byte layout 证据已建立；合并材质场景的稳定显示仍是阶段门。见 [地图地基](docs/world-map-foundation.md)。
+- **当前音效主线**：两个 audio archive 清单已复核，实际容器/编码/试听链尚未实现，见下方队列。
+- **保留队列**：完整 TRAN 标定、内联动画解码、全角色覆盖、最终 VRChat 批量导出，不抢占当前地图/音效主线。
+
+排期见 [项目目标](docs/PROJECT_TARGETS.md)；旧 `docs/roadmap.md` 仅作历史参考。
+以下保留已验证技术细节，范围以实际样本为准。
+
+## 已建立的 Alex 技术基线
 
 ### ✅ 已经做成、跑通、验证过的（不用再重做，直接复用）
 
@@ -50,7 +177,7 @@ Blackwatch黑色守望×2、海军陆战队×2、Hunter猎手、Alpha Hunter大�
 3. **`screenshot_preview.py` / `click_shot_and_grab.py`** —— 用
    `playwright` 起 headless Chromium 打开预览HTML，等加载完成后自动截图
    （前者直接截取页面，后者真的模拟点击"拍照"按钮再从弹出的`<img>`里取
-   data URL）。**这是本轮引入的关键工具：不要只凭代码逻辑自信"应该是对
+   data URL）。**这是既有的关键验证工具：不要只凭代码逻辑自信"应该是对
    的"，每次改完贴图/UV相关代码，都应该用这两个脚本实际截图看一眼再下
    结论**（血泪教训见下方"两个严重bug"）。
 4. **贴图解码链路已完整验证**：DXT1/DXT3/DXT5解压用 `texture2ddecoder`，
@@ -60,7 +187,7 @@ Blackwatch黑色守望×2、海军陆战队×2、Hunter猎手、Alpha Hunter大�
    遗留bug，见下）。**这个结论目前只在 Alex Mercer 一个角色的5个Skin上
    验证过**，换新角色时理论上应该一致，但强烈建议每个新角色第一次导出
    后都用UV调试面板肉眼复核，不要预设所有shader都一样。
-6. **动画：外部 ZLIB channel family 已完整解码，尚未接入 glTF；全格式尚未完成**
+6. **动画：外部 ZLIB decoder 与 ROT-only glTF 导出已落地；全格式尚未完成**
    （权威说明见`docs/animation_format.md`）。`alex.p3d.rz` 文件本体内嵌634个
    具名 Animation chunk，分为533个`PTRN`骨骼动画、67个`CAM`、34个`EXP`，不需
    额外寻找动画文件。`tools/p3d_animation/decode_animation.py` 已对自定义外部
@@ -70,9 +197,14 @@ Blackwatch黑色守望×2、海军陆战队×2、Hunter猎手、Alpha Hunter大�
    values block 可省略对齐尾字节。**重要勘误**：游戏同一动画体系还混用标准
    内联 channel `0x00121101`–`0x00121104`，以及未定编码的内联`0x00121118`；
    current decoder 对它们会明确报 unsupported，不能再称“所有 keyframes 都在
-   外部 ZLIB blob”。短期 glTF 垂直切片仍可从全为外部-family 的`alex_act_block`
-   继续；全面“所有角色动画”前则必须补齐内联分支。`0x00121119` TRAN 的最终
-   scale/reference-frame 仍未标定，故还不能生成可信 glTF translation。
+   外部 ZLIB blob”。真实 `alex_act_block` 已通过 ROT-only 导出/播放验证（48 条骨骼 ROT track）；
+   全面“所有角色动画”前仍须补齐内联分支。`0x00121119` TRAN 的最终
+   scale/reference-frame 仍未标定，故还不能生成可信 glTF translation。ROT-only
+   exporter 显式跳过 TRAN 与没有对应 node 的 limb ROT，见动画文档 §8。
+7. **播放时蒙皮槽位已修复**：packed 56-byte 顶点用
+   `[stored0, stored1, stored2, 1-sum]`；legacy `Weight_List` 保持 Matrix_List
+   顺序时用 `[1-sum, stored2, stored0, stored1]`。静态 bind pose 不能验证 weight
+   槽位；已有真实播放与合成回归证据，见 `skinning.py` 和动画文档 §8。
 
 ### 🆕 2026-09-14：旧教程 P3DAddon 的只读静态审计成果
 
@@ -91,7 +223,7 @@ Blackwatch黑色守望×2、海军陆战队×2、Hunter猎手、Alpha Hunter大�
   解释24字节，因此**绝不能**把其中的任何数擅自认定为 translation scale/offset。
   详情：`docs/p3daddon-static-audit.md` 和`docs/animation_format.md` §2.1。
 
-### 🐛 本轮修复的两个严重bug（教训写在这里，避免以后重犯同类错误）
+### 🐛 历史已修复的两个严重bug（教训写在这里，避免以后重犯同类错误）
 
 **Bug 1：贴图花屏（彩色雪花噪点）**
 - 根因：`Image_Data`(0x00019002) 的 payload **不是**纯裸DXT字节流，
@@ -131,7 +263,11 @@ Blackwatch黑色守望×2、海军陆战队×2、Hunter猎手、Alpha Hunter大�
   比反复纯代码走查/自我怀疑快得多、也准得多。定位到用户给出的明确结论
   后要果断采纳、验证、收尾，不要在拿到结论后又反复横跳。**
 
-### 📁 当前 `alex_full.glb`（全身，贴图+UV均已修复）的生成命令
+### 历史静态预览生成命令（保留参数参考，不直接照抄环境路径）
+
+以下来自旧 agent 环境，不是本轮运行记录或 11 动作页的重建命令。优先找回现有产物；
+按需重建时改用实际 checkout、已准备的私有输出目录及用户本机 `http://127.0.0.1:8420`，
+并先确认隔离依赖安装方案。旧路径与临时 URL 不保证存在，不自动运行下列安装步骤。
 
 ```bash
 cd /home/user/prototype-p3d-toolkit/tools/p3d_export
@@ -160,92 +296,61 @@ python3 click_shot_and_grab.py --html /home/user/alex_full_preview.html --out /t
 
 `.glb`/预览HTML 因内嵌游戏原始贴图数据（版权内容），**按 NOTICE.md 规定
 不提交进git**（已在 `.gitignore` 排除 `samples/exported/`、`*.glb`、
-`*.gltf`），只提交生成它们的Python脚本源码，每次新会话现场跑一遍即可
-（几十秒内完成，不是重活）。
+`*.gltf`），只提交生成它们的脚本源码。先复用现有产物，仅在必要时重建，不保证旧耗时或环境可复现。
 
-## 下一步要做的事（按用户明确给过的优先顺序）
+## 下一步：地图与音效（2026-09-15 用户确认）
 
-### 0. 已启动的项目地基：RCF 元数据台账（先维护，勿把扫描猜测当结论）
+### 0. 接住现有成果，不重复考古
 
-`tools/inventory/rcf_inventory.py` 已可通过 viewer 的 `/api/rcf_manifest`
-直接拉取**仅元数据**的全量台账（条目名、哈希、偏移、存储大小），输出 JSON +
-Markdown；schema 和版权边界见 `docs/asset_inventory_schema.md`。不请求 raw
-资源、不写入游戏 payload，生成报告默认写到 `/tmp` 或私有研究目录，不提交 Git。
+1. 比对两端 `git status --short`、HEAD 和 `/api/health`，保留用户本地修改。
+2. 定位 Alex 动画页、地图诊断页及私有 census/shelf JSON 的路径或生成命令。
+   `tools/report/build_progress_dashboard.py` 是独立报告生成器，不是 8420 首页；
+   元数据 bounds 地图也不是已加载城市三角形的完整地图。
+3. 按需准备隔离依赖环境，不预装大批软件。当前用户默认 Python 缺少 NumPy、
+   pygltflib、Playwright，不能假定导出和 headless 渲染开箱即用。
 
-2026-09-14 已对用户真实 `art.rcf` 跑过一次：RCF 版本 2.1、604,812,872 bytes、
-2,601 条目且 metadata 名称全部可解析。该私有台账显示 2,219 个 `.p3d.rz`、19 个
-`.dds`、363 个 `.gfx`；名称启发式统计仅供筛选，**不是**角色/动画身份验证。下一步
-横向角色普查应从台账定位候选条目，再按 chunk/骨架/实际预览确认，而不是相信
-`fig`/`tod` 等文件名后缀。
+### 1. 地图：稳定单 Cell → 相邻 Cell → 整图按需加载
 
-### 1.（当前最优先）把动画接入 glTF，让模型真的能动起来
+已有记录：260 基础 Cell = 149 非 placeholder + 111 placeholder；29 个 vertex layout，
+143 个 Cell 有 `mergedDrawableRoot*`。Cell 2/3 的 92 个 core group、62,088 个三角形
+通过严格连接诊断；68-byte layout 的 `color @24` 有两次用户 WebGL 对照证据，
+normal/tangent 有三组几何证据。这些是既有成果，本轮未重跑全量普查。
 
-`docs/animation_format.md` 已经把"怎么读懂一个动画"的范式讲清楚了，
-接下来要做的是**工程落地**：
+**最新阻塞**：进度页记录 Cell 2 合并材质 diagnostic 未通过稳定可见验收，已经归档。
+不能仅因脚本生成 HTML 就报告“单 Cell 完成”。恢复时先定位旧产物并复现失败，区分
+页面交付/WebGL/相机/数据/材质等原因。重大阻塞先说明方案，不盲目调 shader 或扩大范围。
 
-1. 挑一个简单动画先试（建议 `alex_act_block` 或类似短动画，已经在
-   `docs/animation_format.md` 里当作分析样本，数据最熟）。
-2. 写解码代码：定位该动画的 `Animation`(0x121000) chunk → 找到
-   `0x02F00000` ZLIB blob 解压 → 遍历 `Animation_Group_List` 下每个
-   `Animation_Group`（每组对应一根骨骼，`name`字段就是骨骼名）→ 每组
-   下的channel节点（`0x00121112`/`0x00121114`=压缩四元数两种精度，
-   `0x00121119`=位移向量）→ 用 `0x00121120` 给出的 `(count, offset)`
-   去blob里精确定位 frames(uint16数组)+values(见下表)。
-3. **关键坑：`0x00121119`(TRAN位移通道) 的具体缩放系数目前还没有标定**
-   （`docs/animation_format.md` 第6节明确写了这是"尚待验证"项）——原始
-   int16值范围观察到能到±26000量级，不清楚除以32767还是其他系数才能
-   还原成与骨骼局部矩阵同单位的真实位移。这是接入动画前必须先解决的
-   唯一遗留空白，建议用 `Character_Root`（根骨骼，肯定有TRAN数据）的
-   已知bind pose位置做锚点反推缩放系数。
-4. 把解码出的每帧骨骼局部变换（旋转四元数+位移，若无TRAN数据的骨骼
-   位移用bind pose不变）转换成 glTF 的 `animation.channels` +
-   `animation.samplers`（每个骨骼节点一个translation轨道+一个rotation
-   轨道，用`0x121xxx`的`frames[]`换算时间戳：`time = frame / frame_rate`，
-   `frame_rate`就是 `Animation` chunk头部的`FrameRate`字段）。
-5. 验证方法：同样用 `pack_preview_html.py` + headless Chromium，但需要
-   给预览页加一个"播放动画"的按钮（three.js `AnimationMixer`），肉眼
-   确认模型真的按预期动作播放，不是骨骼乱飞或者穿模。
+单 Cell 验收后，依据实际 bounds 选择 2–4 个空间相邻 Cell，验证位置、接缝、UV、
+材质依赖和加载预算，再扩展整图。local-space 物件与 `_ft` 独立处理，不堆到世界原点。
+具体数字、布局范围和工具见地图地基文档，不能把 Alex UV 规则外推给所有 static layout。
 
-### 2. 全身角色/动画流程都跑顺后，横向扩展到其他角色
+### 2. 音效：容器识别 → 小样本试听 → 索引
 
-用户列出的优先级：Blackwatch黑色守望×2、海军陆战队×2、Hunter猎手、
-Alpha Hunter大猎手、终极猎手、Elizabeth Greene(E妈)、Cross上校、各类
-强化感染僵尸。**这些角色具体在哪个 `.p3d.rz` 文件里，目前完全没有查过**
-——下一步需要先枚举用户游戏目录（`/mnt/hdd/新建文件夹/steamapps/common/
-Prototype/`）下 `art.rcf` 里的全部条目名，找出这些角色对应的文件名
-（大概率是类似 `blackwatch.p3d.rz`/`hunter.p3d.rz`/`greene.p3d.rz`这类
-命名，需要实际枚举确认，不要猜）。定位到文件后，理论上可以直接复用
-`export_alex_full.py` 的整套代码模式（部位组枚举→骨架共享判断→贴图
-解码→UV原样使用），只需要改角色名/部位组名参数，但**要留意**：
-- 不同角色的骨架关节数/命名可能不同，不能假设都是67关节。
-- 不同角色的顶点格式可能有 `memory_imaged=0`（老式List chunk，见
-  `vertex_format.md`第8d节）这种变体分支，需要留意兼容。
-- UV朝向按上面的结论"原样使用不翻转"，但每个新角色应该用调试面板肉眼
-  复核一次。
+2026-09-15 经用户机器本地 `/api/rcf_manifest` 只读复核：
 
-### 3. 之后：多角色"道具栏"选择/排版预览页面
+| Archive | 条目数 / 可解析名称 | 名称扩展名 | 当前结论 |
+|---|---:|---|---|
+| `00audio.rcf` | 13,486 / 13,486 | 全部 `.p3d` | `audio/english/AudioFile/…` 哈希式路径（此处用正斜杠展示） |
+| `01audio.rcf` | 1,128 / 1,128 | 全部 `.p3d` | 两包共 14,614 条，不是去重后的音效数 |
+| `00woi.rcf` | 25 / 25 | 13 `.bik` + 12 `.p3d` | 视频/配套容器候选，不作为纯音效计数 |
 
-用户要求"能一次性列出优先级角色，点哪个看哪个"的选择界面，等单角色+
-动画流程对多个角色都跑通后再做，不要提前做，因为界面设计依赖于"每个
-角色最终产出什么样的glb"这个还没确定的细节。
+只读取条目元数据；没有验证音频 chunk、codec、时长、采样率或可播放性。其他 `woi`
+archive 本轮仅确认存在。不要凭 `.p3d` 扩展名认定为模型，也不要凭 FFmpeg 已安装就
+声称可解码。抽取少量代表条目的文件头/chunk 结构，在本机识别封装与编码后再选 decoder；
+一条可重复的本地试听路径通过后，再建立检索、分类、失败报告和缓存。角色/动作关联需
+额外引用证据，不由哈希式文件名猜测；原始与转码音频均不入库、不公开分发。
 
-### 4. 更远期，优先级低，不用主动查
+### 3. 保留队列：角色目录与完整动画
 
-- 材质/贴图关联里几个"用途未知但不阻塞主线"的小尾巴：
-  `Skeleton_Partition`(0x00023002)、`0x00010021`(Vertex_Compression_Hint)、
-  `0x00122000`(Sort_Order)、`0x00010017`(Render_Status)——都已经在
-  `docs/vertex_format.md`第10节记录过，不影响渲染，除非以后发现真的
-  需要，不用主动去查。
-- 地图/Room级chunk解析（用户要求"能预览完整地图更好"），目前完全没有
-  实际做过，只在早期 `docs/pure3d-format.md`/`docs/2009-3dm-tool-findings.md`
-  里有一些概念级线索（`tlDAPortalChunk`等类名），是独立于角色导出的
-  另一条线，建议等角色流程完全稳定后再启动，不要现在分心。
+全 `art.rcf` rigged census、稳定 review shelf 和元数据主页生成器已经存在。
+Blackwatch/NIS/gameplay 候选来源见角色地基文档；身份、通用缩略图、完整动画覆盖
+仍逐项核验。只维护已有 Alex 播放基线，不为地图/音效重写这套流程。
 
-## 格式逆向状态总览（几何/骨骼/材质/动画 四条数据链，全部打通）
+## 格式逆向状态总览（按已验证角色样本限定范围）
 
 全部记录在 `docs/vertex_format.md`（几何/骨骼/材质，第1-10节）和
-`docs/animation_format.md`（动画）。这两份文档是格式定义的唯一权威
-来源，本文件只做导航，细节请直接翻它们，不要凭记忆/印象转述。
+`docs/animation_format.md`（动画）。这两份文档是角色格式证据来源；地图与角色普查另见对应地基文档。
+技术结论必须保留样本和验证范围，本文件只做导航，细节请直接翻它们，不要凭记忆/印象转述。
 
 关键结论速查表：
 
@@ -256,11 +361,11 @@ Prototype/`）下 `art.rcf` 里的全部条目名，找出这些角色对应的�
 | Skin绑定关系 | ✅ 完整解码+三样本验证 | vertex_format.md 第8节 |
 | Composite_Drawable_2部位组 | ✅ 完整解码 | vertex_format.md 第8b节 |
 | 材质/贴图关联+DDS解码 | ✅ 完整解码+落地验证（含bug修复记录） | vertex_format.md 第8c节 |
-| UV朝向约定 | ✅ 已钉死结论（不翻转） | vertex_format.md 第3b节的"最终结论"框 |
+| Alex UV朝向约定 | ✅ 不翻转；不外推到地图 | vertex_format.md 第3b节的"最终结论"框 |
 | memory_imaged=0老式顶点格式 | ✅ 完整解码 | vertex_format.md 第8d节 |
 | 骨架层级Skeleton_2 | ✅ 完整解码+落地验证 | vertex_format.md 第9节 |
 | 三份骨架(body/arms/left_arm)等价性 | ✅ 已验证可共享 | 见下方"关键数据点" |
-| 外部 ZLIB animation family | ✅ 严格解码，未接入glTF | animation_format.md 第2–4、7节 |
+| 外部 ZLIB animation family | ✅ 严格解码；ROT-only 已接入 glTF | animation_format.md 第2–4、7–8节 |
 | 标准内联 / `0x00121118` animation channels | 🟡 已识别，尚未解码 | animation_format.md 第5–6节 |
 | 动画 TRAN 位移 scale/reference frame | ❌ 未标定 | animation_format.md 第6节"尚待验证" |
 
@@ -280,56 +385,33 @@ Prototype/`）下 `art.rcf` 里的全部条目名，找出这些角色对应的�
   533个`PTRN`（骨骼）、67个`CAM`、34个`EXP`。`PTRN` 使用外部 ZLIB 和标准内联
   channel 的混合布局；不可假定 CAM/EXP 与其结构完全相同。
 
-## 环境/基础设施现状（怎么连上用户的真实游戏文件）
+## 开发与连接方式（2026-09-15 核对）
 
-- 用户本地运行 `run_viewer.sh` 起了一个本地 HTTP API 服务器（代码在
-  `viewer/server.py`），通过 Cloudflare Quick Tunnel 暴露一个临时公网 URL。
-  **这个 URL 每次用户重开隧道都会变**，当前记录的
-  `https://intellectual-delhi-restoration-springfield.trycloudflare.com`；该 URL 每次
-  用户重开隧道都可能变化。若新会话连不通，需要请用户重新运行
-  `run_viewer.sh --tunnel` 并提供新 URL。
-- 该 API 有 `POST /api/self_update` 端点，能让用户那台机器上跑着的
-  server 自己从 **GitHub 远程默认分支** fast-forward 到最新 commit 并原端口重启。
-  **不要把分支名写死为 `master`**：GitHub 当前只保留默认分支 `main`。新版本
-  `viewer/server.py` 会用 `git ls-remote --symref origin HEAD` 自行解析默认分支。
-  如果远程 server 仍是旧版（旧版硬编码拉取已删除的 `origin/master`），这一次
-  需要用户在本机手动执行 `git fetch origin && git switch main && git pull --ff-only
-  origin main` 后重启 `run_viewer.sh --tunnel`；之后才可以继续安全使用 self-update。
-  每次新会话开始时，先 `GET /api/health` 检查 commit，再按需调用该端点。
-- 关键 API：`GET /api/rcf_entry?path=<rcf路径>&name=<归档内路径>&type_filter=
-  0x前缀十六进制&offset=&limit=&payload_preview=`——从 `.rcf` 归档里按名字
-  取出条目（自动解压`.rz`），解析成chunk树JSON返回，`payload_preview`最大
-  支持 8MB（一次性拿完整顶点/贴图缓冲用这个）。**重要**：`P3DSource`类
-  （`export_alex_full.py`里定义）的 docstring 里写明了一个容易踩的坑：
-  **永远不要传 `max_depth` 参数**，因为它是作用于"整个文件"从头开始的
-  绝对深度上限，不同取值会导致 `global_index` 编号在不同调用之间不一致，
-  跨调用混用会指向错误的chunk。要限定某个chunk的子树范围，用返回结果
-  自带的 `depth` 字段自己裁剪（见 `P3DSource.get_subtree()`的实现）。
-- 用户游戏路径：`/mnt/hdd/新建文件夹/steamapps/common/Prototype`，
-  `art.rcf` 里 `\art\alex\alex.p3d.rz` 是 Alex Mercer 模型（本项目当前
-  所有已验证数据均来自这一个文件，包括动画数据也在这个文件里，不需要
-  额外找）。**其他角色的文件名尚未查过，见上方"下一步"第2条**。
+- 用户项目：`/home/liang/prototype-Game-p3d`；游戏根目录：
+  `/mnt/hdd/新建文件夹/steamapps/common/Prototype`。SSH 已以 `liang` 成功登录，
+  使用客户端 `cloudflared access ssh --hostname <用户提供的主机名>`；首次必须核对
+  用户提供的主机指纹。会话私钥、凭据及临时 tunnel URL 不写入仓库。
+- **优先 SSH 调度、本机解析**：在用户机器调用 `http://127.0.0.1:8420` 的现有 API，
+  能复用就不重写；只返回统计、错误和必要验收结果。网页仍用于真实视觉/试听验收。
+  SSH 不自动提供 GPU 渲染；已识别 GTX 1080，但尚未验证 GPU 渲染环境。
+- 用户默认环境：Python 3.13.5、Pillow、FFmpeg 可用；NumPy、pygltflib、trimesh、
+  Playwright、pytest 未找到；Blender/Chromium 未在 PATH 找到。未普查其他虚拟环境。
+  内存约 16 GiB，核对时 available 约 3.9 GiB，任务应分批并可续跑。
+- Quick Tunnel URL 失效不代表查看器停止。SSH 用户权限不受 viewer `--root` 限制，
+  只操作授权范围。公开 viewer URL 可读取开放资源；`POST /api/self_update` 能拉代码
+  并重启，本轮未调用，后续须确认部署授权。不要把游戏产物或秘密放进公开服务目录。
+- 长任务需可续跑批处理和私有日志，不能依赖 SSH 长连接；GLB、派生 HTML、音频、
+  含关键帧的 JSON 留在私有产物目录，不提交。纯元数据报告也需明确保存位置与复现命令。
+- 本轮 agent 工作区：`/workspace/project/prototype-Game-p3d`，独立浅克隆。
+  不假设旧 `/home/user/...` 路径、密钥或缓存仍在；查历史前检查 shallow 状态，按需补历史。
+  部署前比较实际文件，不能单凭提交标题判断功能差异。
+- 格式证据、复现命令和验收结果应及时同步到本文及目标清单；提交、推送、PR、部署
+  分开处理，未经用户明确授权不推送、不更新运行服务，不照搬旧交接里的自动 push 步骤。
 
-## 本地开发环境 / Git 相关（有个坑，务必看完）
-
-- assistant 自己有一份独立 git clone 在 `/home/user/prototype-p3d-toolkit`；
-  **GitHub 当前唯一远程分支/默认分支是 `main`**，不要再向已删除的 `master` push。
-- 远程仓库：`git@github.com:204343414/prototype-Game-p3d.git`（SSH方式）。
-- **⚠️ 关键坑：`.git/config` 是workspace快照排除的敏感凭据路径之一
-  （连同 `.git/credentials`/`.git-credentials`/`.netrc`），不会跨对话
-  持久化！这意味着每次开新会话，`git remote` 配置很可能已经丢失
-  （`git push`/`git fetch` 会报 "origin does not appear to be a git
-  repository"）。新会话的固定检查顺序：
-  1. `git remote -v` 看是否为空；为空则运行
-     `git remote add origin git@github.com:204343414/prototype-Game-p3d.git`
-  2. 对项目 SSH 私钥执行 `chmod 600 <私钥路径>`；需要指定身份时使用
-     `GIT_SSH_COMMAND='ssh -i <私钥路径> -o IdentitiesOnly=yes'`。
-  3. `git fetch origin && git switch main && git pull --ff-only origin main`
-  4. 最后用 `git push origin main`。不要假设旧的 SSH config、私钥文件名或
-     本地追踪分支在 workspace 快照之后仍存在。
-- **每次做出格式发现，先写进 `docs/vertex_format.md`/`docs/animation_format.md`
-  对应章节，再commit+push，再回来更新这份 `HANDOFF.md`**——顺序不要反，
-  两份格式文档才是权威来源，这份文件只是"导航牌"。
+关键 API：`/api/health`、`/api/rcf_manifest`、`/api/rcf_rigged_manifest`、
+`/api/rcf_cell_geometry_manifest`、`/api/rcf_entry`；台账 schema 见
+`docs/asset_inventory_schema.md`。跨请求用 `P3DSource` 追踪 chunk 时**不要传
+`max_depth`**，它会改变跨调用的 `global_index`；应使用返回的 `depth` 本地裁剪子树。
 
 ## 一些容易踩坑的经验教训汇总
 
@@ -340,7 +422,7 @@ Prototype/`）下 `art.rcf` 里的全部条目名，找出这些角色对应的�
   不完整/过时/甚至这次发现"格式范式完全不同"的情况**（Prototype的
   Animation数据把帧数据外部化压缩存进独立blob，netp3dlib假设是内联
   存储）——**任何用参考库反推出的结论，最终都必须用真实游戏数据逐字节
-  交叉验证，不能直接信代码**，但本轮验证过的部分（Skin/CompositeDrawable2/
+  交叉验证，不能直接信代码**，但既有样本验证过的部分（Skin/CompositeDrawable2/
   NewShader/TextureChunk/TextureDDS/压缩四元数编码算法等）已经100%精确
   验证通过，可以放心直接用。
 - **任何"数量级差不多吻合就想蒙混过关"的验证方式都不可靠**，必须做零
@@ -354,5 +436,5 @@ Prototype/`）下 `art.rcf` 里的全部条目名，找出这些角色对应的�
   往前走。
 - 每次改完贴图/UV/几何相关的导出代码，**必须用 `screenshot_preview.py`
   或 `click_shot_and_grab.py` 实际截图看一眼**，不要只凭代码逻辑推理
-  "应该是对的"就呈现给用户——这是本轮最大的效率教训，多次因为跳过这一
+  "应该是对的"就呈现给用户——这是既有工作的重要效率教训，多次因为跳过这一
   步而来回拉锯。

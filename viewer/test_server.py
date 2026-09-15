@@ -12,7 +12,10 @@ restricted to a temporary directory (--root), and checks:
   5. /api/file rejects paths that escape --root (403)
   6. static frontend (/ and /index.html) is served
 """
+import base64
+import gzip
 import json
+import struct
 import os
 import subprocess
 import sys
@@ -28,6 +31,11 @@ PORT = 8709  # fixed scratch port, unlikely to collide
 
 sys.path.insert(0, os.path.join(HERE, "..", "tools", "rcf_unpack"))
 from test_rcf_extract import build_synthetic_rcf_fixed, make_rz_payload  # noqa: E402
+
+
+sys.path.insert(0, os.path.join(HERE, "..", "tools", "world"))
+from test_export_static_geometry_diagnostic import geometry, p3d_file, triangle_group
+from test_cell_materials import material_fixture
 
 
 def get(url):
@@ -335,8 +343,75 @@ def main():
         assert scanned_cell["world_position_min"] == [-1.0, -5.0, 3.0], scanned_cell
         assert scanned_cell["world_position_max"] == [4.0, 2.0, 6.0], scanned_cell
 
+        # Exercise the real RCF -> RZ -> strict triangles -> packed response path.
+        cells_path = os.path.join(tmpdir, "preview_cells.rcf")
+        good = p3d_file(geometry("mergedDrawableRootNoShadow", [
+            triangle_group([(0, 0, 0), (3, 0, 0), (0, 4, 0)], [0, 1, 2])]))
+        bad = p3d_file(geometry("mergedDrawableRootNoShadow", [
+            triangle_group([(0, 0, 0), (3, 0, 0), (0, 4, 0)], [0, 1, 9])]))
+        prefix = "\\art\\locations\\manhattan\\manhattan_Cell_"
+        build_synthetic_rcf_fixed(cells_path, [
+            (prefix + "2.p3d.rz", make_rz_payload(good)),
+            (prefix + "3.p3d.rz", make_rz_payload(bad)),
+            (prefix + "0.p3d.rz", make_rz_payload(p3d_file(b""))),
+            (prefix + "6.p3d.rz", b"RZ\0\0" + struct.pack("<III", 0, 65 * 1024 * 1024, 0)),
+            (prefix + "7.p3d.rz", b"RZ\0\0" + struct.pack("<III", 0, 12, 0) + b"corrupt"),
+            (prefix + "8.p3d.rz", b"RZ\0\0" + struct.pack("<III", 0, 0, 0)),
+            (prefix + "9.p3d.rz", make_rz_payload(material_fixture())),
+            (prefix + "10.p3d.rz", make_rz_payload(material_fixture(include_texture=False))),
+        ])
+        endpoint = base + "/api/rcf_cell_preview?" + urllib.parse.urlencode({"path": cells_path})
+        status, body = get(endpoint + "&cell=2")
+        assert status == 200, (status, body)
+        preview = json.loads(body)
+        assert preview["status"] == "ready" and preview["textured"] is False
+        assert preview["report"]["accepted_triangle_count"] == 1
+        assert struct.unpack("<3H", base64.b64decode(preview["meshes"][0]["i"])) == (0, 1, 2)
+        assert len(base64.b64decode(preview["meshes"][0]["p"])) == 36
+        assert json.loads(get(endpoint + "&cell=0")[1])["status"] == "empty"
+        status, body = get(endpoint + "&cell=3")
+        assert status == 422 and "error" in json.loads(body) and "meshes" not in json.loads(body)
+        assert get(endpoint + "&cell=6")[0] == 413
+        assert get(endpoint + "&cell=7")[0] == 422
+        assert get(endpoint + "&cell=8")[0] == 422
+        assert get(base + "/map-view.js")[0] == 200
+        status, body = get(endpoint + "&cell=9&materials=1")
+        assert status == 200, (status, body)
+        textured = json.loads(body)
+        assert textured["textured"] and textured["materials"]["linked_groups"] == 2
+        assert len(textured["textures"]) == 1
+        assert textured["textures"][0]["format"] == "DXT1"
+        assert get(endpoint + "&cell=9&materials=bad")[0] == 400
+        plain = json.loads(get(endpoint + "&cell=9")[1])
+        assert plain["textured"] is False and "textures" not in plain
+        shared_path = os.path.join(tmpdir, "shared_art.rcf")
+        build_synthetic_rcf_fixed(shared_path, [
+            (r"\art\locations\manhattan\textures.p3d.rz", make_rz_payload(material_fixture()))])
+        query = endpoint + "&cell=10&materials=1&" + urllib.parse.urlencode({"shared_path": shared_path})
+        status, body = get(query)
+        assert status == 200 and json.loads(body)["materials"]["shared_groups"] == 2
+        with urllib.request.urlopen(urllib.request.Request(query, headers={"Accept-Encoding": "gzip"})) as response:
+            assert response.headers['Content-Encoding'] == 'gzip'
+            assert json.loads(gzip.decompress(response.read()))['materials']['shared_groups'] == 2
+        assert get(endpoint + "&cell=10&materials=1&shared_path=/etc/passwd")[0] == 403
+        # Replacing shared source metadata invalidates its process-only index.
+        build_synthetic_rcf_fixed(shared_path, [
+            (r"\art\locations\manhattan\textures.p3d.rz", make_rz_payload(p3d_file(b"")))])
+        assert json.loads(get(query)[1])["materials"]["shared_groups"] == 0
+
+        for cell in ("-1", "260", "bad", "2_ft", "2.5"):
+            assert get(endpoint + "&cell=" + cell)[0] == 400, cell
+        assert get(endpoint)[0] == 400
+        assert get(endpoint + "&cell=4")[0] == 404
+        assert get(base + "/api/rcf_cell_preview?cell=2")[0] == 400
+        assert get(base + "/api/rcf_cell_preview?cell=2&path=/etc/passwd")[0] == 403
+        link = os.path.join(tmpdir, "outside.rcf")
+        os.symlink("/etc/passwd", link)
+        assert get(base + "/api/rcf_cell_preview?cell=2&path=" + link)[0] == 403
+        assert get(base + "/api/heightmap_preview?path=" + cells_path)[0] == 404
+
         print("OK: viewer/server.py smoke test passed "
-              "(browse + file + hexdump + p3d + rcf_manifest + rcf_rigged_manifest + rcf_cell_geometry_manifest + rcf_entry APIs, "
+              "(browse + file + hexdump + p3d + rcf_manifest + rcf_rigged_manifest + rcf_cell_geometry_manifest + rcf_entry + rcf_cell_preview APIs, "
               "root confinement, static frontend)")
     finally:
         proc.terminate()

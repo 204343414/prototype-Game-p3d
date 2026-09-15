@@ -2,6 +2,13 @@
 
 > 本文档首先记录已完整验证的 **Prototype外部 ZLIB channel family**，但不再把它误称为游戏中唯一的 Animation 布局。`alex.p3d` 的 `PTRN` 动画实际混用两类数据：① 本文重点的自定义压缩通道（`0x00121112` / `0x00121114` / `0x00121119`），其 keyframes 位于独立的`0x02F00000` ZLIB blob，由`0x00121120`给出定位信息；② 标准式内联通道（已观察到`0x00121101`–`0x00121104`）以及尚未解码的内联扩展`0x00121118`。因此，不能把`netp3dlib`的直读字段方式套用到第一类，但可将其作为第二类的格式线索。
 
+## 当前工程状态（2026-09-15 核对）
+
+外部 family decoder 和 §8 的 ROT-only glTF exporter 均已落地，Alex 播放与两种
+weight 槽位修复已有验证记录。进度主页生成器记录 11 个可预览动作，本轮未找回
+旧页面逐个重验。用户已确认现有骨骼/动画基线，当前推进地图与音效，不重开第一次
+动画接入任务。完整 TRAN、内联 family、全角色覆盖仍是独立待办。
+
 ## 1. 顶层发现
 
 在`alex.p3d.rz`里（无需单独的动画文件），直接搜索`type_filter=0x00121000`可以枚举出**634个**具名动画chunk，例如`alex_act_death`、`alex_act_block`、`alex_act_brain_hurts_001`、`alex_act_answers_001_b`（+对应的`_cam1`摄像机动画）等。命名规则为`alex_act_<动作名>[_变体][_camN]`。
@@ -68,7 +75,7 @@ channel 严格要求对齐后的下一个 offset，对最终 channel 则以未�
 |---|---|---|---|
 | `0x00121112` | 6 (int16×3) | 主要骨骼ROT（压缩四元数，去掉W分量） | `x,y,z = int16/32767`；`w = sqrt(1 - x²-y²-z²)`（等价于netp3dlib的`Compressed_Quaternion_Channel_2`算法，但ID不同——netp3dlib里`0x121112`叫`Compressed_Quaternion_Channel_2`，**恰好完全吻合**，说明这一类型netp3dlib的定义可直接照搬） |
 | `0x00121114` | 3 (int8×3) | 末梢小关节ROT（更粗精度的压缩四元数） | `x,y,z = int8/127`；`w = sqrt(1 - x²-y²-z²)`（同上算法，字节宽度减半，netp3dlib未收录此变体，是Prototype自己的扩展类型） |
-| `0x00121119` | 6 (int16×3) | 位移TRAN（也偶见于个别ROT，需具体核实） | `x,y,z = int16 / SCALE`（SCALE未标定，观察到原始int16范围可达±26000量级，暂以`/32767`或自定义bind-pose-relative scale处理，导出验证时需要用实际bindpose尺度校准；不是单位四元数，无需sqrt处理） |
+| `0x00121119` | 6 (int16×3) | 位移TRAN（也偶见于个别ROT，需具体核实） | 保留原始 `int16×3`；SCALE/参考系未标定。`/32767` 仅用于诊断范围，不是已验证的 translation，也不得以自定义除数代替标定（不是单位四元数，无需 sqrt） |
 
 ## 4. 已用真实数据交叉验证的一致性检查
 
@@ -89,11 +96,11 @@ netp3dlib（面向标准内联式 Animation 格式）中，`Animation_Group` 的
 ## 6. 尚待验证/待办
 
 - 为标准内联 `0x00121101`–`0x00121104` 添加各自经夹具验证的解码分支；为`0x00121118`确定类型、帧和值编码。完成前，不能声称“所有角色动画”均可导出。
-- `0x00121119`用作TRAN时的具体缩放系数（bind pose绝对坐标 vs 相对父骨骼偏移，需要用实际骨骼局部矩阵对照校准）尚未标定，应用动画到glTF前必须先解决。
+- `0x00121119`用作TRAN时的具体缩放系数（bind pose绝对坐标 vs 相对父骨骼偏移，需要用实际骨骼局部矩阵对照校准）尚未标定，导出可信 glTF translation 前必须先解决；不阻塞明确省略 TRAN 的 ROT-only 切片。
 - `CAM`(摄像机)类型的Animation结构未单独验证（推测与骨骼动画共用同一套group/channel机制，只是Animation_Group对应摄像机的位置/朝向/FOV等参数而非骨骼，需要时再抓样本验证）。
 - 插值模式恒为`-1`，暂视为线性插值处理（Cyclic标记决定动画是否循环，可直接从Animation chunk头部读取）。
 
-## 7. 已落地的解码器（仍未接入 glTF）
+## 7. 已落地的解码器（ROT-only glTF 接入见 §8）
 
 `tools/p3d_animation/decode_animation.py` 已将本文件第1–5节的格式范式实现为
 可独立调用的 decoder。它可以读取私有本地 `.p3d`，或通过用户自己运行的 viewer
@@ -108,9 +115,9 @@ padding省略场景。标准内联 channel 的解码是独立待办，当前不�
 在输出中同时保留原始 `int16×3` 值以及仅用于检查范围的 `/32767` 归一化值；该归一化
 值**不是**最终 glTF translation，不能把它当成第6节仍待标定的缩放/参考系结论。
 
-下一步是把 decoder 结果同 Alex bind pose 对照，给 TRAN 建立有证据、可回归的标定，
-然后才增加 glTF animation channels/samplers。生成自真实游戏条目的 `.p3d` 和 JSON
-不可提交进 Git。
+ROT-only channels/samplers 已由 §8 实现。完整 translation 仍须将 decoder 结果同
+Alex bind pose 对照，建立有证据、可回归的 TRAN 标定后再添加；不因此撤销已完成的
+旋转播放。生成自真实游戏条目的 `.p3d` 和关键帧 JSON 不可提交进 Git。
 
 ## 8. 窄范围 glTF ROT-only 实验导出器（已落地，但不是完整动画支持）
 
