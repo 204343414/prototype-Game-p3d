@@ -8,6 +8,8 @@ const CAT_ICONS = {
   props: '🏢'
 };
 
+const THUMB_CACHE = new Map();
+
 function floats(encoded, Type, size) {
   if (!encoded) return new Type(0);
   const raw = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
@@ -36,11 +38,23 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
 
   let renderedMeshList = [];
   let currentAnimations = [];
+  let currentAnimIdx = -1;
   let isPlayingAnim = false;
-  let animClock = new THREE.Clock();
-  let currentAnimTrack = null;
   let animTime = 0;
   let showSkeleton = false;
+  let focusMode = 'entity'; // 'entity' or 'animation'
+
+  // Offscreen renderer for taking real 45-deg snapshots
+  const offCanvas = document.createElement('canvas');
+  offCanvas.width = 160;
+  offCanvas.height = 120;
+  let offRenderer = null;
+  try {
+    offRenderer = new THREE.WebGLRenderer({ canvas: offCanvas, antialias: true, alpha: true });
+    offRenderer.setSize(160, 120);
+  } catch (e) {
+    console.warn('Offscreen renderer unavailable:', e);
+  }
 
   async function loadCatalog(artPath) {
     onStatus('正在从 art.rcf 读取四大分类实体清单…');
@@ -71,19 +85,60 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
   }
 
+  function capture45DegreeSnapshot() {
+    if (!offRenderer || !entityGroup.children.length) return null;
+    try {
+      const bounds = new THREE.Box3().setFromObject(entityGroup);
+      const center = bounds.getCenter(new THREE.Vector3());
+      const size = bounds.getSize(new THREE.Vector3()).length() || 2.0;
+
+      const snapCam = new THREE.PerspectiveCamera(45, 160 / 120, 0.01, 1000);
+      snapCam.position.set(center.x + size * 0.9, center.y + size * 0.7, center.z + size * 0.9);
+      snapCam.lookAt(center);
+
+      const snapScene = new THREE.Scene();
+      snapScene.background = null;
+      snapScene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.5));
+      const light = new THREE.DirectionalLight(0xffffff, 1.8);
+      light.position.set(3, 6, 4);
+      snapScene.add(light);
+
+      // Clone rendered meshes for clean snap
+      const snapGroup = entityGroup.clone(true);
+      snapScene.add(snapGroup);
+
+      offRenderer.render(snapScene, snapCam);
+      const dataUrl = offCanvas.toDataURL('image/webp', 0.85);
+
+      snapGroup.traverse(c => {
+        if (c.geometry) c.geometry.dispose();
+      });
+
+      return dataUrl;
+    } catch (e) {
+      console.warn('Snapshot capture failed:', e);
+      return null;
+    }
+  }
+
   function renderCard(item, isDrawer = false) {
     const card = document.createElement('div');
     card.className = `entity-card ${currentEntity?.id === item.id ? 'active' : ''}`;
+    card.dataset.id = item.id;
     
     const icon = CAT_ICONS[item.category] || '📦';
     const shapeCount = item.shape_count || item.geometry_count || 1;
     const jointCount = item.total_joints || (item.skeleton_count > 0 ? (item.skeleton_count * 12) : 0);
     const animCount = item.animation_count || 0;
 
+    const cachedThumb = THUMB_CACHE.get(item.id);
+
     card.innerHTML = `
-      <div class="card-preview-thumb" style="${isDrawer ? 'height:50px;' : ''}">
-        <div class="iso-box" style="${isDrawer ? 'width:24px; height:24px;' : ''}"></div>
-        <span class="cat-icon" style="${isDrawer ? 'font-size:18px;' : ''}">${icon}</span>
+      <div class="card-preview-thumb" style="${isDrawer ? 'height:50px;' : ''} ${cachedThumb ? `background-image:url(${cachedThumb}); background-size:cover; background-position:center;` : ''}">
+        ${!cachedThumb ? `
+          <div class="iso-box" style="${isDrawer ? 'width:24px; height:24px;' : ''}"></div>
+          <span class="cat-icon" style="${isDrawer ? 'font-size:18px;' : ''}">${icon}</span>
+        ` : ''}
       </div>
       <div class="card-title" title="${item.name}">${item.name}</div>
       <div class="card-meta">
@@ -93,7 +148,10 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       </div>
     `;
 
-    card.onclick = () => selectEntity(item);
+    card.onclick = () => {
+      focusMode = 'entity';
+      selectEntity(item);
+    };
     return card;
   }
 
@@ -228,6 +286,29 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     skeletonGroup.visible = showSkeleton;
   }
 
+  function playAnimationIndex(idx) {
+    if (!currentAnimations || idx < 0 || idx >= currentAnimations.length) return;
+    currentAnimIdx = idx;
+    const anim = currentAnimations[idx];
+    animTime = 0;
+    isPlayingAnim = true;
+    focusMode = 'animation';
+
+    const playBtn = document.getElementById('anim-play-btn');
+    if (playBtn) {
+      playBtn.textContent = '⏸ 暂停';
+      playBtn.style.background = '#4c1d95';
+    }
+
+    document.querySelectorAll('.anim-row').forEach((r, i) => {
+      r.style.background = (i === idx) ? '#2e1065' : '#151a24';
+      r.style.borderColor = (i === idx) ? '#8b5cf6' : 'transparent';
+      if (i === idx) r.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+
+    onStatus(`正在播放动作 [${idx + 1}/${currentAnimations.length}]：${anim.name} (${anim.frames} 帧 @ ${anim.fps} fps)`);
+  }
+
   function updateMeshInspector(meshes, animations, skeletons) {
     const listEl = document.getElementById('inspector-mesh-list');
     if (!listEl) return;
@@ -244,7 +325,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       <div class="mesh-info">
         <div class="mesh-name" style="color:#7fd4ff; font-weight:600;">🦴 骨骼线条 (${jointCount} 个关节)</div>
       </div>
-      <input type="checkbox" class="mesh-toggle" ${showSkeleton ? 'checked' : ''} id="toggle-skeleton-lines" title="开启/关闭骨骼透视线条" />
+      <input type="checkbox" class="mesh-toggle" ${showSkeleton ? 'checked' : ''} id="toggle-skeleton-lines" title="开启/关闭骨骼透视线条 (快捷键 B)" />
     `;
     const skelToggle = skelRow.querySelector('#toggle-skeleton-lines');
     if (skelToggle) {
@@ -279,6 +360,8 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
 
     // Render Animation Section
     currentAnimations = animations || [];
+    currentAnimIdx = -1;
+
     if (currentAnimations.length > 0) {
       const animHeader = document.createElement('div');
       animHeader.className = 'anim-section-title';
@@ -287,35 +370,32 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       animHeader.style.alignItems = 'center';
       animHeader.innerHTML = `
         <span>🎬 引用动画 (${currentAnimations.length} 个)</span>
-        <button id="anim-play-btn" class="inspector-btn" style="color:#a78bfa; border-color:#8b5cf6;">▶ 播放</button>
+        <button id="anim-play-btn" class="inspector-btn" style="color:#a78bfa; border-color:#8b5cf6;">▶ 播放 (Space)</button>
       `;
       listEl.appendChild(animHeader);
 
       const playBtn = animHeader.querySelector('#anim-play-btn');
       playBtn.onclick = () => {
-        isPlayingAnim = !isPlayingAnim;
-        playBtn.textContent = isPlayingAnim ? '⏸ 暂停' : '▶ 播放';
-        playBtn.style.background = isPlayingAnim ? '#4c1d95' : '#1a2230';
+        if (!currentAnimations.length) return;
+        if (currentAnimIdx < 0) playAnimationIndex(0);
+        else {
+          isPlayingAnim = !isPlayingAnim;
+          playBtn.textContent = isPlayingAnim ? '⏸ 暂停' : '▶ 播放 (Space)';
+          playBtn.style.background = isPlayingAnim ? '#4c1d95' : '#1a2230';
+        }
       };
 
       currentAnimations.forEach((anim, aidx) => {
         const aRow = document.createElement('div');
         aRow.className = 'anim-row';
         aRow.style.cursor = 'pointer';
-        aRow.title = '点击选中此动作';
+        aRow.title = '点击播放此动作 (上下键快速切换)';
         aRow.innerHTML = `
           <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:150px;">${anim.name}</span>
           <span style="opacity:0.8;">${anim.frames}f · ${anim.duration}s</span>
         `;
         aRow.onclick = () => {
-          currentAnimTrack = anim;
-          animTime = 0;
-          isPlayingAnim = true;
-          playBtn.textContent = '⏸ 暂停';
-          playBtn.style.background = '#4c1d95';
-          document.querySelectorAll('.anim-row').forEach(r => r.style.background = '#151a24');
-          aRow.style.background = '#2e1065';
-          onStatus(`正在播放动作：${anim.name} (${anim.frames} 帧 @ ${anim.fps} fps)`);
+          playAnimationIndex(aidx);
         };
         listEl.appendChild(aRow);
       });
@@ -424,6 +504,26 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         // Update Left-Side Mesh & Animation Inspector
         updateMeshInspector(renderedMeshList, data.animations, data.skeletons);
 
+        // Take snapshot for card thumbnail
+        if (!THUMB_CACHE.has(item.id)) {
+          setTimeout(() => {
+            const snap = capture45DegreeSnapshot();
+            if (snap) {
+              THUMB_CACHE.set(item.id, snap);
+              // update card DOM background
+              document.querySelectorAll(`.entity-card[data-id="${item.id}"] .card-preview-thumb`).forEach(thumb => {
+                thumb.style.backgroundImage = `url(${snap})`;
+                thumb.style.backgroundSize = 'cover';
+                thumb.style.backgroundPosition = 'center';
+                const isoBox = thumb.querySelector('.iso-box');
+                const catIcon = thumb.querySelector('.cat-icon');
+                if (isoBox) isoBox.style.display = 'none';
+                if (catIcon) catIcon.style.display = 'none';
+              });
+            }
+          }, 80);
+        }
+
         const animInfo = data.animations?.length ? ` · ${data.animations.length} 个动作片段` : '';
         onStatus(`已呈现 3D 实体：${item.name} (${data.meshes.length} 个网格, ${data.textures.length} 张贴图${animInfo})`);
       } else {
@@ -441,7 +541,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     if (!isPlayingAnim || !entityGroup.visible) return;
     animTime += dt;
     // Animate subtle idle breath / transform oscillation
-    const wobble = Math.sin(animTime * 3.0) * 0.02;
+    const wobble = Math.sin(animTime * 4.0) * 0.03;
     entityGroup.position.y = wobble;
     skeletonGroup.position.y = wobble;
   }
@@ -498,6 +598,56 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
   if (searchDrawer) {
     searchDrawer.addEventListener('input', () => renderGrid());
   }
+
+  // Global Keyboard Navigation
+  window.addEventListener('keydown', (e) => {
+    if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'w' || e.key === 's') {
+      e.preventDefault();
+      const isUp = (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'w');
+
+      // 1. If in Animation browsing mode
+      if (focusMode === 'animation' && currentAnimations && currentAnimations.length > 0) {
+        let nextIdx = isUp ? (currentAnimIdx - 1) : (currentAnimIdx + 1);
+        if (nextIdx < 0) nextIdx = currentAnimations.length - 1;
+        if (nextIdx >= currentAnimations.length) nextIdx = 0;
+        playAnimationIndex(nextIdx);
+        return;
+      }
+
+      // 2. Otherwise in Entity browsing mode
+      if (entityData) {
+        const items = entityData.categories?.[activeCategory] || [];
+        if (!items.length) return;
+        const curIdx = items.findIndex(it => it.id === currentEntity?.id);
+        let nextIdx = isUp ? (curIdx - 1) : (curIdx + 1);
+        if (nextIdx < 0) nextIdx = items.length - 1;
+        if (nextIdx >= items.length) nextIdx = 0;
+        selectEntity(items[nextIdx]);
+      }
+    } else if (e.code === 'Space') {
+      e.preventDefault();
+      if (currentAnimations.length > 0) {
+        if (currentAnimIdx < 0) playAnimationIndex(0);
+        else {
+          isPlayingAnim = !isPlayingAnim;
+          const playBtn = document.getElementById('anim-play-btn');
+          if (playBtn) {
+            playBtn.textContent = isPlayingAnim ? '⏸ 暂停' : '▶ 播放 (Space)';
+            playBtn.style.background = isPlayingAnim ? '#4c1d95' : '#1a2230';
+          }
+        }
+      }
+    } else if (e.key === 'b' || e.key === 'B') {
+      showSkeleton = !showSkeleton;
+      skeletonGroup.visible = showSkeleton;
+      const toggle = document.getElementById('toggle-skeleton-lines');
+      if (toggle) toggle.checked = showSkeleton;
+    } else if (e.key === 'r' || e.key === 'R' || e.key === 'Home') {
+      if (currentEntity) selectEntity(currentEntity, currentShape);
+    }
+  });
 
   return {
     loadCatalog,

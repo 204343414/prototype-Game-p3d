@@ -95,6 +95,8 @@ FRIENDLY_NAMES = {
     "titaniumGT001": "钛金跑车 GT",
     "tankerTruck001": "大型重载油罐车",
     # Characters
+    "Soldier": "黑色守望与陆军军备全家桶 (Soldier/Blackwatch/Weapons)",
+    "soldier": "黑色守望与陆军军备全家桶 (Soldier/Blackwatch/Weapons)",
     "DanaMercer": "达娜·墨瑟 (Dana Mercer)",
     "karen_parker": "凯伦·帕克 (Karen Parker)",
     "ElizabethGreene": "伊丽莎白·格林 (Elizabeth Greene)",
@@ -151,7 +153,6 @@ def inspect_p3d_package(data: bytes) -> dict[str, Any]:
                 name, _ = _p3d_string(record["payload"])
                 if name and name not in skeletons:
                     skeletons.append(name)
-                # Count joints under this skeleton
                 j_count = sum(1 for _, c in children.get(idx, []) if c["type_id"] in (SKELETON_JOINT, SKELETON_JOINT_V2))
                 total_joints = max(total_joints, j_count)
             except (ValueError, IndexError):
