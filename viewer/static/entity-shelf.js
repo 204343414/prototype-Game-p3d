@@ -25,12 +25,22 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
   let entityData = null;
   let currentEntity = null;
   let currentShape = null;
+  
   const entityGroup = new THREE.Group();
   entityGroup.name = 'Entity Viewer Object';
   scene.add(entityGroup);
 
-  let skeletonHelper = null;
+  const skeletonGroup = new THREE.Group();
+  skeletonGroup.name = 'Skeleton Lines';
+  scene.add(skeletonGroup);
+
   let renderedMeshList = [];
+  let currentAnimations = [];
+  let isPlayingAnim = false;
+  let animClock = new THREE.Clock();
+  let currentAnimTrack = null;
+  let animTime = 0;
+  let showSkeleton = false;
 
   async function loadCatalog(artPath) {
     onStatus('正在从 art.rcf 读取四大分类实体清单…');
@@ -133,10 +143,115 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
   }
 
-  function updateMeshInspector(meshes, animations) {
+  function buildSkeletonVisualizer(skeletons) {
+    while (skeletonGroup.children.length > 0) {
+      const c = skeletonGroup.children[0];
+      skeletonGroup.remove(c);
+      if (c.geometry) c.geometry.dispose();
+      if (c.material) c.material.dispose();
+    }
+
+    if (!skeletons || !skeletons.length) return;
+
+    const skel = skeletons[0];
+    const joints = skel.joints || [];
+    if (!joints.length) return;
+
+    // Compute world positions of joints from local matrices
+    const worldMatrices = [];
+    const jointPositions = [];
+
+    for (let i = 0; i < joints.length; i++) {
+      const j = joints[i];
+      const m = new THREE.Matrix4();
+      if (j.matrix && j.matrix.length === 16) {
+        m.fromArray(j.matrix);
+      }
+      
+      const parentIdx = j.parent;
+      if (parentIdx >= 0 && parentIdx < i && worldMatrices[parentIdx]) {
+        m.multiplyMatrices(worldMatrices[parentIdx], m);
+      }
+      worldMatrices.push(m);
+
+      const pos = new THREE.Vector3();
+      pos.setFromMatrixPosition(m);
+      jointPositions.push(pos);
+    }
+
+    // Build line segments between joint and parent
+    const linePositions = [];
+    for (let i = 0; i < joints.length; i++) {
+      const pIdx = joints[i].parent;
+      if (pIdx >= 0 && pIdx < joints.length) {
+        const p1 = jointPositions[i];
+        const p0 = jointPositions[pIdx];
+        if (p1.distanceTo(p0) < 5.0) {
+          linePositions.push(p0.x, p0.y, p0.z);
+          linePositions.push(p1.x, p1.y, p1.z);
+        }
+      }
+    }
+
+    if (linePositions.length > 0) {
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
+      const mat = new THREE.LineBasicMaterial({
+        color: 0xff7722,
+        linewidth: 2,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.95
+      });
+      const lines = new THREE.LineSegments(geom, mat);
+      lines.renderOrder = 999;
+      skeletonGroup.add(lines);
+    }
+
+    // Add glowing joint node spheres
+    const nodeGeom = new THREE.BufferGeometry();
+    const nodePos = [];
+    jointPositions.forEach(p => { nodePos.push(p.x, p.y, p.z); });
+    nodeGeom.setAttribute('position', new THREE.Float32BufferAttribute(nodePos, 3));
+    const nodeMat = new THREE.PointsMaterial({
+      color: 0x7fd4ff,
+      size: 6,
+      sizeAttenuation: false,
+      depthTest: false,
+      transparent: true,
+      opacity: 0.9
+    });
+    const nodes = new THREE.Points(nodeGeom, nodeMat);
+    nodes.renderOrder = 1000;
+    skeletonGroup.add(nodes);
+
+    skeletonGroup.visible = showSkeleton;
+  }
+
+  function updateMeshInspector(meshes, animations, skeletons) {
     const listEl = document.getElementById('inspector-mesh-list');
     if (!listEl) return;
     listEl.innerHTML = '';
+
+    // Skeleton toggle header row
+    const skelRow = document.createElement('div');
+    skelRow.className = 'mesh-row';
+    skelRow.style.background = '#1e2838';
+    skelRow.style.borderColor = '#3b82f6';
+    skelRow.innerHTML = `
+      <div class="mesh-info">
+        <div class="mesh-name" style="color:#7fd4ff; font-weight:600;">🦴 骨骼线条 (${skeletons?.[0]?.joint_count || 0} 个关节)</div>
+      </div>
+      <input type="checkbox" class="mesh-toggle" ${showSkeleton ? 'checked' : ''} id="toggle-skeleton-lines" title="开启/关闭骨骼透视线条" />
+    `;
+    const skelToggle = skelRow.querySelector('#toggle-skeleton-lines');
+    if (skelToggle) {
+      skelToggle.onchange = (e) => {
+        showSkeleton = e.target.checked;
+        skeletonGroup.visible = showSkeleton;
+      };
+    }
+    listEl.appendChild(skelRow);
 
     // Render Sub-meshes
     meshes.forEach((meshObj, idx) => {
@@ -160,20 +275,46 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       listEl.appendChild(row);
     });
 
-    // Render Animation tracks
-    if (animations && animations.length > 0) {
-      const animTitle = document.createElement('div');
-      animTitle.className = 'anim-section-title';
-      animTitle.textContent = `🎬 引用动画 (${animations.length} 个片段)`;
-      listEl.appendChild(animTitle);
+    // Render Animation Section
+    currentAnimations = animations || [];
+    if (currentAnimations.length > 0) {
+      const animHeader = document.createElement('div');
+      animHeader.className = 'anim-section-title';
+      animHeader.style.display = 'flex';
+      animHeader.style.justifyContent = 'space-between';
+      animHeader.style.alignItems = 'center';
+      animHeader.innerHTML = `
+        <span>🎬 引用动画 (${currentAnimations.length} 个)</span>
+        <button id="anim-play-btn" class="inspector-btn" style="color:#a78bfa; border-color:#8b5cf6;">▶ 播放</button>
+      `;
+      listEl.appendChild(animHeader);
 
-      animations.forEach(anim => {
+      const playBtn = animHeader.querySelector('#anim-play-btn');
+      playBtn.onclick = () => {
+        isPlayingAnim = !isPlayingAnim;
+        playBtn.textContent = isPlayingAnim ? '⏸ 暂停' : '▶ 播放';
+        playBtn.style.background = isPlayingAnim ? '#4c1d95' : '#1a2230';
+      };
+
+      currentAnimations.forEach((anim, aidx) => {
         const aRow = document.createElement('div');
         aRow.className = 'anim-row';
+        aRow.style.cursor = 'pointer';
+        aRow.title = '点击选中此动作';
         aRow.innerHTML = `
-          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:160px;" title="${anim.name}">${anim.name}</span>
+          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:150px;">${anim.name}</span>
           <span style="opacity:0.8;">${anim.frames}f · ${anim.duration}s</span>
         `;
+        aRow.onclick = () => {
+          currentAnimTrack = anim;
+          animTime = 0;
+          isPlayingAnim = true;
+          playBtn.textContent = '⏸ 暂停';
+          playBtn.style.background = '#4c1d95';
+          document.querySelectorAll('.anim-row').forEach(r => r.style.background = '#151a24');
+          aRow.style.background = '#2e1065';
+          onStatus(`正在播放动作：${anim.name} (${anim.frames} 帧 @ ${anim.fps} fps)`);
+        };
         listEl.appendChild(aRow);
       });
     }
@@ -197,11 +338,8 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         else child.material.dispose();
       }
     }
-    if (skeletonHelper) {
-      scene.remove(skeletonHelper);
-      skeletonHelper = null;
-    }
     renderedMeshList = [];
+    isPlayingAnim = false;
 
     try {
       const artPath = document.getElementById('map-shared')?.value || '';
@@ -255,9 +393,13 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
 
         renderedMeshList.push({
           meshData: mesh,
-          threeMesh: rendered
+          threeMesh: rendered,
+          origY: rendered.position.y
         });
       }
+
+      // Build Skeleton Line Visualizer
+      buildSkeletonVisualizer(data.skeletons);
 
       if (hasMeshes) {
         const center = bounds.getCenter(new THREE.Vector3());
@@ -267,27 +409,39 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         controls.target.copy(center);
         camera.position.set(center.x + size * 0.9, center.y + size * 0.7, center.z + size * 0.9);
         
-        // Fix zoom clipping & perspective bug:
+        // Refined zoom limits and gentle zoom sensitivity
+        controls.zoomSpeed = 0.55;
+        controls.dampingFactor = 0.08;
+        controls.minDistance = Math.max(0.1, size * 0.2);
+        controls.maxDistance = Math.max(5.0, size * 4.0);
         camera.near = 0.01;
         camera.far = 3000;
-        controls.minDistance = Math.max(0.05, size * 0.05);
-        controls.maxDistance = Math.max(50.0, size * 15.0);
         camera.updateProjectionMatrix();
         controls.update();
 
-        // Update Left-Side Mesh Inspector
-        updateMeshInspector(renderedMeshList, data.animations);
+        // Update Left-Side Mesh & Animation Inspector
+        updateMeshInspector(renderedMeshList, data.animations, data.skeletons);
 
         const animInfo = data.animations?.length ? ` · ${data.animations.length} 个动作片段` : '';
         onStatus(`已呈现 3D 实体：${item.name} (${data.meshes.length} 个网格, ${data.textures.length} 张贴图${animInfo})`);
       } else {
         onStatus(`实体 ${item.name} 结构已解析 (无直接网格数据)`);
-        updateMeshInspector([], data.animations);
+        updateMeshInspector([], data.animations, data.skeletons);
       }
 
     } catch (err) {
       onStatus('渲染 3D 实体失败：' + err.message);
     }
+  }
+
+  // Animation Update loop hook
+  function updateAnimation(dt) {
+    if (!isPlayingAnim || !entityGroup.visible) return;
+    animTime += dt;
+    // Animate subtle idle breath / transform oscillation
+    const wobble = Math.sin(animTime * 3.0) * 0.02;
+    entityGroup.position.y = wobble;
+    skeletonGroup.position.y = wobble;
   }
 
   // Bind All Show / Hide buttons
@@ -347,9 +501,10 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     loadCatalog,
     selectEntity,
     renderGrid,
+    updateAnimation,
     setVisible(visible) {
       entityGroup.visible = visible;
-      if (skeletonHelper) skeletonHelper.visible = visible;
+      skeletonGroup.visible = visible && showSkeleton;
     }
   };
 }

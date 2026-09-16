@@ -1,7 +1,7 @@
 """Decode complete 3D entity geometry, UVs, textures, skeletons and animations.
 
 Multi-stream vertex buffer support (Stream 0 positions/normals, Stream 1 UVs for characters),
-LOD0 prioritization, shape isolation, and animation track extraction.
+LOD0 prioritization, shape isolation, joint matrix tree, and animation track extraction.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ MEMORY_INDEX_LIST = 0x00010013
 SKELETON_V1 = 0x00002200
 SKELETON_V2 = 0x00023000
 SKELETON_JOINT = 0x00002201
+SKELETON_JOINT_V2 = 0x00023001
 ANIMATION = 0x00121000
 NEW_SHADER = 0x00011015
 OLD_SHADER = 0x00010003
@@ -140,19 +141,30 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
     for idx, record in enumerate(records):
         if record["type_id"] in (SKELETON_V1, SKELETON_V2):
             try:
-                skel_name, _ = _p3d_string(record["payload"])
+                skel_name, _ = _p3d_string(record["payload"], 0)
                 joints = []
                 for _, child in children.get(idx, []):
-                    if child["type_id"] == SKELETON_JOINT:
+                    if child["type_id"] in (SKELETON_JOINT, SKELETON_JOINT_V2):
                         j_payload = child["payload"]
-                        j_name, offset = _p3d_string(j_payload)
-                        parent_idx = struct.unpack_from("<i", j_payload, offset)[0] if offset + 4 <= len(j_payload) else -1
-                        joints.append({"name": j_name, "parent": parent_idx})
-                skeletons.append({
-                    "name": skel_name,
-                    "joint_count": len(joints),
-                    "joints": joints,
-                })
+                        j_name, offset = _p3d_string(j_payload, 0)
+                        parent_idx = -1
+                        matrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
+                        if offset + 4 <= len(j_payload):
+                            parent_idx = struct.unpack_from("<i", j_payload, offset)[0]
+                        if offset + 68 <= len(j_payload):
+                            m_floats = struct.unpack_from("<16f", j_payload, offset + 4)
+                            matrix = [round(f, 4) for f in m_floats]
+                        joints.append({
+                            "name": j_name,
+                            "parent": parent_idx,
+                            "matrix": matrix,
+                        })
+                if joints:
+                    skeletons.append({
+                        "name": skel_name,
+                        "joint_count": len(joints),
+                        "joints": joints,
+                    })
             except Exception:
                 pass
 
