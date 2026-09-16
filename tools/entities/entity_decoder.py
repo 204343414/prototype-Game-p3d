@@ -1,128 +1,168 @@
-"""Decode complete 3D entity geometry, UVs, textures, skeletons and animations.
-
-Multi-stream vertex buffer support (Stream 0 positions/normals, Stream 1 UVs for characters),
-LOD0 prioritization, shape isolation, joint matrix tree, and animation track extraction.
-"""
+"""Entity Mesh, Skinning, Skeleton and Animation Decoder for Pure3D (Prototype 1)."""
 from __future__ import annotations
 
 import base64
+import math
+import os
 import struct
+import sys
+import zlib
 from typing import Any
 
+# Ensure world tools are accessible
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "world"))
 from probe_static_geometry import (
-    GEOMETRY, PRIMITIVE_GROUP, MEMORY_VERTEX_LIST, MEMORY_VERTEX_DESCRIPTION, _p3d_string
-)
-from render_static_uv_candidates import (
-    TEXTURE, TEXTURE_DDS, IMAGE_DATA, _records, _parse_texture_dds_header
+    _walk, _p3d_string, _parse_primitive_group, SIG_LE
 )
 
+# Pure3D Chunk IDs
+TEXTURE_ALT = 0x00019000
+TEXTURE_DDS = 0x00019006
+IMAGE_DATA_ALT = 0x00019002
+IMAGE_DATA_ALT2 = 0x00019007
+
+TEXTURE = 0x00010000
+IMAGE = 0x00010004
+IMAGE_DATA = 0x00010005
+NEW_SHADER = 0x00011000
+OLD_SHADER = 0x00010002
+TEXTURE_PARAM = 0x00011004
+
 POLYSKIN = 0x00010001
-MEMORY_INDEX_LIST = 0x00010013
-SKELETON_V1 = 0x00002200
-SKELETON_V2 = 0x00023000
-SKELETON_JOINT = 0x00002201
-SKELETON_JOINT_V2 = 0x00023001
+GEOMETRY = 0x00010000
+PRIMITIVE_GROUP = 0x00010020
+VERTEX_DESCRIPTION = 0x00010014
+VERTEX_LIST = 0x00010012
+INDEX_LIST = 0x00010013
+
+# Legacy (memory_imaged == 0) chunk IDs
+LEGACY_POSITIONS = 0x00010005
+LEGACY_NORMALS = 0x00010006
+LEGACY_UVS = 0x00010007
+LEGACY_INDICES = 0x0001000A
+LEGACY_MATRICES = 0x0001000B
+LEGACY_WEIGHTS = 0x0001000C
+
+MATRIX_PALETTE = 0x0001000D
+MATRIX_PALETTE_ALT = 0x0001000F
+
+SKELETON_2 = 0x00023000
+SKELETON_JOINT_2 = 0x00023001
+
 ANIMATION = 0x00121000
-NEW_SHADER = 0x00011015
-OLD_SHADER = 0x00010003
-TEXTURE_PARAM = 0x00011016
-TEXTURE_IMAGE_SPEC = 0x00019006
+ANIM_ZLIB_BLOB = 0x02F00000
+ANIM_GROUP_LIST = 0x00121002
+ANIM_GROUP = 0x00121001
+ANIM_ROT_INT16 = 0x00121112
+ANIM_ROT_INT8 = 0x00121114
+ANIM_LOCATOR = 0x00121120
+
+
+def _align4(n: int) -> int:
+    return (n + 3) & ~3
 
 
 def _extract_dds_mips(img_payload: bytes, width: int, height: int, num_mips: int, fourcc: str) -> list[dict[str, Any]]:
-    """Extract individual mip levels from DDS binary payload."""
-    if len(img_payload) >= 4 and img_payload[:4] == b"DDS ":
-        offset = 128
-    elif len(img_payload) >= 8 and img_payload[4:8] == b"DDS ":
-        offset = 132
-    else:
-        offset = 4 if len(img_payload) > 4 else 0
-
-    block_size = 8 if fourcc == "DXT1" else 16
     mips = []
-    w, h = width, height
-    cur_offset = offset
-
-    for _ in range(max(1, num_mips)):
-        blocks_x = max(1, (w + 3) // 4)
-        blocks_y = max(1, (h + 3) // 4)
-        mip_bytes = blocks_x * blocks_y * block_size
-
-        if cur_offset + mip_bytes <= len(img_payload):
-            mip_data = img_payload[cur_offset:cur_offset + mip_bytes]
+    block_size = 16 if fourcc in ("DXT3", "DXT5") else 8
+    curr_w, curr_h = width, height
+    pos = 0
+    for _ in range(num_mips):
+        blocks_x = max(1, (curr_w + 3) // 4)
+        blocks_y = max(1, (curr_h + 3) // 4)
+        mip_size = blocks_x * blocks_y * block_size
+        if pos + mip_size <= len(img_payload):
             mips.append({
-                "width": w,
-                "height": h,
-                "data": base64.b64encode(mip_data).decode("ascii"),
+                "data": base64.b64encode(img_payload[pos:pos + mip_size]).decode("ascii"),
+                "width": curr_w,
+                "height": curr_h,
             })
-            cur_offset += mip_bytes
-        else:
-            break
-
-        w = max(1, w // 2)
-        h = max(1, h // 2)
-
+            pos += mip_size
+        curr_w = max(1, curr_w // 2)
+        curr_h = max(1, curr_h // 2)
     return mips
 
 
 def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[str, Any]:
-    records, children = _records(data)
-    
-    # 1. Extract Textures (0x19000 -> 0x19006 -> 0x19002 or TEXTURE_DDS)
-    textures: dict[str, dict[str, Any]] = {}
-    for idx, record in enumerate(records):
-        if record["type_id"] == TEXTURE:
-            try:
-                tname, _ = _p3d_string(record["payload"])
-                tex_children = children.get(idx, [])
-                
-                # Check for 0x19006 child and nested 0x19002
-                for cidx, ch in tex_children:
-                    if ch["type_id"] == TEXTURE_IMAGE_SPEC:
-                        _, off = _p3d_string(ch["payload"])
-                        if off + 28 <= len(ch["payload"]):
-                            _, w, h, _, mips_cnt, _ = struct.unpack_from("<6I", ch["payload"], off)
-                            fourcc = ch["payload"][off+24:off+28].decode("latin-1", errors="ignore").strip("\x00") or "DXT5"
-                            if fourcc not in ("DXT1", "DXT3", "DXT5"):
-                                fourcc = "DXT5"
-                            for _, gch in children.get(cidx, []):
-                                if gch["type_id"] in (IMAGE_DATA, 0x19002):
-                                    mips = _extract_dds_mips(gch["payload"], w, h, mips_cnt, fourcc)
-                                    if mips:
-                                        textures[tname] = {
-                                            "key": tname,
-                                            "format": fourcc,
-                                            "mips": mips,
-                                        }
-                                        base_name = tname.rsplit(".", 1)[0]
-                                        textures[base_name] = textures[tname]
+    """Decodes all meshes, skeletons, skin weights, and real animation tracks from a Pure3D payload."""
+    if len(data) < 12:
+        return {"meshes": [], "textures": [], "skeletons": [], "animations": []}
 
-                # Check direct TEXTURE_DDS header + IMAGE_DATA
-                headers = [r for _, r in tex_children if r["type_id"] == TEXTURE_DDS]
-                images = [r for _, r in tex_children if r["type_id"] == IMAGE_DATA]
-                if headers and images:
-                    _, w, h, mips_cnt, algo = _parse_texture_dds_header(headers[0]["payload"])
-                    fourcc = algo if (isinstance(algo, str) and algo in ("DXT1", "DXT3", "DXT5")) else ("DXT1" if algo == 1 else "DXT5")
-                    mips = _extract_dds_mips(images[0]["payload"], w, h, mips_cnt, fourcc)
-                    if mips:
-                        textures[tname] = {
-                            "key": tname,
-                            "format": fourcc,
-                            "mips": mips,
-                        }
-                        base_name = tname.rsplit(".", 1)[0]
-                        textures[base_name] = textures[tname]
+    records: list[dict[str, Any]] = []
+    magic = struct.unpack_from("<I", data, 0)[0]
+    if magic == SIG_LE:
+        total_size = struct.unpack_from("<I", data, 8)[0]
+        _walk(data, 12, min(total_size, len(data)), None, 0, records)
+    else:
+        _walk(data, 0, len(data), None, 0, records)
+
+    children_map: dict[int, list[int]] = {}
+    for i, r in enumerate(records):
+        p = r["parent"]
+        if p is not None:
+            children_map.setdefault(p, []).append(i)
+
+    # 1. Extract Textures & Shaders
+    textures = {}
+    for idx, record in enumerate(records):
+        if record["type_id"] in (TEXTURE, TEXTURE_ALT):
+            try:
+                name, _ = _p3d_string(record["payload"], 0)
+                tex_w, tex_h, bpp, num_mips = 0, 0, 0, 0
+                fourcc = "DXT1"
+                raw_data = b""
+
+                for ch_idx in children_map.get(idx, []):
+                    ch = records[ch_idx]
+                    if ch["type_id"] in (IMAGE, TEXTURE_DDS):
+                        p = ch["payload"]
+                        _, poff = _p3d_string(p, 0)
+                        if poff + 16 <= len(p):
+                            tex_w, tex_h, bpp, _, num_mips, ftype = struct.unpack_from("<IIIIII", p, poff)
+                            if ftype == 2:
+                                fourcc = "DXT3"
+                            elif ftype == 3:
+                                fourcc = "DXT5"
+                            elif len(p) >= poff + 28:
+                                # FourCC may follow
+                                fcc = p[poff + 24:poff + 28].decode("ascii", errors="ignore").rstrip("\x00")
+                                if fcc in ("DXT1", "DXT3", "DXT5"):
+                                    fourcc = fcc
+                    elif ch["type_id"] in (IMAGE_DATA, IMAGE_DATA_ALT, IMAGE_DATA_ALT2):
+                        p = ch["payload"]
+                        if p.startswith(b"DDS "):
+                            raw_data = p[128:]  # skip standard DDS 128-byte header
+                            if tex_w == 0 and len(p) >= 20:
+                                tex_h, tex_w = struct.unpack_from("<II", p, 12)
+                        elif len(p) >= 4:
+                            d_len = struct.unpack_from("<I", p, 0)[0]
+                            raw_data = p[4:4 + d_len] if d_len + 4 <= len(p) else p[4:]
+
+                if name and raw_data:
+                    tex_w = tex_w or 4
+                    tex_h = tex_h or 4
+                    mips = _extract_dds_mips(raw_data, tex_w, tex_h, num_mips or 1, fourcc)
+                    textures[name] = {
+                        "key": f"entity_tex_{name}",
+                        "name": name,
+                        "format": fourcc,
+                        "fourcc": fourcc,
+                        "width": tex_w,
+                        "height": tex_h,
+                        "mipmaps": mips,
+                        "is_transparent": fourcc in ("DXT3", "DXT5"),
+                    }
             except Exception:
                 pass
 
-    # 2. Extract Shaders (0x11015 / 0x10003) -> Map Shader Name to Texture Name
-    shader_to_texture: dict[str, str] = {}
+    shader_to_texture = {}
     for idx, record in enumerate(records):
         if record["type_id"] in (NEW_SHADER, OLD_SHADER):
             try:
                 sname, off = _p3d_string(record["payload"])
                 color_tex = ""
-                for _, ch in children.get(idx, []):
+                for ch_idx in children_map.get(idx, []):
+                    ch = records[ch_idx]
                     if ch["type_id"] in (TEXTURE_PARAM, 0x10008, 0x11005):
                         pname, poff = _p3d_string(ch["payload"])
                         pval, _ = _p3d_string(ch["payload"], poff)
@@ -136,28 +176,26 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
             except Exception:
                 pass
 
-    # 3. Extract Skeletons (Prioritize full body skeletons with highest joint count)
+    # 2. Extract Skeleton_2 (0x00023000)
     skeletons = []
     for idx, record in enumerate(records):
-        if record["type_id"] in (SKELETON_V1, SKELETON_V2):
+        if record["type_id"] == SKELETON_2:
             try:
-                skel_name, _ = _p3d_string(record["payload"], 0)
+                p = record["payload"]
+                skel_name, off = _p3d_string(p, 0)
+                ver, num_joints, num_part, num_limbs = struct.unpack_from("<IIII", p, off)
                 joints = []
-                for _, child in children.get(idx, []):
-                    if child["type_id"] in (SKELETON_JOINT, SKELETON_JOINT_V2):
-                        j_payload = child["payload"]
-                        j_name, offset = _p3d_string(j_payload, 0)
-                        parent_idx = -1
-                        matrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
-                        if offset + 4 <= len(j_payload):
-                            parent_idx = struct.unpack_from("<i", j_payload, offset)[0]
-                        if offset + 68 <= len(j_payload):
-                            m_floats = struct.unpack_from("<16f", j_payload, offset + 4)
-                            matrix = [round(f, 4) for f in m_floats]
+                for ch_idx in children_map.get(idx, []):
+                    child = records[ch_idx]
+                    if child["type_id"] == SKELETON_JOINT_2:
+                        jp = child["payload"]
+                        jname, joff = _p3d_string(jp, 0)
+                        pidx = struct.unpack_from("<I", jp, joff)[0]
+                        m_floats = struct.unpack_from("<16f", jp, joff + 4)
                         joints.append({
-                            "name": j_name,
-                            "parent": parent_idx,
-                            "matrix": matrix,
+                            "name": jname,
+                            "parent": pidx,
+                            "matrix": [round(f, 6) for f in m_floats],
                         })
                 if joints:
                     skeletons.append({
@@ -170,225 +208,280 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
 
     skeletons.sort(key=lambda s: s["joint_count"], reverse=True)
 
-    # 4. Extract Animation Clips (0x121000)
+    # 3. Extract External ZLIB Animation Clips (0x00121000)
     animations = []
     for idx, record in enumerate(records):
         if record["type_id"] == ANIMATION:
             try:
                 p = record["payload"]
-                anim_name, off = _p3d_string(p, 4) if len(p) > 4 else ("", 0)
-                if not anim_name:
-                    anim_name, off = _p3d_string(p, 0)
-                if off + 12 <= len(p):
-                    fourcc = p[off:off+4].decode("latin-1", errors="ignore").strip("\x00") or "PTRN"
-                    num_frames, rate = struct.unpack_from("<2f", p, off + 4)
-                    duration = round(num_frames / rate, 2) if rate > 0 else 0.0
-                    animations.append({
-                        "name": anim_name or f"Track_{len(animations) + 1}",
-                        "type": fourcc,
-                        "frames": round(num_frames),
-                        "fps": round(rate, 1),
-                        "duration": duration,
-                    })
+                ver = struct.unpack_from("<I", p, 0)[0]
+                anim_name, off = _p3d_string(p, 4)
+                fourcc = p[off:off + 4].decode("ascii", errors="ignore")
+                num_frames, frame_rate, cyclic = struct.unpack_from("<ffI", p, off + 4)
+
+                zlib_blob = None
+                group_list_idx = None
+                for ch_idx in children_map.get(idx, []):
+                    ch = records[ch_idx]
+                    if ch["type_id"] == ANIM_ZLIB_BLOB:
+                        z_payload = ch["payload"]
+                        if len(z_payload) >= 16:
+                            uncomp_sz, comp_sz = struct.unpack_from("<II", z_payload, 8)
+                            raw_zlib = z_payload[16 : 16 + comp_sz]
+                            zlib_blob = zlib.decompress(raw_zlib)
+                    elif ch["type_id"] == ANIM_GROUP_LIST:
+                        group_list_idx = ch_idx
+
+                if zlib_blob and group_list_idx is not None:
+                    groups = []
+                    fps = frame_rate if frame_rate > 0 else 30.0
+
+                    for g_idx in children_map.get(group_list_idx, []):
+                        g_rec = records[g_idx]
+                        if g_rec["type_id"] == ANIM_GROUP:
+                            gp = g_rec["payload"]
+                            gname, goff = _p3d_string(gp, 4)
+                            gid, n_channels = struct.unpack_from("<II", gp, goff)
+
+                            rot_track = None
+                            for c_idx in children_map.get(g_idx, []):
+                                c_ch = records[c_idx]
+                                cid = c_ch["type_id"]
+                                loc_key_count = 0
+                                loc_blob_offset = 0
+                                for l_idx in children_map.get(c_idx, []):
+                                    l_ch = records[l_idx]
+                                    if l_ch["type_id"] == ANIM_LOCATOR:
+                                        lp = l_ch["payload"]
+                                        if len(lp) >= 12:
+                                            _, loc_key_count, loc_blob_offset = struct.unpack_from("<III", lp, 0)
+
+                                if loc_key_count > 0:
+                                    times = []
+                                    quats = []
+                                    frame_bytes = _align4(loc_key_count * 2)
+                                    val_offset = loc_blob_offset + frame_bytes
+
+                                    if loc_blob_offset + frame_bytes <= len(zlib_blob):
+                                        raw_frames = struct.unpack_from(f"<{loc_key_count}H", zlib_blob, loc_blob_offset)
+                                        times = [round(f / fps, 4) for f in raw_frames]
+
+                                    if cid == ANIM_ROT_INT16 and val_offset + loc_key_count * 6 <= len(zlib_blob):
+                                        raw_vals = struct.unpack_from(f"<{loc_key_count * 3}h", zlib_blob, val_offset)
+                                        for k in range(loc_key_count):
+                                            rx = raw_vals[k * 3 + 0] / 32767.0
+                                            ry = raw_vals[k * 3 + 1] / 32767.0
+                                            rz = raw_vals[k * 3 + 2] / 32767.0
+                                            w2 = max(0.0, 1.0 - rx * rx - ry * ry - rz * rz)
+                                            rw = math.sqrt(w2)
+                                            quats.append([round(rx, 5), round(ry, 5), round(rz, 5), round(rw, 5)])
+                                    elif cid == ANIM_ROT_INT8 and val_offset + loc_key_count * 3 <= len(zlib_blob):
+                                        raw_vals = struct.unpack_from(f"<{loc_key_count * 3}b", zlib_blob, val_offset)
+                                        for k in range(loc_key_count):
+                                            rx = raw_vals[k * 3 + 0] / 127.0
+                                            ry = raw_vals[k * 3 + 1] / 127.0
+                                            rz = raw_vals[k * 3 + 2] / 127.0
+                                            w2 = max(0.0, 1.0 - rx * rx - ry * ry - rz * rz)
+                                            rw = math.sqrt(w2)
+                                            quats.append([round(rx, 5), round(ry, 5), round(rz, 5), round(rw, 5)])
+
+                                    if times and quats and len(times) == len(quats):
+                                        rot_track = {
+                                            "times": times,
+                                            "values": quats,
+                                        }
+                                        break
+
+                            if rot_track:
+                                groups.append({
+                                    "name": gname,
+                                    "rot": rot_track,
+                                })
+
+                    if groups:
+                        animations.append({
+                            "name": anim_name,
+                            "type": fourcc,
+                            "frames": int(num_frames),
+                            "fps": round(fps, 2),
+                            "duration": round(num_frames / fps, 3),
+                            "cyclic": bool(cyclic),
+                            "groups": groups,
+                        })
             except Exception:
                 pass
 
-    # Check for LOD0 meshes
-    all_geom_names: list[str] = []
+    # 4. Extract PolySkin & Geometries
+    skin_groups = []
     for idx, record in enumerate(records):
-        if record["type_id"] in (POLYSKIN, GEOMETRY):
+        if record["type_id"] in (POLYSKIN, GEOMETRY, 0x00012000):
             try:
-                gn, _ = _p3d_string(record["payload"])
-                all_geom_names.append(gn)
+                geom_name, _ = _p3d_string(record["payload"])
+                for ch_idx in children_map.get(idx, []):
+                    ch = records[ch_idx]
+                    if ch["type_id"] == PRIMITIVE_GROUP:
+                        skin_groups.append((geom_name, ch_idx, ch))
             except Exception:
                 pass
-    has_lod0 = any(n.endswith(("_00", "_LOD0", "_lod0")) for n in all_geom_names)
 
-    # 5. Extract Meshes (Geometry / Polyskin)
-    meshes = []
-    for idx, record in enumerate(records):
-        if record["type_id"] not in (POLYSKIN, GEOMETRY):
+    decoded_meshes = []
+
+    for geom_name, pg_idx, pg_rec in skin_groups:
+        if shape_filter and shape_filter not in geom_name:
             continue
+
         try:
-            geom_name, _ = _p3d_string(record["payload"])
+            pg = _parse_primitive_group(pg_rec["payload"])
         except Exception:
             continue
-            
-        # If shape filter is specified, only accept matching geometries
-        if shape_filter:
-            clean_shape = shape_filter.strip()
-            if not (geom_name == clean_shape or geom_name.startswith(clean_shape) or clean_shape.startswith(geom_name)):
-                continue
-        elif has_lod0 and geom_name.endswith(("_11", "_21", "_31", "_LOD1", "_LOD2", "_lod1", "_lod2")):
-            # Skip lower LOD models when high detail LOD0 exists
+
+        shader_name = pg["shader_name"]
+        vertex_count = pg["vertex_count"]
+        index_count = pg["index_count"]
+        memory_imaged = pg["memory_imaged"]
+
+        if vertex_count <= 0:
             continue
-            
-        for pidx, pg_rec in children.get(idx, []):
-            if pg_rec["type_id"] != PRIMITIVE_GROUP:
-                continue
-            
-            pg_payload = pg_rec["payload"]
-            shader_name = ""
-            vertex_count = 0
-            index_count = 0
-            try:
-                if len(pg_payload) >= 4:
-                    shader_name, offset = _p3d_string(pg_payload, 4)
-                    if offset + 16 <= len(pg_payload):
-                        _ptype, _fmt, vertex_count, index_count = struct.unpack_from("<4I", pg_payload, offset)
-            except Exception:
-                pass
-                
-            pg_children = children.get(pidx, [])
-            v_lists = [r["payload"] for _, r in pg_children if r["type_id"] == MEMORY_VERTEX_LIST]
-            i_lists = [r["payload"] for _, r in pg_children if r["type_id"] == MEMORY_INDEX_LIST]
-            d_lists = [r["payload"] for _, r in pg_children if r["type_id"] == MEMORY_VERTEX_DESCRIPTION]
-            
+
+        pg_children_indices = children_map.get(pg_idx, [])
+        pg_children = [records[i] for i in pg_children_indices]
+
+        # Check Matrix Palette
+        pal_lists = [c["payload"] for c in pg_children if c["type_id"] in (MATRIX_PALETTE, MATRIX_PALETTE_ALT)]
+        palette = []
+        if pal_lists:
+            p_data = pal_lists[0]
+            p_cnt = len(p_data) // 4
+            palette = list(struct.unpack_from(f"<{p_cnt}I", p_data, 0))
+
+        pos_buf = bytearray(vertex_count * 12)
+        uv_buf = bytearray(vertex_count * 8)
+        i_body = b""
+        skin_indices_b64 = None
+        skin_weights_b64 = None
+
+        if memory_imaged == 1:
+            # Memory Imaged Path (Stream 0 + Stream 1)
+            v_lists = [c["payload"] for c in pg_children if c["type_id"] == VERTEX_LIST]
+            i_lists = [c["payload"] for c in pg_children if c["type_id"] == INDEX_LIST]
             if not v_lists or not i_lists:
                 continue
-                
-            vl_payload = v_lists[0]
-            il_payload = i_lists[0]
-            
-            if len(vl_payload) < 12 or len(il_payload) < 12:
-                continue
-                
-            v_bytes = struct.unpack_from("<I", vl_payload, 8)[0]
-            v_body = vl_payload[12:12 + v_bytes]
-            
-            if vertex_count <= 0:
-                vertex_count = len(v_body) // 32
-                
-            if vertex_count <= 0 or v_bytes < vertex_count:
-                continue
-                
-            pos_stride = v_bytes // vertex_count if (v_bytes % vertex_count == 0) else 56
-            pos_buf = bytearray(vertex_count * 12)
-            uv_buf = bytearray(vertex_count * 8)
-            
-            # 1. Unpack positions from Stream 0
+
+            v_body = v_lists[0][12:]
+            pos_stride = len(v_body) // vertex_count if vertex_count > 0 else 56
+
             for i in range(vertex_count):
-                if i * pos_stride + 12 <= len(v_body):
-                    pos_buf[i * 12: i * 12 + 12] = v_body[i * pos_stride: i * pos_stride + 12]
+                src_idx = i * pos_stride
+                if src_idx + 12 <= len(v_body):
+                    pos_buf[i * 12 : i * 12 + 12] = v_body[src_idx : src_idx + 12]
 
-            # 2. Resolve UV stream & offset
-            uv_stream_idx = -1
-            uv_offset = -1
-            for didx, desc in enumerate(d_lists):
-                if len(desc) >= 16:
-                    for off in range(16, len(desc), 17):
-                        if off + 17 <= len(desc):
-                            shash, _, aoff, _, _, _ = struct.unpack_from("<IIIHHB", desc, off)
-                            if shash == 0x00364509: # TEXCOORD0
-                                uv_stream_idx = didx
-                                uv_offset = aoff
-                                break
-                    if uv_stream_idx >= 0:
-                        break
-
-            if uv_stream_idx >= 0 and uv_stream_idx < len(v_lists):
-                uv_vl = v_lists[uv_stream_idx]
-                if len(uv_vl) >= 12:
-                    uv_bytes = struct.unpack_from("<I", uv_vl, 8)[0]
-                    uv_body = uv_vl[12:12 + uv_bytes]
-                    uv_stride = uv_bytes // vertex_count if (v_bytes % vertex_count == 0) else (8 if uv_stream_idx > 0 else pos_stride)
-                    for i in range(vertex_count):
-                        src_idx = i * uv_stride + uv_offset
-                        if src_idx + 8 <= len(uv_body):
-                            uv_buf[i * 8: i * 8 + 8] = uv_body[src_idx: src_idx + 8]
-            elif len(v_lists) > 1 and len(v_lists[1]) >= 12 + vertex_count * 8:
-                # Direct Stream 1 fallback (8 bytes per vertex)
+            if len(v_lists) > 1 and len(v_lists[1]) >= 12 + vertex_count * 8:
                 uv_body = v_lists[1][12:]
-                uv_buf[:vertex_count * 8] = uv_body[:vertex_count * 8]
+                uv_stride = len(uv_body) // vertex_count
+                for i in range(vertex_count):
+                    src_u = i * uv_stride
+                    if src_u + 8 <= len(uv_body):
+                        uv_buf[i * 8 : i * 8 + 8] = uv_body[src_u : src_u + 8]
             else:
-                # Interleaved fallback on Stream 0
                 uv_off = 16 if pos_stride in (52, 64, 80) else (20 if pos_stride in (56, 28) else 16)
                 for i in range(vertex_count):
                     src_idx = i * pos_stride + uv_off
                     if src_idx + 8 <= len(v_body):
-                        uv_buf[i * 8: i * 8 + 8] = v_body[src_idx: src_idx + 8]
-                    
-            # 3. Resolve Blend Weights & Skin Indices (POLYSKIN)
-            palette = []
-            for _, pch in pg_children:
-                if pch["type_id"] in (0x0001000D, 0x0001000F):
-                    p_data = pch["payload"]
-                    p_cnt = len(p_data) // 4
-                    palette = list(struct.unpack_from("<%dI" % p_cnt, p_data, 0))
-                    break
+                        uv_buf[i * 8 : i * 8 + 8] = v_body[src_idx : src_idx + 8]
 
-            weight_off = -1
-            index_off = -1
-            for desc in d_lists:
-                if len(desc) >= 16:
-                    for off in range(16, len(desc), 17):
-                        if off + 17 <= len(desc):
-                            shash, _, aoff, _, _, _ = struct.unpack_from("<IIIHHB", desc, off)
-                            if shash == 0xA4176245:  # BLENDWEIGHT
-                                weight_off = aoff
-                            elif shash == 0x73D5CBA7:  # BLENDINDICES
-                                index_off = aoff
-
-            skin_indices_b64 = None
-            skin_weights_b64 = None
-
-            if weight_off >= 0 and index_off >= 0:
+            if pos_stride == 56 and len(v_body) >= vertex_count * 56 and palette:
                 skin_indices_buf = bytearray(vertex_count * 8)
                 skin_weights_buf = bytearray(vertex_count * 16)
                 for i in range(vertex_count):
-                    src_w = i * pos_stride + weight_off
-                    src_i = i * pos_stride + index_off
-                    if src_w + 16 <= len(v_body) and src_i + 4 <= len(v_body):
-                        raw_w = struct.unpack_from("<4f", v_body, src_w)
-                        raw_i = struct.unpack_from("<4B", v_body, src_i)
-                        valid_w = [max(0.0, float(w)) for w in raw_w]
-                        sum_w = sum(valid_w)
-                        norm_w = [w / sum_w if sum_w > 0 else (1.0 if k == 0 else 0.0) for k, w in enumerate(valid_w)]
-                        mapped_i = [palette[b] if b < len(palette) else b for b in raw_i]
-                        struct.pack_into("<4H", skin_indices_buf, i * 8, *mapped_i)
-                        struct.pack_into("<4f", skin_weights_buf, i * 16, *norm_w)
+                    off = i * 56
+                    w0, w1, w2 = struct.unpack_from("<3f", v_body, off + 40)
+                    w3 = max(0.0, 1.0 - (w0 + w1 + w2))
+                    raw_weights = [w0, w1, w2, w3]
+                    sum_w = sum(raw_weights)
+                    norm_w = [w / sum_w if sum_w > 0 else (1.0 if k == 0 else 0.0) for k, w in enumerate(raw_weights)]
+                    b0, b1, b2, b3 = struct.unpack_from("<4B", v_body, off + 52)
+                    mapped_i = [palette[b] if b < len(palette) else b for b in (b0, b1, b2, b3)]
+                    struct.pack_into("<4H", skin_indices_buf, i * 8, *mapped_i)
+                    struct.pack_into("<4f", skin_weights_buf, i * 16, *norm_w)
+
                 skin_indices_b64 = base64.b64encode(skin_indices_buf).decode("ascii")
                 skin_weights_b64 = base64.b64encode(skin_weights_buf).decode("ascii")
 
-            i_bytes = struct.unpack_from("<I", il_payload, 8)[0]
-            i_body = il_payload[12:12 + i_bytes]
-            
-            # Resolve texture key
-            tex_name = shader_to_texture.get(shader_name)
-            tex_key = None
-            if tex_name and tex_name in textures:
-                tex_key = textures[tex_name]["key"]
-            elif tex_name and tex_name.rsplit(".", 1)[0] in textures:
-                tex_key = textures[tex_name.rsplit(".", 1)[0]]["key"]
-            elif textures:
-                tex_key = list(textures.values())[0]["key"]
+            il_payload = i_lists[0]
+            if len(il_payload) >= 12:
+                i_bytes = struct.unpack_from("<I", il_payload, 8)[0]
+                i_body = il_payload[12:12 + i_bytes]
 
-            mesh_dict = {
-                "geometry_name": geom_name,
-                "shader_name": shader_name,
-                "vertex_count": vertex_count,
-                "triangle_count": len(i_body) // 6,
-                "positions": base64.b64encode(pos_buf).decode("ascii"),
-                "uv": base64.b64encode(uv_buf).decode("ascii"),
-                "indices": base64.b64encode(i_body).decode("ascii"),
-                "texture_key": tex_key,
-            }
-            if skin_indices_b64 and skin_weights_b64:
-                mesh_dict["skin_indices"] = skin_indices_b64
-                mesh_dict["skin_weights"] = skin_weights_b64
-            meshes.append(mesh_dict)
+        else:
+            # Legacy Memory Imaged == 0 Path (Alex jacket / AlexVestShape)
+            pos_chunks = [c["payload"] for c in pg_children if c["type_id"] == LEGACY_POSITIONS]
+            uv_chunks = [c["payload"] for c in pg_children if c["type_id"] == LEGACY_UVS]
+            idx_chunks = [c["payload"] for c in pg_children if c["type_id"] == LEGACY_INDICES]
+            mat_chunks = [c["payload"] for c in pg_children if c["type_id"] == LEGACY_MATRICES]
+            wt_chunks = [c["payload"] for c in pg_children if c["type_id"] == LEGACY_WEIGHTS]
 
-    # Return unique texture objects
-    unique_textures = []
-    seen_keys = set()
-    for tex in textures.values():
-        if tex["key"] not in seen_keys:
-            seen_keys.add(tex["key"])
-            unique_textures.append(tex)
+            if pos_chunks and len(pos_chunks[0]) >= 4 + vertex_count * 12:
+                pos_buf[:vertex_count * 12] = pos_chunks[0][4 : 4 + vertex_count * 12]
+
+            if uv_chunks and len(uv_chunks[0]) >= 4 + vertex_count * 8:
+                uv_buf[:vertex_count * 8] = uv_chunks[0][4 : 4 + vertex_count * 8]
+
+            if idx_chunks and len(idx_chunks[0]) >= 4:
+                n_idx = struct.unpack_from("<I", idx_chunks[0], 0)[0]
+                raw_idx = idx_chunks[0][4:]
+                if len(raw_idx) == n_idx * 2:
+                    i_body = raw_idx
+                elif len(raw_idx) == n_idx * 4:
+                    u32_arr = struct.unpack_from(f"<{n_idx}I", raw_idx, 0)
+                    i_body = struct.pack(f"<{n_idx}H", *u32_arr)
+                else:
+                    i_body = raw_idx[:n_idx * 2]
+
+            if mat_chunks and wt_chunks and palette:
+                m_body = mat_chunks[0][4:]
+                w_body = wt_chunks[0][4:]
+                skin_indices_buf = bytearray(vertex_count * 8)
+                skin_weights_buf = bytearray(vertex_count * 16)
+
+                for i in range(vertex_count):
+                    if i * 4 + 4 <= len(m_body) and i * 12 + 12 <= len(w_body):
+                        b0, b1, b2, b3 = struct.unpack_from("<4B", m_body, i * 4)
+                        w0, w1, w2 = struct.unpack_from("<3f", w_body, i * 12)
+                        implicit = max(0.0, 1.0 - (w0 + w1 + w2))
+                        raw_weights = [implicit, w2, w0, w1]
+                        sum_w = sum(raw_weights)
+                        norm_w = [w / sum_w if sum_w > 0 else (1.0 if k == 0 else 0.0) for k, w in enumerate(raw_weights)]
+                        mapped_i = [palette[b] if b < len(palette) else b for b in (b0, b1, b2, b3)]
+                        struct.pack_into("<4H", skin_indices_buf, i * 8, *mapped_i)
+                        struct.pack_into("<4f", skin_weights_buf, i * 16, *norm_w)
+
+                skin_indices_b64 = base64.b64encode(skin_indices_buf).decode("ascii")
+                skin_weights_b64 = base64.b64encode(skin_weights_buf).decode("ascii")
+
+        if len(i_body) < 6:
+            continue
+
+        tex_name = shader_to_texture.get(shader_name)
+        tex_key = None
+        if tex_name and tex_name in textures:
+            tex_key = textures[tex_name]["key"]
+
+        decoded_meshes.append({
+            "geometry_name": geom_name,
+            "shader_name": shader_name,
+            "texture_key": tex_key,
+            "vertex_count": vertex_count,
+            "triangle_count": len(i_body) // 6,
+            "positions": base64.b64encode(pos_buf).decode("ascii"),
+            "uv": base64.b64encode(uv_buf).decode("ascii"),
+            "indices": base64.b64encode(i_body).decode("ascii"),
+            "skin_indices": skin_indices_b64,
+            "skin_weights": skin_weights_b64,
+        })
 
     return {
-        "meshes": meshes,
-        "textures": unique_textures,
+        "meshes": decoded_meshes,
+        "textures": list(textures.values()),
         "skeletons": skeletons,
         "animations": animations,
     }

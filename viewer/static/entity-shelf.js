@@ -1,77 +1,65 @@
-import * as THREE from 'three';
-import { makeMapTexture, makeMapMaterial } from './map-materials.js';
+/**
+ * Prototype 1 Pure3D Entity & Asset Shelf Viewer
+ * Full 4-Category Catalog, 3D Mesh Inspection, Skeleton_2 Bind Pose & GPU Animation Playback
+ */
 
-const CAT_ICONS = {
-  powers: '⚡',
-  vehicles: '🚗',
-  characters: '🧟',
-  pedestrians: '🚶',
-  props: '🏢'
-};
+let shelfInitialized = false;
+let currentShelfData = null;
+let currentCategory = 'all';
+let currentEntity = null;
+let currentShape = null;
 
-const CATEGORIES = [
-  { id: 'powers', name: '主角形态与生化武装', icon: '⚡', desc: 'Alex Mercer 原型体、利爪、刀锋、重锤、充能装甲、地刺与军方/特工伪装全形态' },
-  { id: 'vehicles', name: '载具与重装武备系统', icon: '🚗', desc: 'M1A2 艾布拉姆斯主战坦克、黑鹰直升机、阿帕奇武装直升机、装甲运兵车、警车与民用车系' },
-  { id: 'characters', name: '剧情角色、变异体与守望军团', icon: '🧟', desc: '达娜·墨瑟、伊丽莎白·格林、克罗斯队长、超级士兵、猎手、九头蛇、至尊猎手及黑色守望军团' },
-  { id: 'pedestrians', name: '曼哈顿市民与路人 NPC', icon: '🚶', desc: '商务西装、大衣冬装、休闲便服各年龄段男女市民及初期轻度感染市民' },
-  { id: 'props', name: '曼哈顿环境与可破坏道具', icon: '🏢', desc: '屋顶水塔、大型变压器、空调外机、路障、消防栓、垃圾箱与核动力航母等城市动态道具' }
-];
+let activeBones = [];
+let activeSkeleton = null;
+let activeMixer = null;
+let activeAction = null;
+let currentAnimations = [];
+let currentAnimIdx = -1;
+let currentAnimTrack = null;
+let isPlayingAnim = true;
+let animClock = new THREE.Clock();
+let boneLinesMesh = null;
+let bonePointsMesh = null;
+let boneLinePairs = [];
+let renderedMeshList = [];
+let showSkeleton = false;
 
-const THUMB_CACHE = new Map();
-
-// IndexedDB persistence for 1:1 snapshots
 const DB_NAME = 'PrototypeEntitySnapshotsDB';
-const DB_VERSION = 1;
 const STORE_NAME = 'snapshots';
+const THUMB_CACHE = new Map();
 
 function openSnapshotDB() {
   return new Promise((resolve) => {
-    if (typeof window === 'undefined' || !window.indexedDB) {
-      resolve(null);
-      return;
-    }
-    try {
-      const req = window.indexedDB.open(DB_NAME, DB_VERSION);
-      req.onupgradeneeded = (e) => {
-        const db = e.target.result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-        }
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => {
-        console.warn('IndexedDB open error:', req.error);
-        resolve(null);
-      };
-    } catch (e) {
-      console.warn('IndexedDB init exception:', e);
-      resolve(null);
-    }
+    if (!window.indexedDB) return resolve(null);
+    const req = window.indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
   });
 }
 
-async function loadAllCachedSnapshots() {
+async function getStoredSnapshot(id) {
+  if (THUMB_CACHE.has(id)) return THUMB_CACHE.get(id);
   const db = await openSnapshotDB();
-  if (!db) return 0;
+  if (!db) return null;
   return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.getAll();
-      req.onsuccess = () => {
-        const records = req.result || [];
-        for (const rec of records) {
-          if (rec.id && rec.dataUrl) {
-            THUMB_CACHE.set(rec.id, rec.dataUrl);
-          }
-        }
-        resolve(records.length);
-      };
-      req.onerror = () => resolve(0);
-    } catch (e) {
-      console.warn('IndexedDB read error:', e);
-      resolve(0);
-    }
+    const tx = db.transaction([STORE_NAME], 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const req = store.get(id);
+    req.onsuccess = () => {
+      if (req.result && req.result.dataUrl) {
+        THUMB_CACHE.set(id, req.result.dataUrl);
+        resolve(req.result.dataUrl);
+      } else {
+        resolve(null);
+      }
+    };
+    req.onerror = () => resolve(null);
   });
 }
 
@@ -79,425 +67,180 @@ async function persistSnapshot(id, dataUrl) {
   THUMB_CACHE.set(id, dataUrl);
   const db = await openSnapshotDB();
   if (!db) return;
-  try {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
+  return new Promise((resolve) => {
+    const tx = db.transaction([STORE_NAME], 'readwrite');
     const store = tx.objectStore(STORE_NAME);
-    store.put({ id, dataUrl, time: Date.now() });
-  } catch (e) {
-    console.warn('IndexedDB write error:', e);
-  }
+    store.put({ id, dataUrl, updated: Date.now() });
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => resolve(false);
+  });
 }
 
-async function clearAllSnapshotsDB() {
-  THUMB_CACHE.clear();
-  const db = await openSnapshotDB();
-  if (!db) return;
-  try {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
-    store.clear();
-  } catch (e) {
-    console.warn('IndexedDB clear error:', e);
-  }
-}
+export function initEntityShelf({
+  container,
+  viewerScene,
+  viewerCamera,
+  viewerControls,
+  viewerRenderer,
+  onSelectEntity,
+  onStatus,
+  makeMapTexture,
+  makeMapMaterial
+}) {
+  if (shelfInitialized) return;
+  shelfInitialized = true;
 
-function floats(encoded, Type, size) {
-  if (!encoded) return new Type(0);
-  const raw = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
-  const view = new DataView(raw.buffer);
-  const count = Math.floor(raw.length / size);
-  const values = new Type(count);
-  for (let i = 0; i < count; i++) {
-    values[i] = size === 4 ? view.getFloat32(i * size, true) : view.getUint16(i * size, true);
-  }
-  return values;
-}
-
-export function createEntityShelf({ scene, camera, controls, renderer, onStatus, onSelectEntity }) {
-  let activeDrawerCategory = 'all';
-  let entityData = null;
-  let currentEntity = null;
-  let currentShape = null;
-  
+  const shelfContainer = document.getElementById('entity-shelf-container');
   const entityGroup = new THREE.Group();
-  entityGroup.name = 'Entity Viewer Object';
-  scene.add(entityGroup);
-
   const skeletonGroup = new THREE.Group();
-  skeletonGroup.name = 'Skeleton Lines';
-  scene.add(skeletonGroup);
+  skeletonGroup.renderOrder = 999;
+  viewerScene.add(entityGroup);
+  viewerScene.add(skeletonGroup);
 
-  let renderedMeshList = [];
-  let currentAnimations = [];
-  let currentAnimIdx = -1;
-  let currentAnimTrack = null;
-  let isPlayingAnim = false;
-  let animTime = 0;
-  let showSkeleton = false;
-  let focusMode = 'entity';
+  const scene = viewerScene;
+  const camera = viewerCamera;
+  const controls = viewerControls;
+  const renderer = viewerRenderer;
 
-  // Active Three.js bones & Skeleton for real GPU skinned mesh animation
-  let activeBones = [];
-  let activeSkeleton = null;
-  let boneLinesMesh = null;
-  let bonePointsMesh = null;
-  let boneLinePairs = [];
+  let allEntities = [];
 
-  // Batch snapshot state
-  let isBatchScanning = false;
-
-  // Offscreen 1:1 renderer for high-res square 45-degree snapshots (256x256)
-  const offCanvas = document.createElement('canvas');
-  offCanvas.width = 256;
-  offCanvas.height = 256;
-  let offRenderer = null;
-  try {
-    offRenderer = new THREE.WebGLRenderer({
-      canvas: offCanvas,
-      antialias: true,
-      alpha: true,
-      preserveDrawingBuffer: true
-    });
-    offRenderer.setSize(256, 256);
-  } catch (e) {
-    console.warn('Offscreen renderer unavailable:', e);
-  }
-
-  async function loadCatalog(artPath) {
-    onStatus('正在从 art.rcf 读取五大分类实体清单…');
+  // 1. Fetch Catalog
+  async function loadCatalog() {
     try {
-      await loadAllCachedSnapshots();
-
-      const resp = await fetch(`/api/entities?path=${encodeURIComponent(artPath || '')}`);
+      const artPath = document.getElementById('map-shared')?.value || '';
+      const params = new URLSearchParams(artPath ? { path: artPath } : {});
+      const resp = await fetch(`/api/entity_catalog?${params}`);
       const data = await resp.json();
       if (data.error) {
-        onStatus('读取实体错误：' + data.error);
+        onStatus('加载实体清单失败：' + data.error);
         return;
       }
-      entityData = data;
-      renderCounts(data.counts);
-      updateStatsBadge();
+      currentShelfData = data;
+      allEntities = data.categories.flatMap(c => c.items);
+      renderCategories(data.categories);
       renderGrid();
-      onStatus(`已索引五大分类共 ${data.total_entities} 个实体 (已恢复 ${THUMB_CACHE.size} 个持久化快照)`);
-    } catch (err) {
-      onStatus('请求实体清单失败：' + err.message);
-    }
-  }
-
-  function renderCounts(counts) {
-    let total = 0;
-    for (const [cat, count] of Object.entries(counts || {})) {
-      total += count;
-      const el = document.getElementById(`count-${cat}`);
-      if (el) el.textContent = count;
-      const secBadge = document.getElementById(`sec-badge-${cat}`);
-      if (secBadge) secBadge.textContent = `${count} 款`;
-    }
-    const countAll = document.getElementById('count-all');
-    if (countAll) countAll.textContent = total;
-
-    const toggleCount = document.getElementById('toggle-count');
-    if (toggleCount) {
-      toggleCount.textContent = total;
+      updateStatsBadge();
+    } catch (e) {
+      onStatus('实体清单请求异常：' + e.message);
     }
   }
 
   function updateStatsBadge() {
-    const badge = document.getElementById('snapshot-stats-badge');
-    if (!badge || !entityData) return;
-    const total = entityData.total_entities || 0;
-    const cached = THUMB_CACHE.size;
-    badge.textContent = `已缓存: ${cached} / ${total}`;
-    if (cached >= total && total > 0) {
-      badge.style.color = '#4ade80';
-      badge.style.borderColor = '#22c55e';
-    } else {
-      badge.style.color = '#94a3b8';
-      badge.style.borderColor = '#334155';
+    const badge = document.getElementById('shelf-stats-badge');
+    if (!badge || !currentShelfData) return;
+    const count = currentShelfData.total_items || allEntities.length;
+    const cachedCount = THUMB_CACHE.size;
+    badge.innerHTML = `已归档 <b>${count}</b> 款实体 · 快照 <b>${cachedCount}/${count}</b>`;
+  }
+
+  function renderCategories(categories) {
+    const bar = document.getElementById('entity-category-tabs');
+    if (!bar) return;
+    bar.innerHTML = '';
+
+    const allBtn = document.createElement('button');
+    allBtn.className = 'shelf-tab active';
+    allBtn.dataset.cat = 'all';
+    allBtn.innerHTML = `🌟 全部 <span class="tab-count">${allEntities.length}</span>`;
+    allBtn.onclick = () => switchCategory('all');
+    bar.appendChild(allBtn);
+
+    for (const cat of categories) {
+      const btn = document.createElement('button');
+      btn.className = 'shelf-tab';
+      btn.dataset.cat = cat.id;
+      btn.innerHTML = `${cat.icon} ${cat.name} <span class="tab-count">${cat.count}</span>`;
+      btn.onclick = () => switchCategory(cat.id);
+      bar.appendChild(btn);
     }
   }
 
-  function captureCameraForBounds(bounds) {
-    const center = bounds.getCenter(new THREE.Vector3());
-    const boxSize = bounds.getSize(new THREE.Vector3());
-    const maxDim = Math.max(boxSize.x, boxSize.y, boxSize.z) || 2.0;
-
-    const snapCam = new THREE.PerspectiveCamera(45, 1.0, 0.01, 2000);
-    const dist = maxDim * 1.5;
-    snapCam.position.set(center.x + dist * 0.72, center.y + dist * 0.55, center.z + dist * 0.72);
-    snapCam.lookAt(center);
-    return snapCam;
-  }
-
-  function captureCurrentEntitySnapshot() {
-    if (!offRenderer || !entityGroup.children.length) return null;
-    try {
-      const bounds = new THREE.Box3().setFromObject(entityGroup);
-      const snapCam = captureCameraForBounds(bounds);
-
-      const snapScene = new THREE.Scene();
-      snapScene.background = null;
-      snapScene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.6));
-      const light = new THREE.DirectionalLight(0xffffff, 1.8);
-      light.position.set(4, 7, 5);
-      snapScene.add(light);
-
-      const snapGroup = entityGroup.clone(true);
-      snapScene.add(snapGroup);
-
-      offRenderer.render(snapScene, snapCam);
-      const dataUrl = offCanvas.toDataURL('image/webp', 0.85);
-
-      snapGroup.traverse(c => {
-        if (c.geometry) c.geometry.dispose();
-      });
-
-      return dataUrl;
-    } catch (e) {
-      console.warn('Snapshot capture failed:', e);
-      return null;
-    }
-  }
-
-  async function generateSnapshotForEntity(item, artPath) {
-    if (!offRenderer) return null;
-    try {
-      const targetShape = (item.category === 'props' ? (item.shapes?.[0] || item.id) : '');
-      const params = new URLSearchParams({
-        path: artPath || '',
-        entry: item.entry_path,
-        shape: targetShape
-      });
-      const resp = await fetch(`/api/entity_mesh?${params}`);
-      const data = await resp.json();
-      if (data.error || !data.meshes || !data.meshes.length) return null;
-
-      const textures = new Map();
-      for (const desc of data.textures || []) {
-        try {
-          textures.set(desc.key, makeMapTexture(desc));
-        } catch (e) {
-          console.warn('Texture parse failed in snap:', desc.key, e);
-        }
-      }
-
-      const snapScene = new THREE.Scene();
-      snapScene.background = null;
-      snapScene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.6));
-      const dirLight = new THREE.DirectionalLight(0xffffff, 1.8);
-      dirLight.position.set(4, 7, 5);
-      snapScene.add(dirLight);
-
-      const snapGroup = new THREE.Group();
-      snapScene.add(snapGroup);
-
-      const bounds = new THREE.Box3();
-      const createdGeoms = [];
-      const createdMats = [];
-
-      for (const mesh of data.meshes) {
-        const positions = floats(mesh.positions, Float32Array, 4);
-        const indices = floats(mesh.indices, Uint16Array, 2);
-        const uv = mesh.uv ? floats(mesh.uv, Float32Array, 4) : new Float32Array(mesh.vertex_count * 2);
-
-        if (positions.length < 3 || indices.length < 3) continue;
-
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-        geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-        geometry.computeVertexNormals();
-
-        const tex = textures.get(mesh.texture_key);
-        const material = makeMapMaterial(tex, null, false);
-        const rendered = new THREE.Mesh(geometry, material);
-        snapGroup.add(rendered);
-
-        geometry.computeBoundingBox();
-        bounds.union(geometry.boundingBox);
-
-        createdGeoms.push(geometry);
-        createdMats.push(material);
-      }
-
-      if (!snapGroup.children.length) return null;
-
-      const snapCam = captureCameraForBounds(bounds);
-      offRenderer.render(snapScene, snapCam);
-      const dataUrl = offCanvas.toDataURL('image/webp', 0.85);
-
-      createdGeoms.forEach(g => g.dispose());
-      createdMats.forEach(m => m.dispose());
-      textures.forEach(t => t.dispose());
-
-      return dataUrl;
-    } catch (e) {
-      console.warn('Error in generateSnapshotForEntity:', item.id, e);
-      return null;
-    }
-  }
-
-  function updateCardThumbDOM(id, dataUrl) {
-    document.querySelectorAll(`.entity-card[data-id="${id}"] .card-preview-thumb`).forEach(thumb => {
-      thumb.style.backgroundImage = `url(${dataUrl})`;
-      thumb.style.backgroundSize = 'contain';
-      thumb.style.backgroundPosition = 'center';
-      thumb.style.backgroundRepeat = 'no-repeat';
-      const isoBox = thumb.querySelector('.iso-box');
-      const catIcon = thumb.querySelector('.cat-icon');
-      if (isoBox) isoBox.style.display = 'none';
-      if (catIcon) catIcon.style.display = 'none';
+  function switchCategory(catId) {
+    currentCategory = catId;
+    document.querySelectorAll('.shelf-tab').forEach(b => {
+      b.classList.toggle('active', b.dataset.cat === catId);
     });
+    renderGrid();
+  }
+
+  function getCategoryColor(catId) {
+    switch (catId) {
+      case 'powers': return '#ef4444';
+      case 'vehicles': return '#3b82f6';
+      case 'characters': return '#10b981';
+      case 'pedestrians': return '#f59e0b';
+      case 'props': return '#8b5cf6';
+      default: return '#6b7280';
+    }
   }
 
   function renderCard(item, isDrawer = false) {
     const card = document.createElement('div');
     card.className = `entity-card ${currentEntity?.id === item.id ? 'active' : ''}`;
     card.dataset.id = item.id;
-    card.dataset.cat = item.category;
-    
-    const icon = CAT_ICONS[item.category] || '📦';
-    const shapeCount = item.shape_count || item.geometry_count || 1;
-    const jointCount = item.total_joints || (item.skeleton_count > 0 ? (item.skeleton_count * 12) : 0);
-    const animCount = item.animation_count || 0;
+    card.title = `${item.name} (${item.entry_path})\n分类: ${item.category}\n点击进入 3D 骨骼与网格检视`;
 
-    const cachedThumb = THUMB_CACHE.get(item.id);
+    const catColor = getCategoryColor(item.category);
 
     card.innerHTML = `
-      <div class="card-preview-thumb" style="${cachedThumb ? `background-image:url(${cachedThumb}); background-size:contain; background-position:center; background-repeat:no-repeat;` : ''}">
-        ${!cachedThumb ? `
-          <div class="iso-box" style="${isDrawer ? 'width:32px; height:32px;' : ''}"></div>
-          <span class="cat-icon" style="${isDrawer ? 'font-size:22px;' : ''}">${icon}</span>
-        ` : ''}
+      <div class="entity-thumb-wrapper" style="border-top: 2px solid ${catColor};">
+        <div class="entity-thumb-placeholder" id="thumb-ph-${item.id}">
+          <span style="font-size: 26px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));">${item.icon || '📦'}</span>
+        </div>
+        <img class="entity-thumb-img" id="thumb-img-${item.id}" alt="${item.name}" style="display:none;" />
+        <span class="entity-badge" style="background:${catColor}cc;">${item.category}</span>
+        ${item.shapes ? `<span class="entity-shapes-tag">${item.shapes.length} 形态</span>` : ''}
       </div>
-      <div class="card-title" title="${item.name}">${item.name}</div>
-      <div class="card-meta">
-        <span class="card-badge geom" title="网格/形态数量">🧊 ${shapeCount}</span>
-        ${jointCount > 0 ? `<span class="card-badge skel" title="骨骼关节数">🦴 ${jointCount}</span>` : ''}
-        ${animCount > 0 ? `<span class="card-badge anim" title="动画片段">🎬 ${animCount}</span>` : ''}
+      <div class="entity-meta">
+        <div class="entity-title">${item.name}</div>
+        <div class="entity-sub">${item.id}</div>
       </div>
     `;
 
+    getStoredSnapshot(item.id).then(dataUrl => {
+      if (dataUrl) {
+        const img = card.querySelector(`#thumb-img-${item.id}`);
+        const ph = card.querySelector(`#thumb-ph-${item.id}`);
+        if (img && ph) {
+          img.src = dataUrl;
+          img.style.display = 'block';
+          ph.style.display = 'none';
+        }
+      }
+    });
+
     card.onclick = () => {
-      focusMode = 'entity';
       selectEntity(item);
     };
+
     return card;
   }
 
   function renderGrid() {
-    if (!entityData) return;
+    const grid = document.getElementById('entity-grid-items');
+    if (!grid) return;
+    grid.innerHTML = '';
 
-    const searchFull = (document.getElementById('entity-search-full')?.value || '').trim().toLowerCase();
-    const searchDrawer = (document.getElementById('entity-search-drawer')?.value || '').trim().toLowerCase();
+    const filtered = currentCategory === 'all'
+      ? allEntities
+      : allEntities.filter(e => e.category === currentCategory);
 
-    // 1. Populate Fullscreen Scrollable Groups
-    for (const cat of CATEGORIES) {
-      const gridEl = document.getElementById(`grid-${cat.id}`);
-      const sectionEl = document.getElementById(`entity-group-${cat.id}`);
-      const badgeEl = document.getElementById(`sec-badge-${cat.id}`);
-      if (!gridEl || !sectionEl) continue;
-
-      gridEl.innerHTML = '';
-      const items = (entityData.categories && entityData.categories[cat.id]) || [];
-      const filtered = items.filter(item => 
-        !searchFull || 
-        item.name.toLowerCase().includes(searchFull) || 
-        item.id.toLowerCase().includes(searchFull)
-      );
-
-      if (filtered.length === 0) {
-        sectionEl.style.display = searchFull ? 'none' : 'block';
-        if (!searchFull) {
-          gridEl.innerHTML = `<div style="grid-column:1/-1; padding:20px; text-align:center; color:#6b7280; font-size:12px;">暂无实体</div>`;
-        }
-      } else {
-        sectionEl.style.display = 'block';
-        if (badgeEl) badgeEl.textContent = `${filtered.length} 款`;
-        for (const item of filtered) {
-          gridEl.appendChild(renderCard(item, false));
-        }
-      }
+    if (filtered.length === 0) {
+      grid.innerHTML = `<div style="grid-column: 1/-1; padding: 40px; text-align: center; color: #94a3b8; font-size: 13px;">当前分类暂无实体项</div>`;
+      return;
     }
 
-    // 2. Populate Right Drawer Grid
-    const gridDrawer = document.getElementById('entity-grid-drawer');
-    if (gridDrawer) {
-      gridDrawer.innerHTML = '';
-      
-      const catsToRender = (activeDrawerCategory === 'all') 
-        ? CATEGORIES 
-        : CATEGORIES.filter(c => c.id === activeDrawerCategory);
-
-      let totalDrawerMatches = 0;
-
-      for (const cat of catsToRender) {
-        const items = (entityData.categories && entityData.categories[cat.id]) || [];
-        const filtered = items.filter(item => 
-          !searchDrawer || 
-          item.name.toLowerCase().includes(searchDrawer) || 
-          item.id.toLowerCase().includes(searchDrawer)
-        );
-
-        if (!filtered.length) continue;
-        totalDrawerMatches += filtered.length;
-
-        if (activeDrawerCategory === 'all') {
-          const header = document.createElement('div');
-          header.style.gridColumn = '1 / -1';
-          header.style.fontSize = '11px';
-          header.style.fontWeight = '600';
-          header.style.color = '#7fd4ff';
-          header.style.background = '#182232';
-          header.style.padding = '5px 8px';
-          header.style.borderRadius = '4px';
-          header.style.borderLeft = '3px solid #3b82f6';
-          header.style.marginTop = '6px';
-          header.style.display = 'flex';
-          header.style.justifyContent = 'space-between';
-          header.innerHTML = `<span>${cat.icon} ${cat.name}</span><span style="color:#94a3b8; font-size:10px;">${filtered.length} 款</span>`;
-          gridDrawer.appendChild(header);
-        }
-
-        for (const item of filtered) {
-          gridDrawer.appendChild(renderCard(item, true));
-        }
-      }
-
-      if (totalDrawerMatches === 0) {
-        gridDrawer.innerHTML = `<div style="grid-column:1/-1; padding:30px; text-align:center; color:#6b7280; font-size:12px;">无匹配项</div>`;
-      }
+    for (const item of filtered) {
+      grid.appendChild(renderCard(item));
     }
   }
 
-  // Generate fallback proximity skin weights for unweighted submeshes
-  function generateProximitySkinWeights(positions, bones) {
-    const count = positions.length / 3;
-    const sIndices = new Uint16Array(count * 4);
-    const sWeights = new Float32Array(count * 4);
-    const v = new THREE.Vector3();
-
-    const boneWorldPositions = bones.map(b => {
-      const p = new THREE.Vector3();
-      b.getWorldPosition(p);
-      return p;
-    });
-
-    for (let i = 0; i < count; i++) {
-      v.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
-      let bestBone = 0;
-      let bestDist = Infinity;
-      for (let bi = 0; bi < bones.length; bi++) {
-        const d = v.distanceTo(boneWorldPositions[bi]);
-        if (d < bestDist) {
-          bestDist = d;
-          bestBone = bi;
-        }
-      }
-      sIndices[i * 4] = bestBone;
-      sWeights[i * 4] = 1.0;
-    }
-    return { sIndices, sWeights };
+  function floats(b64, type = Float32Array, stride = 4) {
+    if (!b64) return new type(0);
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new type(bytes.buffer);
   }
 
   // Build Real Three.js Bone Hierarchy & Skeleton Instance
@@ -520,6 +263,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     const joints = skel.joints || [];
     if (!joints.length) return;
 
+    // 1. Instantiate THREE.Bone instances with decomposed local TRS
     const bones = [];
     for (let i = 0; i < joints.length; i++) {
       const j = joints[i];
@@ -543,6 +287,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       bones.push(bone);
     }
 
+    // 2. Build Tree Hierarchy
     for (let i = 0; i < joints.length; i++) {
       const pIdx = joints[i].parent;
       if (pIdx >= 0 && pIdx < bones.length && pIdx !== i) {
@@ -553,11 +298,16 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       }
     }
 
-    activeBones = bones;
-    activeSkeleton = new THREE.Skeleton(bones);
-    activeSkeleton.calculateInverses();
+    // 3. Update world matrices before computing boneInverses
+    skeletonGroup.updateMatrixWorld(true);
 
-    // Create Dynamic Line Segments & Glowing Joint Nodes
+    // 4. Compute correct inverse bind matrices
+    const boneInverses = bones.map(bone => bone.matrixWorld.clone().invert());
+
+    activeBones = bones;
+    activeSkeleton = new THREE.Skeleton(bones, boneInverses);
+
+    // Create Dynamic Line Segments & Glowing Joint Nodes for Wireframe Debug
     if (boneLinePairs.length > 0) {
       const linePositions = new Float32Array(boneLinePairs.length * 6);
       const geom = new THREE.BufferGeometry();
@@ -631,229 +381,49 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
   }
 
-  function findBone(bones, keywords) {
-    for (const b of bones) {
-      const name = b.userData.name;
-      if (keywords.some(k => name.includes(k))) return b;
-    }
-    return null;
-  }
+  // Play animation clip via Three.js AnimationMixer
+  function playAnimationClip(animTrack) {
+    if (!animTrack || !activeBones.length) return;
 
-  // Apply Real Skeletal Kinematic Animation to Bones
-  function applySkeletalAnimation(bones, track, t) {
-    if (!bones || !bones.length) return;
-
-    const trackName = (track?.name || '').toLowerCase();
-    const isLocomotion = /walk|run|sprint|jog|loco|move|step|trot|charge/.test(trackName);
-    const isAttack = /attack|slash|punch|strike|combo|smash|whip|blade|claw|hit_/.test(trackName);
-    const isShooting = /shoot|fire|aim|rifle|pistol|gun|launcher|recoil/.test(trackName);
-    const isJump = /jump|fall|land|air|dive|vault/.test(trackName);
-    const isHit = /hit|pain|react|stagger|death|die|stun|knock/.test(trackName);
-
-    const pelvis = findBone(bones, ['pelvis', 'character_root', 'motion_root', 'root']);
-    const spine = findBone(bones, ['spine_1', 'spine_2', 'spine', 'chest', 'torso']);
-    const head = findBone(bones, ['head', 'neck']);
-
-    const shoulderL = findBone(bones, ['shoulder_l', 'arm_l', 'upperarm_l', 'clavicle_l']);
-    const elbowL = findBone(bones, ['elbow_l', 'forearm_l']);
-    const shoulderR = findBone(bones, ['shoulder_r', 'arm_r', 'upperarm_r', 'clavicle_r']);
-    const elbowR = findBone(bones, ['elbow_r', 'forearm_r']);
-
-    const hipL = findBone(bones, ['hip_l', 'thigh_l', 'upperleg_l']);
-    const kneeL = findBone(bones, ['knee_l', 'calf_l', 'lowerleg_l']);
-    const hipR = findBone(bones, ['hip_r', 'thigh_r', 'upperleg_r']);
-    const kneeR = findBone(bones, ['knee_r', 'calf_r', 'lowerleg_r']);
-
-    // Check Vehicle Bones
-    const rotorMain = findBone(bones, ['rotor_main', 'main_rotor', 'rotor']);
-    const rotorTail = findBone(bones, ['rotor_tail', 'tail_rotor']);
-    const turret = findBone(bones, ['turret', 'gun_turret']);
-
-    if (rotorMain) {
-      rotorMain.rotation.y = (t * 30.0) % (Math.PI * 2);
-    }
-    if (rotorTail) {
-      rotorTail.rotation.x = (t * 45.0) % (Math.PI * 2);
-    }
-    if (turret) {
-      turret.rotation.y = Math.sin(t * 0.8) * 0.6;
+    if (activeMixer) {
+      activeMixer.stopAllAction();
+      activeMixer.uncacheRoot(entityGroup);
     }
 
-    if (isLocomotion) {
-      // Full Humanoid Locomotion Bipedal Walk / Run Kinematics
-      const speed = /run|sprint|charge/.test(trackName) ? 8.5 : 4.5;
-      const phase = t * speed;
+    activeMixer = new THREE.AnimationMixer(entityGroup);
+    const tracks = [];
 
-      if (pelvis) {
-        pelvis.position.y = pelvis.userData.origPos.y + Math.abs(Math.sin(phase)) * 0.04 - 0.02;
-      }
-      if (hipL) {
-        hipL.quaternion.copy(hipL.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(phase) * 0.55, 0, 0))
-        );
-      }
-      if (kneeL) {
-        const kBend = Math.max(0, -Math.sin(phase)) * 0.85 + 0.1;
-        kneeL.quaternion.copy(kneeL.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(kBend, 0, 0))
-        );
-      }
-      if (hipR) {
-        hipR.quaternion.copy(hipR.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.sin(phase) * 0.55, 0, 0))
-        );
-      }
-      if (kneeR) {
-        const kBend = Math.max(0, Math.sin(phase)) * 0.85 + 0.1;
-        kneeR.quaternion.copy(kneeR.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(kBend, 0, 0))
-        );
-      }
+    // Map each group to bone name
+    const boneMap = new Map();
+    for (const b of activeBones) {
+      boneMap.set(b.name, b);
+      boneMap.set(b.name.toLowerCase(), b);
+    }
 
-      // Opposing Arm Swing
-      if (shoulderL) {
-        shoulderL.quaternion.copy(shoulderL.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.sin(phase) * 0.5, 0, Math.sin(phase) * 0.15))
-        );
-      }
-      if (elbowL) {
-        elbowL.quaternion.copy(elbowL.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.4 - Math.max(0, -Math.sin(phase)) * 0.4, 0, 0))
-        );
-      }
-      if (shoulderR) {
-        shoulderR.quaternion.copy(shoulderR.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(phase) * 0.5, 0, -Math.sin(phase) * 0.15))
-        );
-      }
-      if (elbowR) {
-        elbowR.quaternion.copy(elbowR.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.4 - Math.max(0, Math.sin(phase)) * 0.4, 0, 0))
-        );
-      }
-      if (spine) {
-        spine.quaternion.copy(spine.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(0.06, Math.sin(phase) * 0.08, 0))
-        );
-      }
-      if (head) {
-        head.quaternion.copy(head.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.04, -Math.sin(phase) * 0.04, 0))
-        );
-      }
+    for (const g of animTrack.groups || []) {
+      const b = boneMap.get(g.name) || boneMap.get(g.name.toLowerCase());
+      if (!b || !g.rot) continue;
 
-    } else if (isAttack) {
-      // Dynamic Combat Attack Slash / Strike Kinematics
-      const atkPhase = (t * 3.2) % (Math.PI * 2);
-      const windup = Math.sin(atkPhase);
+      const times = Float32Array.from(g.rot.times);
+      const values = Float32Array.from(g.rot.values.flat());
 
-      if (spine) {
-        spine.quaternion.copy(spine.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(windup * 0.15, windup * 0.35, 0))
+      if (times.length > 0 && values.length === times.length * 4) {
+        tracks.push(
+          new THREE.QuaternionKeyframeTrack(
+            `${b.name}.quaternion`,
+            times,
+            values
+          )
         );
       }
-      if (shoulderR) {
-        shoulderR.quaternion.copy(shoulderR.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(windup * 0.9 - 0.3, windup * 0.4, windup * 0.3))
-        );
-      }
-      if (elbowR) {
-        elbowR.quaternion.copy(elbowR.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.6 - Math.abs(windup) * 0.8, 0, 0))
-        );
-      }
-      if (shoulderL) {
-        shoulderL.quaternion.copy(shoulderL.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-windup * 0.4, 0, 0.3))
-        );
-      }
-      if (hipR) {
-        hipR.quaternion.copy(hipR.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-windup * 0.2, 0, 0))
-        );
-      }
+    }
 
-    } else if (isShooting) {
-      // Tactical Aiming & Recoil Muzzle Impulse
-      const recoil = Math.max(0, Math.sin(t * 8.0)) * 0.15;
-      if (shoulderR) {
-        shoulderR.quaternion.copy(shoulderR.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.7 + recoil, 0.4, 0))
-        );
-      }
-      if (shoulderL) {
-        shoulderL.quaternion.copy(shoulderL.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.6 + recoil * 0.5, -0.4, 0.3))
-        );
-      }
-      if (spine) {
-        spine.quaternion.copy(spine.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(recoil * 0.08, 0, 0))
-        );
-      }
-      if (head) {
-        head.quaternion.copy(head.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.1, 0.2, 0))
-        );
-      }
-
-    } else if (isJump) {
-      // Airborne Acrobatics & Landing Flex
-      const jumpPhase = Math.sin(t * 2.5);
-      if (pelvis) pelvis.position.y = pelvis.userData.origPos.y + jumpPhase * 0.15;
-      if (hipL) hipL.quaternion.copy(hipL.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.4, 0, 0)));
-      if (hipR) hipR.quaternion.copy(hipR.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.4, 0, 0)));
-      if (kneeL) kneeL.quaternion.copy(kneeL.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.8, 0, 0)));
-      if (kneeR) kneeR.quaternion.copy(kneeR.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.8, 0, 0)));
-      if (shoulderL) shoulderL.quaternion.copy(shoulderL.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.8, 0, 0.5)));
-      if (shoulderR) shoulderR.quaternion.copy(shoulderR.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.8, 0, -0.5)));
-
-    } else if (isHit) {
-      // Stagger Impact & Pain Reaction
-      const hitImpulse = Math.sin(t * 4.0) * Math.exp(-((t * 2.0) % 2.0));
-      if (spine) spine.quaternion.copy(spine.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-hitImpulse * 0.3, hitImpulse * 0.2, 0)));
-      if (head) head.quaternion.copy(head.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-hitImpulse * 0.4, 0, 0)));
-      if (shoulderL) shoulderL.quaternion.copy(shoulderL.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-hitImpulse * 0.4, 0, 0.3)));
-      if (shoulderR) shoulderR.quaternion.copy(shoulderR.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-hitImpulse * 0.4, 0, -0.3)));
-
-    } else {
-      // Organic Resting Breathing & Stance Idle
-      const breath = Math.sin(t * 2.4);
-      const sway = Math.sin(t * 1.2);
-
-      if (pelvis) {
-        pelvis.position.y = pelvis.userData.origPos.y + breath * 0.015;
-      }
-      if (spine) {
-        spine.quaternion.copy(spine.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(breath * 0.04, sway * 0.02, 0))
-        );
-      }
-      if (head) {
-        head.quaternion.copy(head.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(t * 1.5) * 0.03, Math.sin(t * 0.9) * 0.08, 0))
-        );
-      }
-      if (shoulderL) {
-        shoulderL.quaternion.copy(shoulderL.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(breath * 0.03, 0, 0.05 + breath * 0.02))
-        );
-      }
-      if (elbowL) {
-        elbowL.quaternion.copy(elbowL.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.35 + breath * 0.02, 0, 0))
-        );
-      }
-      if (shoulderR) {
-        shoulderR.quaternion.copy(shoulderR.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(breath * 0.03, 0, -0.05 - breath * 0.02))
-        );
-      }
-      if (elbowR) {
-        elbowR.quaternion.copy(elbowR.userData.origRot).multiply(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.35 + breath * 0.02, 0, 0))
-        );
-      }
+    if (tracks.length > 0) {
+      const clip = new THREE.AnimationClip(animTrack.name, animTrack.duration, tracks);
+      activeAction = activeMixer.clipAction(clip);
+      activeAction.setLoop(animTrack.cyclic ? THREE.LoopRepeat : THREE.LoopRepeat);
+      activeAction.play();
+      isPlayingAnim = true;
     }
   }
 
@@ -861,9 +431,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     if (!currentAnimations || idx < 0 || idx >= currentAnimations.length) return;
     currentAnimIdx = idx;
     currentAnimTrack = currentAnimations[idx];
-    animTime = 0;
-    isPlayingAnim = true;
-    focusMode = 'animation';
 
     const playBtn = document.getElementById('anim-play-btn');
     if (playBtn) {
@@ -877,7 +444,8 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       if (i === idx) r.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     });
 
-    onStatus(`正在以骨骼运动学播放动作 [${idx + 1}/${currentAnimations.length}]：${currentAnimTrack.name} (${currentAnimTrack.frames} 帧 @ ${currentAnimTrack.fps} fps)`);
+    playAnimationClip(currentAnimTrack);
+    onStatus(`正在播放真实动画 [${idx + 1}/${currentAnimations.length}]：${currentAnimTrack.name} (${currentAnimTrack.frames} 帧 @ ${currentAnimTrack.fps} fps)`);
   }
 
   function updateMeshInspector(meshes, animations, skeletons) {
@@ -891,9 +459,9 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     skelRow.style.borderLeft = '3px solid #fb923c';
     skelRow.innerHTML = `
       <div class="mesh-info">
-        <div class="mesh-name" style="color:#7fd4ff; font-weight:600;">🦴 骨骼线条 (${jointCount} 个关节)</div>
+        <div class="mesh-name" style="color:#7fd4ff; font-weight:600;">🦴 骨骼系统 (${jointCount} 个关节)</div>
       </div>
-      <input type="checkbox" class="mesh-toggle" ${showSkeleton ? 'checked' : ''} id="toggle-skeleton-lines" title="开启/关闭骨骼透视线条 (快捷键 B)" />
+      <input type="checkbox" class="mesh-toggle" ${showSkeleton ? 'checked' : ''} id="toggle-skeleton-lines" title="开启/关闭骨骼线条 (快捷键 B)" />
     `;
     const skelToggle = skelRow.querySelector('#toggle-skeleton-lines');
     if (skelToggle) {
@@ -932,7 +500,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       animHeader.style.justifyContent = 'space-between';
       animHeader.style.alignItems = 'center';
       animHeader.innerHTML = `
-        <span>🎬 骨骼动画片段 (${currentAnimations.length} 个)</span>
+        <span>🎬 动画片段 (${currentAnimations.length} 个)</span>
         <button id="anim-play-btn" class="inspector-btn" style="color:#a78bfa; border-color:#8b5cf6;">▶ 播放 (Space)</button>
       `;
       listEl.appendChild(animHeader);
@@ -945,6 +513,9 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
           isPlayingAnim = !isPlayingAnim;
           playBtn.textContent = isPlayingAnim ? '⏸ 暂停' : '▶ 播放 (Space)';
           playBtn.style.background = isPlayingAnim ? '#4c1d95' : '#1a2230';
+          if (activeAction) {
+            activeAction.paused = !isPlayingAnim;
+          }
         }
       };
 
@@ -952,7 +523,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         const aRow = document.createElement('div');
         aRow.className = 'anim-row';
         aRow.style.cursor = 'pointer';
-        aRow.title = '点击播放此骨骼动作 (上下键快速切换)';
+        aRow.title = '点击播放此真实骨骼动画 (上下键快速切换)';
         aRow.innerHTML = `
           <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:150px;">${anim.name}</span>
           <span style="opacity:0.8;">${anim.frames}f · ${anim.duration}s</span>
@@ -963,7 +534,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         listEl.appendChild(aRow);
       });
 
-      // Auto start first animation
+      // Auto play first animation
       playAnimationIndex(0);
     }
   }
@@ -986,7 +557,10 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       }
     }
     renderedMeshList = [];
-    isPlayingAnim = false;
+    if (activeMixer) {
+      activeMixer.stopAllAction();
+      activeMixer = null;
+    }
 
     try {
       const artPath = document.getElementById('map-shared')?.value || '';
@@ -1038,24 +612,22 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         let rendered = null;
 
         // Bind GPU SkinnedMesh if bones and skeleton exist
-        if (activeSkeleton && activeBones.length > 0) {
-          let sIndices, sWeights;
-          if (mesh.skin_indices && mesh.skin_weights) {
-            sIndices = floats(mesh.skin_indices, Uint16Array, 2);
-            sWeights = floats(mesh.skin_weights, Float32Array, 4);
-          } else {
-            const prox = generateProximitySkinWeights(positions, activeBones);
-            sIndices = prox.sIndices;
-            sWeights = prox.sWeights;
-          }
+        if (activeSkeleton && activeBones.length > 0 && mesh.skin_indices && mesh.skin_weights) {
+          const sIndices = floats(mesh.skin_indices, Uint16Array, 2);
+          const sWeights = floats(mesh.skin_weights, Float32Array, 4);
 
           geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(sIndices, 4));
           geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sWeights, 4));
 
           const skinnedMesh = new THREE.SkinnedMesh(geometry, material);
-          skinnedMesh.bind(activeSkeleton);
-          rendered = skinnedMesh;
           entityGroup.add(skinnedMesh);
+
+          // Add root bone into mesh hierarchy & bind
+          skinnedMesh.add(activeBones[0]);
+          skinnedMesh.updateMatrixWorld(true);
+          skinnedMesh.bind(activeSkeleton, skinnedMesh.matrixWorld);
+
+          rendered = skinnedMesh;
         } else {
           rendered = new THREE.Mesh(geometry, material);
           entityGroup.add(rendered);
@@ -1098,289 +670,102 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
               updateCardThumbDOM(item.id, snap);
               updateStatsBadge();
             }
-          }, 80);
+          }, 200);
         }
 
-        const animInfo = data.animations?.length ? ` · ${data.animations.length} 个骨骼动作` : '';
-        onStatus(`已呈现 3D 实体：${item.name} (${data.meshes.length} 个网格, ${data.textures.length} 张贴图${animInfo})`);
+        onStatus(`已加载实体：${item.name} (${renderedMeshList.length} 个部件，${data.skeletons?.[0]?.joints?.length || 0} 骨骼，${data.animations?.length || 0} 动画)`);
       } else {
-        onStatus(`实体 ${item.name} 结构已解析 (无直接网格数据)`);
-        updateMeshInspector([], data.animations, data.skeletons);
+        onStatus(`实体 ${item.name} 无可见几何体网格`);
       }
-
-    } catch (err) {
-      onStatus('渲染 3D 实体失败：' + err.message);
+    } catch (e) {
+      console.error(e);
+      onStatus('实体网格加载异常：' + e.message);
     }
   }
 
-  // Animation Update loop hook with full skeletal kinematics & GPU skinning
-  function updateAnimation(dt) {
-    if (!isPlayingAnim) return;
-    animTime += dt;
+  function captureCurrentEntitySnapshot() {
+    try {
+      const origSize = new THREE.Vector2();
+      renderer.getSize(origSize);
+      const snapCanvas = document.createElement('canvas');
+      snapCanvas.width = 256;
+      snapCanvas.height = 256;
+      const snapRenderer = new THREE.WebGLRenderer({
+        canvas: snapCanvas,
+        alpha: true,
+        antialias: true,
+        preserveDrawingBuffer: true
+      });
+      snapRenderer.setSize(256, 256);
+      snapRenderer.render(scene, camera);
+      const dataUrl = snapCanvas.toDataURL('image/webp', 0.85);
+      snapRenderer.dispose();
+      return dataUrl;
+    } catch (e) {
+      return null;
+    }
+  }
 
-    if (activeBones.length > 0) {
-      applySkeletalAnimation(activeBones, currentAnimTrack, animTime);
-      for (let i = 0; i < activeBones.length; i++) {
-        activeBones[i].updateMatrixWorld(true);
+  function updateCardThumbDOM(id, dataUrl) {
+    document.querySelectorAll(`.entity-card[data-id="${id}"]`).forEach(card => {
+      const img = card.querySelector(`#thumb-img-${id}`);
+      const ph = card.querySelector(`#thumb-ph-${id}`);
+      if (img && ph) {
+        img.src = dataUrl;
+        img.style.display = 'block';
+        ph.style.display = 'none';
       }
+    });
+  }
+
+  // Animation render loop hook
+  function tick() {
+    requestAnimationFrame(tick);
+    const delta = animClock.getDelta();
+
+    if (activeMixer && isPlayingAnim) {
+      activeMixer.update(delta);
       if (activeSkeleton) {
         activeSkeleton.update();
       }
+    }
+
+    if (showSkeleton) {
       updateSkeletonVisualizerPositions();
     }
   }
+  tick();
 
-  // Batch Auto-Capture & Persistent Cache System
-  async function startBatchSnapshot() {
-    if (!entityData) return;
-    if (isBatchScanning) {
-      isBatchScanning = false;
-      updateBatchUI();
-      onStatus('已停止自动快照扫描');
-      return;
-    }
-
-    isBatchScanning = true;
-    updateBatchUI();
-
-    const allItems = [];
-    for (const cat of CATEGORIES) {
-      const items = entityData.categories?.[cat.id] || [];
-      for (const item of items) {
-        allItems.push(item);
-      }
-    }
-
-    const total = allItems.length;
-    let processed = 0;
-
-    const artPath = document.getElementById('map-shared')?.value || '';
-    onStatus(`开始批量拍摄全部 ${total} 个实体的 1:1 3D 高清快照…`);
-
-    for (let i = 0; i < total; i++) {
-      if (!isBatchScanning) break;
-      const item = allItems[i];
-      processed++;
-
-      if (THUMB_CACHE.has(item.id)) {
-        updateBatchProgress(processed, total, item.name, true);
-        continue;
-      }
-
-      updateBatchProgress(processed, total, item.name, false);
-
-      try {
-        const snap = await generateSnapshotForEntity(item, artPath);
-        if (snap) {
-          await persistSnapshot(item.id, snap);
-          updateCardThumbDOM(item.id, snap);
-        }
-      } catch (e) {
-        console.warn('Batch snap item error:', item.id, e);
-      }
-
-      updateStatsBadge();
-      await new Promise(r => setTimeout(r, 20));
-    }
-
-    const wasScanning = isBatchScanning;
-    isBatchScanning = false;
-    updateBatchUI();
-    updateStatsBadge();
-
-    if (wasScanning) {
-      onStatus(`🎉 批量快照处理完成！已持久化缓存 ${THUMB_CACHE.size} / ${total} 个实体缩略图`);
-    }
-  }
-
-  function updateBatchUI() {
-    const btn = document.getElementById('batch-snapshot-btn');
-    if (!btn) return;
-    if (isBatchScanning) {
-      btn.classList.add('running');
-      btn.innerHTML = `⏹ 停止拍照`;
-      btn.title = '点击停止正在进行的批量拍照';
-    } else {
-      btn.classList.remove('running');
-      btn.innerHTML = `📸 自动拍照并持久缓存`;
-      btn.title = '一键后台轮询生成所有实体的 1:1 3D 高清快照并永久缓存到浏览器';
-    }
-  }
-
-  function updateBatchProgress(current, total, name, isSkipped) {
-    const btn = document.getElementById('batch-snapshot-btn');
-    const pct = Math.round((current / total) * 100);
-    if (btn && isBatchScanning) {
-      btn.innerHTML = `⏹ 停止 (${current}/${total} ${pct}%)`;
-    }
-    const statusMsg = isSkipped 
-      ? `[${current}/${total}] ${name} (已从持久缓存读取)`
-      : `正在拍摄 1:1 快照 [${current}/${total}]: ${name}…`;
-    onStatus(statusMsg);
-  }
-
-  const batchBtn = document.getElementById('batch-snapshot-btn');
-  if (batchBtn) {
-    batchBtn.onclick = () => startBatchSnapshot();
-  }
-
-  const clearBtn = document.getElementById('clear-snapshot-btn');
-  if (clearBtn) {
-    clearBtn.onclick = async () => {
-      if (confirm('确定要清空所有已持久化缓存的实体缩略图吗？')) {
-        if (isBatchScanning) {
-          isBatchScanning = false;
-          updateBatchUI();
-        }
-        await clearAllSnapshotsDB();
-        updateStatsBadge();
-        renderGrid();
-        onStatus('已清空本地持久缓存的实体快照缩略图');
-      }
-    };
-  }
-
-  const showAllBtn = document.getElementById('mesh-all-show');
-  if (showAllBtn) {
-    showAllBtn.onclick = () => {
-      renderedMeshList.forEach(m => { m.threeMesh.visible = true; });
-      document.querySelectorAll('.mesh-toggle').forEach(t => { t.checked = true; });
-    };
-  }
-
-  const hideAllBtn = document.getElementById('mesh-all-hide');
-  if (hideAllBtn) {
-    hideAllBtn.onclick = () => {
-      renderedMeshList.forEach(m => { m.threeMesh.visible = false; });
-      document.querySelectorAll('.mesh-toggle').forEach(t => { t.checked = false; });
-    };
-  }
-
-  // Setup Fullscreen Category Tabs Anchor Scroll
-  document.querySelectorAll('.shelf-header .cat-tab').forEach(tab => {
-    tab.addEventListener('click', (e) => {
-      const btn = e.target.closest('.cat-tab') || tab;
-      document.querySelectorAll('.shelf-header .cat-tab').forEach(t => t.classList.remove('active'));
-      btn.classList.add('active');
-      const cat = btn.dataset.cat;
-      const scrollHost = document.getElementById('entity-shelf-scroll');
-
-      if (cat === 'all') {
-        if (scrollHost) scrollHost.scrollTo({ top: 0, behavior: 'smooth' });
-      } else {
-        const targetSection = document.getElementById(`entity-group-${cat}`);
-        if (targetSection && scrollHost) {
-          const topOffset = targetSection.offsetTop - scrollHost.offsetTop - 10;
-          scrollHost.scrollTo({ top: Math.max(0, topOffset), behavior: 'smooth' });
-        }
-      }
-    });
-  });
-
-  // Setup Scroll Spy on the Shelf Scroll Container
-  const shelfScroll = document.getElementById('entity-shelf-scroll');
-  if (shelfScroll) {
-    shelfScroll.addEventListener('scroll', () => {
-      if (shelfScroll.scrollTop < 60) {
-        document.querySelectorAll('.shelf-header .cat-tab').forEach(t => t.classList.toggle('active', t.dataset.cat === 'all'));
-        return;
-      }
-      for (let i = CATEGORIES.length - 1; i >= 0; i--) {
-        const cat = CATEGORIES[i];
-        const sec = document.getElementById(`entity-group-${cat.id}`);
-        if (sec && sec.style.display !== 'none') {
-          const offset = sec.offsetTop - shelfScroll.offsetTop - 80;
-          if (shelfScroll.scrollTop >= offset) {
-            document.querySelectorAll('.shelf-header .cat-tab').forEach(t => t.classList.toggle('active', t.dataset.cat === cat.id));
-            break;
-          }
-        }
-      }
-    }, { passive: true });
-  }
-
-  // Setup Drawer Category Tabs
-  document.querySelectorAll('.drawer-cat-tab').forEach(tab => {
-    tab.addEventListener('click', (e) => {
-      const btn = e.target.closest('.drawer-cat-tab') || tab;
-      document.querySelectorAll('.drawer-cat-tab').forEach(t => t.classList.remove('active'));
-      btn.classList.add('active');
-      activeDrawerCategory = btn.dataset.cat;
-      renderGrid();
-    });
-  });
-
-  const searchFull = document.getElementById('entity-search-full');
-  if (searchFull) {
-    searchFull.addEventListener('input', () => renderGrid());
-  }
-
-  const searchDrawer = document.getElementById('entity-search-drawer');
-  if (searchDrawer) {
-    searchDrawer.addEventListener('input', () => renderGrid());
-  }
-
-  // Global Keyboard Navigation
+  // Keyboard Shortcuts
   window.addEventListener('keydown', (e) => {
-    if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'w' || e.key === 's') {
+    if (e.code === 'Space') {
       e.preventDefault();
-      const isUp = (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'w');
-
-      if (focusMode === 'animation' && currentAnimations && currentAnimations.length > 0) {
-        let nextIdx = isUp ? (currentAnimIdx - 1) : (currentAnimIdx + 1);
-        if (nextIdx < 0) nextIdx = currentAnimations.length - 1;
-        if (nextIdx >= currentAnimations.length) nextIdx = 0;
-        playAnimationIndex(nextIdx);
-        return;
+      const playBtn = document.getElementById('anim-play-btn');
+      if (playBtn) playBtn.click();
+    } else if (e.code === 'KeyB') {
+      e.preventDefault();
+      const skelToggle = document.getElementById('toggle-skeleton-lines');
+      if (skelToggle) {
+        skelToggle.checked = !skelToggle.checked;
+        showSkeleton = skelToggle.checked;
+        skeletonGroup.visible = showSkeleton;
       }
-
-      if (entityData) {
-        const allItems = [];
-        for (const cat of CATEGORIES) {
-          const items = entityData.categories?.[cat.id] || [];
-          for (const item of items) allItems.push(item);
-        }
-        if (!allItems.length) return;
-        const curIdx = allItems.findIndex(it => it.id === currentEntity?.id);
-        let nextIdx = isUp ? (curIdx - 1) : (curIdx + 1);
-        if (nextIdx < 0) nextIdx = allItems.length - 1;
-        if (nextIdx >= allItems.length) nextIdx = 0;
-        selectEntity(allItems[nextIdx]);
-      }
-    } else if (e.code === 'Space') {
+    } else if (e.code === 'ArrowDown') {
       e.preventDefault();
       if (currentAnimations.length > 0) {
-        if (currentAnimIdx < 0) playAnimationIndex(0);
-        else {
-          isPlayingAnim = !isPlayingAnim;
-          const playBtn = document.getElementById('anim-play-btn');
-          if (playBtn) {
-            playBtn.textContent = isPlayingAnim ? '⏸ 暂停' : '▶ 播放 (Space)';
-            playBtn.style.background = isPlayingAnim ? '#4c1d95' : '#1a2230';
-          }
-        }
+        const nextIdx = (currentAnimIdx + 1) % currentAnimations.length;
+        playAnimationIndex(nextIdx);
       }
-    } else if (e.key === 'b' || e.key === 'B') {
-      showSkeleton = !showSkeleton;
-      skeletonGroup.visible = showSkeleton;
-      const toggle = document.getElementById('toggle-skeleton-lines');
-      if (toggle) toggle.checked = showSkeleton;
-    } else if (e.key === 'r' || e.key === 'R' || e.key === 'Home') {
-      if (currentEntity) selectEntity(currentEntity, currentShape);
+    } else if (e.code === 'ArrowUp') {
+      e.preventDefault();
+      if (currentAnimations.length > 0) {
+        const prevIdx = (currentAnimIdx - 1 + currentAnimations.length) % currentAnimations.length;
+        playAnimationIndex(prevIdx);
+      }
     }
   });
 
-  return {
-    loadCatalog,
-    selectEntity,
-    renderGrid,
-    updateAnimation,
-    startBatchSnapshot,
-    setVisible(visible) {
-      entityGroup.visible = visible;
-      skeletonGroup.visible = visible && showSkeleton;
-    }
-  };
+  loadCatalog();
 }
