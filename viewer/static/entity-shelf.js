@@ -3,7 +3,7 @@
  * Full 5-Category Catalog, 3D Mesh Inspection, Skeleton_2 Bind Pose & Real GPU Animation Playback
  */
 
-import { makeMapTexture, makeMapMaterial } from './map-materials.js';
+import { makeMapTexture, makeMapMaterial } from './map-materials.js?v=20260917_01';
 
 const CAT_ICONS = {
   powers: '⚡',
@@ -161,6 +161,11 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         onStatus('读取实体清单失败：' + data.error);
         return;
       }
+      if (data.categories && typeof data.categories === 'object') {
+        for (const [k, v] of Object.entries(data.categories)) {
+          data[k] = v;
+        }
+      }
       entityData = data;
       renderCounts(data.counts);
       updateStatsBadge();
@@ -176,6 +181,8 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     for (const [cat, count] of Object.entries(counts)) {
       const badge = document.getElementById(`sec-badge-${cat}`);
       if (badge) badge.textContent = `${count} 款`;
+      const countEl = document.getElementById(`count-${cat}`);
+      if (countEl) countEl.textContent = `${count}`;
     }
   }
 
@@ -710,7 +717,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         continue;
       }
 
-      const items = entityData[cat.id] || [];
+      const items = (entityData.categories && entityData.categories[cat.id]) || entityData[cat.id] || [];
       const filtered = items.filter(item => {
         if (!currentSearchQuery) return true;
         const q = currentSearchQuery.toLowerCase();
@@ -741,7 +748,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     for (const cat of CATEGORIES) {
       if (currentCategory !== 'all' && currentCategory !== cat.id) continue;
 
-      const items = entityData[cat.id] || [];
+      const items = (entityData.categories && entityData.categories[cat.id]) || entityData[cat.id] || [];
       const filtered = items.filter(item => {
         if (!currentSearchQuery) return true;
         const q = currentSearchQuery.toLowerCase();
@@ -805,7 +812,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     };
   });
 
-  const searchInput = document.getElementById('entity-search-input');
+  const searchInput = document.getElementById('entity-search-full') || document.getElementById('entity-search-input');
   if (searchInput) {
     searchInput.oninput = (e) => {
       currentSearchQuery = e.target.value.trim();
