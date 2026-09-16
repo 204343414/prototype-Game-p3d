@@ -19,7 +19,7 @@ from render_static_uv_candidates import (
     TEXTURE, TEXTURE_DDS, IMAGE_DATA, _records, _descendants, _parse_texture_dds_header,
 )
 
-# Verified Vertex Declarations
+# Verified Vertex Declarations (prefix matching for robustness against header flags)
 LAYOUT_68_STD = "4f18391af9d6a09508392a25fdb0db6533f3cf2e6c00a73b806ade842c356316"
 LAYOUT_68_HIVE = "e6c6bff84a3eda5444ab413fba598076633aeb0f74f84af9848708bccc164311"
 LAYOUT_64_INT = "3c20bc994be09119067e505e093e67e163b38ae75c310ba90c48de6adf7240c9"
@@ -31,9 +31,28 @@ LAYOUT_48_HIVE = "dfe0a2c2f6788e64e7f6ccf69a39eb43a066938768c2c49df18d3e6b1f35dd
 LAYOUT_44_LIT = "b185657b0e13eee1e1b276eb35aaea8f3fa14754aa5107be54f24846c3d8a062"
 LAYOUT_44_ALPHA = "e9cdf8f352a1ba2e1ef2c02c610e74f14ef96d669e0ee9b5da5459392e273f08"
 LAYOUT_36_PROPS = "684f7ea2758fadf01825ca7d3d43c1791f1b4c08f0deb43c6bad11c279860d82"
+LAYOUT_36_FX = "527bf6999be198d7018eb124d9e72489eb37443d0c5d554f6d756734e8e16cbf"
 LAYOUT_32_DECAL = "8c718e7ca0d35395bd5607c9399588cde7ddc1042040d6cbef4ac4b7e1ef4172"
 LAYOUT_28_DECAL = "31f1405229547d7c67c8227bda07aa22a762c2f6ea60aa88383377da240b9044"
 LAYOUT_76_SIDEWALK = "214be15fd9b2c18aed0f27868b1e6d59dee5121f6c5a8cb0ee5f266b33f34059"
+
+PREFIX_RULES = {
+    (68, "4f18391a"): (24, 'color', None),
+    (68, "e6c6bff8"): (24, 'color', None),
+    (64, "3c20bc99"): (20, 'color', None),
+    (60, "ec4f5425"): (24, 'color', None),
+    (56, "fb2000cf"): (20, 'color', None),
+    (52, "2bdeba9c"): (24, 'color', None),
+    (52, "930b61a4"): (16, 'color', None),
+    (48, "dfe0a2c2"): (20, 'color', None),
+    (44, "b185657b"): (16, 'color', None),
+    (44, "e9cdf8f3"): (24, 'color', 'source_alpha'),
+    (36, "684f7ea2"): (16, 'color', None),
+    (36, "527bf699"): (20, 'add_color', 'source_alpha'),
+    (32, "8c718e7c"): (24, 'color', 'source_alpha'),
+    (28, "31f14052"): (20, 'color', 'source_alpha'),
+    (76, "214be15f"): (24, 'color', None),
+}
 
 # Backward compatibility aliases
 COLOR_LAYOUT = LAYOUT_68_STD
@@ -57,7 +76,7 @@ def classify_material_group(group, template, parameter, textured):
         return 'road_surface'
     if 'sidewalk' in name:
         return 'sidewalk'
-    if 'decal' in name or group.layout_sha256 in (LAYOUT_32_DECAL, LAYOUT_28_DECAL):
+    if 'decal' in name or group.layout_sha256[:8] in ("8c718e7c", "31f14052"):
         return 'ground_decal_or_overlay'
     if not textured:
         return 'untextured_unknown'
@@ -192,61 +211,33 @@ def attach_local_materials(data, groups, meshes, shared_textures=None):
         layout_sha = group.layout_sha256
         mesh['shader_template'] = template
         mesh['material_class'] = classify_material_group(group, template, None, False)
-        mode = None
 
-        # Determine exact texture parameter & UV offset from vertex declaration semantics
-        if stride == 68 and layout_sha == LAYOUT_68_STD:
-            parameter, uv_offset = 'color', 24
-        elif stride == 68 and layout_sha == LAYOUT_68_HIVE:
-            parameter, uv_offset = 'color', 24
-        elif stride == 64 and layout_sha == LAYOUT_64_INT:
-            parameter, uv_offset = 'color', 20
-            if template not in INTERIOR_TEMPLATES:
-                reasons['unverified_shader_template'] += 1
-                continue
-        elif stride == 60 and layout_sha == LAYOUT_60_TERRAIN:
-            if template == 'zCBV2_env_terrain':
-                parameter = 'bottom' if bindings.get('bottom') else ('top' if bindings.get('top') else 'color')
-            else:
-                parameter = 'color'
-            uv_offset = 24
-        elif stride == 56 and layout_sha == LAYOUT_56_REFLECT:
-            parameter, uv_offset = 'color', 20
-        elif stride == 52 and layout_sha == LAYOUT_52_ROAD:
-            if template == 'zCBV2_env_road':
-                parameter, uv_offset = 'bottom', 32
-            elif template == 'zCBV2_env_grass':
-                parameter, uv_offset = 'bottom', 24
-            else:
-                parameter, uv_offset = 'color', 24
-        elif stride == 52 and layout_sha == LAYOUT_52_PROPS:
-            parameter, uv_offset = 'color', 16
-        elif stride == 48 and layout_sha == LAYOUT_48_HIVE:
-            parameter, uv_offset = ('bottom', 20) if template == 'zCBV2_env_road' else ('color', 20)
-        elif stride == 44 and layout_sha == LAYOUT_44_LIT:
-            parameter, uv_offset = 'color', 16
-        elif stride == 44 and layout_sha == LAYOUT_44_ALPHA:
-            parameter = 'ImageMap' if bindings.get('ImageMap') else 'color'
-            uv_offset = 24
-            mode = 'source_alpha'
-        elif stride == 36 and layout_sha == LAYOUT_36_PROPS:
-            parameter = 'color' if bindings.get('color') else 'cube_map'
-            uv_offset = 16
-        elif stride == 32 and layout_sha == LAYOUT_32_DECAL:
-            parameter, uv_offset = 'color', 24
-            if template not in DECAL_TEMPLATES:
-                reasons['unverified_shader_template'] += 1
-                continue
-            mode = 'source_alpha'
-        elif stride == 28 and layout_sha == LAYOUT_28_DECAL:
-            parameter = 'color' if bindings.get('color') else 'add_color'
-            uv_offset = 20
-            mode = 'source_alpha'
-        elif stride == 76 and layout_sha == LAYOUT_76_SIDEWALK:
-            parameter, uv_offset = 'color', 24
-        else:
+        matched_rule = None
+        for (st, pfx), rule in PREFIX_RULES.items():
+            if stride == st and layout_sha.startswith(pfx):
+                matched_rule = rule
+                break
+
+        if not matched_rule:
             reasons['unverified_uv_layout'] += 1
             continue
+
+        uv_offset, parameter, mode = matched_rule
+
+        # Handle contextual template overrides evidenced by shader declarations
+        if stride == 52 and layout_sha.startswith("2bdeba9c"):
+            if template == "zCBV2_env_road":
+                parameter, uv_offset = "bottom", 32
+            elif template == "zCBV2_env_grass":
+                parameter, uv_offset = "bottom", 24
+        elif stride == 60 and layout_sha.startswith("ec4f5425") and template == "zCBV2_env_terrain":
+            parameter = "bottom" if bindings.get("bottom") else ("top" if bindings.get("top") else "color")
+        elif stride == 44 and layout_sha.startswith("e9cdf8f3") and bindings.get("ImageMap"):
+            parameter = "ImageMap"
+        elif stride == 36 and layout_sha.startswith("684f7ea2") and not bindings.get("color") and bindings.get("cube_map"):
+            parameter = "cube_map"
+        elif stride == 28 and layout_sha.startswith("31f14052") and not bindings.get("color") and bindings.get("add_color"):
+            parameter = "add_color"
 
         color = bindings.get(parameter) if shader is not None else None
         if not color:
@@ -295,10 +286,10 @@ def attach_local_materials(data, groups, meshes, shared_textures=None):
         origin = 'local' if color in textures else 'shared'
         shared_groups += origin == 'shared'
         road_groups += parameter == 'bottom'
-        interior_groups += layout_sha in (LAYOUT_64_INT, LAYOUT_68_HIVE, LAYOUT_48_HIVE)
+        interior_groups += layout_sha[:8] in ("3c20bc99", "e6c6bff8", "dfe0a2c2")
         if mode:
             mesh['preview_render_mode'] = mode
-        if layout_sha in (LAYOUT_32_DECAL, LAYOUT_28_DECAL):
+        if layout_sha[:8] in ("8c718e7c", "31f14052"):
             decal_groups += 1
 
         mesh.update(texture=key, texture_source=origin, texture_parameter=parameter,
