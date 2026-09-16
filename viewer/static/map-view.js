@@ -223,6 +223,10 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
         rendered.renderOrder = material.transparent ? 1 : 0;
         rendered.userData.diagnosticSources = bucket.sources;
         rendered.userData.untextured = !texture;
+        const hideUntextured = byId('map-hide-untextured')?.checked || byId('map-hide-untextured-tb')?.checked;
+        if (rendered.userData.untextured && hideUntextured) {
+          rendered.visible = false;
+        }
         rendered.userData.baseColor = material.color.clone();
         rendered.userData.marked = false;
         group.add(rendered);
@@ -422,6 +426,22 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
     renderRequested = true;
     layer.traverse(mesh => { if (mesh.isMesh) mesh.material.wireframe = event.target.checked; });
   };
+  function updateHideUntextured(hide) {
+    const cb1 = byId('map-hide-untextured');
+    const cb2 = byId('map-hide-untextured-tb');
+    if (cb1) cb1.checked = hide;
+    if (cb2) cb2.checked = hide;
+    layer.traverse(mesh => {
+      if (mesh.isMesh && mesh.userData.untextured) {
+        mesh.visible = !hide;
+      }
+    });
+    renderRequested = true;
+  }
+  const cbSide = byId('map-hide-untextured');
+  if (cbSide) cbSide.onchange = event => updateHideUntextured(event.target.checked);
+  const cbTb = byId('map-hide-untextured-tb');
+  if (cbTb) cbTb.onchange = event => updateHideUntextured(event.target.checked);
   byId('map-report').onclick = () => {
     const records = entries.map(entry => ({ cell: entry.cell, ...states.get(entry.cell),
       geometry: loaded.get(entry.cell)?.report, materials: loaded.get(entry.cell)?.materials }));

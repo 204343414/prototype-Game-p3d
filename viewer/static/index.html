@@ -128,6 +128,7 @@
           <input id="map-shared" type="text" placeholder="与 cells.rcf 同目录的 art.rcf" />
           <button id="map-list-load" type="button">读取 Cell 列表</button>
           <label><input id="map-materials" type="checkbox" checked /> 加载已验证的本地 / 共享材质（256px mip）</label>
+          <label><input id="map-hide-untextured" type="checkbox" /> 隐藏无贴图/碰撞体模型 (仅看贴图)</label>
           <button id="map-all" type="button" disabled>加载整城 / 继续</button>
           <button id="map-stop" type="button" disabled>暂停（当前 Cell 完成后）</button>
           <progress id="map-progress" value="0" max="260" aria-label="整城加载进度" style="width:100%"></progress>
@@ -181,6 +182,7 @@
       <div id="loading">加载中…</div>
       <div id="map-toolbar" class="hidden">
         <label><input id="map-wireframe" type="checkbox" /> 线框</label>
+        <label title="隐藏碰撞体、阴影体及未贴图几何体"><input id="map-hide-untextured-tb" type="checkbox" /> 隐藏未贴图模型</label>
         <button id="map-frame" type="button" title="恢复全城视角；双击建筑可聚焦局部">重置视角</button>
         <button id="map-clear" type="button">卸载区块</button>
         <label><input id="map-walk" type="checkbox" /> WASD / 滚轮调速</label>
