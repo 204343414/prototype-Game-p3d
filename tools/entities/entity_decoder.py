@@ -136,7 +136,7 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
             except Exception:
                 pass
 
-    # 3. Extract Skeletons
+    # 3. Extract Skeletons (Prioritize full body skeletons with highest joint count)
     skeletons = []
     for idx, record in enumerate(records):
         if record["type_id"] in (SKELETON_V1, SKELETON_V2):
@@ -167,6 +167,8 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
                     })
             except Exception:
                 pass
+
+    skeletons.sort(key=lambda s: s["joint_count"], reverse=True)
 
     # 4. Extract Animation Clips (0x121000)
     animations = []
@@ -306,6 +308,48 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
                     if src_idx + 8 <= len(v_body):
                         uv_buf[i * 8: i * 8 + 8] = v_body[src_idx: src_idx + 8]
                     
+            # 3. Resolve Blend Weights & Skin Indices (POLYSKIN)
+            palette = []
+            for _, pch in pg_children:
+                if pch["type_id"] in (0x0001000D, 0x0001000F):
+                    p_data = pch["payload"]
+                    p_cnt = len(p_data) // 4
+                    palette = list(struct.unpack_from("<%dI" % p_cnt, p_data, 0))
+                    break
+
+            weight_off = -1
+            index_off = -1
+            for desc in d_lists:
+                if len(desc) >= 16:
+                    for off in range(16, len(desc), 17):
+                        if off + 17 <= len(desc):
+                            shash, _, aoff, _, _, _ = struct.unpack_from("<IIIHHB", desc, off)
+                            if shash == 0xA4176245:  # BLENDWEIGHT
+                                weight_off = aoff
+                            elif shash == 0x73D5CBA7:  # BLENDINDICES
+                                index_off = aoff
+
+            skin_indices_b64 = None
+            skin_weights_b64 = None
+
+            if weight_off >= 0 and index_off >= 0:
+                skin_indices_buf = bytearray(vertex_count * 8)
+                skin_weights_buf = bytearray(vertex_count * 16)
+                for i in range(vertex_count):
+                    src_w = i * pos_stride + weight_off
+                    src_i = i * pos_stride + index_off
+                    if src_w + 16 <= len(v_body) and src_i + 4 <= len(v_body):
+                        raw_w = struct.unpack_from("<4f", v_body, src_w)
+                        raw_i = struct.unpack_from("<4B", v_body, src_i)
+                        valid_w = [max(0.0, float(w)) for w in raw_w]
+                        sum_w = sum(valid_w)
+                        norm_w = [w / sum_w if sum_w > 0 else (1.0 if k == 0 else 0.0) for k, w in enumerate(valid_w)]
+                        mapped_i = [palette[b] if b < len(palette) else b for b in raw_i]
+                        struct.pack_into("<4H", skin_indices_buf, i * 8, *mapped_i)
+                        struct.pack_into("<4f", skin_weights_buf, i * 16, *norm_w)
+                skin_indices_b64 = base64.b64encode(skin_indices_buf).decode("ascii")
+                skin_weights_b64 = base64.b64encode(skin_weights_buf).decode("ascii")
+
             i_bytes = struct.unpack_from("<I", il_payload, 8)[0]
             i_body = il_payload[12:12 + i_bytes]
             
@@ -319,7 +363,7 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
             elif textures:
                 tex_key = list(textures.values())[0]["key"]
 
-            meshes.append({
+            mesh_dict = {
                 "geometry_name": geom_name,
                 "shader_name": shader_name,
                 "vertex_count": vertex_count,
@@ -328,7 +372,11 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
                 "uv": base64.b64encode(uv_buf).decode("ascii"),
                 "indices": base64.b64encode(i_body).decode("ascii"),
                 "texture_key": tex_key,
-            })
+            }
+            if skin_indices_b64 and skin_weights_b64:
+                mesh_dict["skin_indices"] = skin_indices_b64
+                mesh_dict["skin_weights"] = skin_weights_b64
+            meshes.append(mesh_dict)
 
     # Return unique texture objects
     unique_textures = []

@@ -136,8 +136,9 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
   let showSkeleton = false;
   let focusMode = 'entity';
 
-  // Active Three.js bones for skeletal animation
+  // Active Three.js bones & Skeleton for real GPU skinned mesh animation
   let activeBones = [];
+  let activeSkeleton = null;
   let boneLinesMesh = null;
   let bonePointsMesh = null;
   let boneLinePairs = [];
@@ -469,7 +470,37 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
   }
 
-  // Build Real Three.js Bone Hierarchy & Dynamic Visualizer
+  // Generate fallback proximity skin weights for unweighted submeshes
+  function generateProximitySkinWeights(positions, bones) {
+    const count = positions.length / 3;
+    const sIndices = new Uint16Array(count * 4);
+    const sWeights = new Float32Array(count * 4);
+    const v = new THREE.Vector3();
+
+    const boneWorldPositions = bones.map(b => {
+      const p = new THREE.Vector3();
+      b.getWorldPosition(p);
+      return p;
+    });
+
+    for (let i = 0; i < count; i++) {
+      v.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+      let bestBone = 0;
+      let bestDist = Infinity;
+      for (let bi = 0; bi < bones.length; bi++) {
+        const d = v.distanceTo(boneWorldPositions[bi]);
+        if (d < bestDist) {
+          bestDist = d;
+          bestBone = bi;
+        }
+      }
+      sIndices[i * 4] = bestBone;
+      sWeights[i * 4] = 1.0;
+    }
+    return { sIndices, sWeights };
+  }
+
+  // Build Real Three.js Bone Hierarchy & Skeleton Instance
   function buildSkeletonHierarchy(skeletons) {
     while (skeletonGroup.children.length > 0) {
       const c = skeletonGroup.children[0];
@@ -478,6 +509,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       if (c.material) c.material.dispose();
     }
     activeBones = [];
+    activeSkeleton = null;
     boneLinesMesh = null;
     bonePointsMesh = null;
     boneLinePairs = [];
@@ -488,7 +520,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     const joints = skel.joints || [];
     if (!joints.length) return;
 
-    // 1. Create THREE.Bone objects
     const bones = [];
     for (let i = 0; i < joints.length; i++) {
       const j = joints[i];
@@ -512,10 +543,9 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       bones.push(bone);
     }
 
-    // 2. Assemble Tree Hierarchy
     for (let i = 0; i < joints.length; i++) {
       const pIdx = joints[i].parent;
-      if (pIdx >= 0 && pIdx < bones.length) {
+      if (pIdx >= 0 && pIdx < bones.length && pIdx !== i) {
         bones[pIdx].add(bones[i]);
         boneLinePairs.push({ child: bones[i], parent: bones[pIdx] });
       } else {
@@ -524,8 +554,10 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
 
     activeBones = bones;
+    activeSkeleton = new THREE.Skeleton(bones);
+    activeSkeleton.calculateInverses();
 
-    // 3. Create Dynamic Line Segments & Glowing Joint Nodes
+    // Create Dynamic Line Segments & Glowing Joint Nodes
     if (boneLinePairs.length > 0) {
       const linePositions = new Float32Array(boneLinePairs.length * 6);
       const geom = new THREE.BufferGeometry();
@@ -558,13 +590,11 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     skeletonGroup.add(bonePointsMesh);
 
     skeletonGroup.visible = showSkeleton;
-    updateSkeletonVisualizerPositions();
   }
 
   function updateSkeletonVisualizerPositions() {
     if (!activeBones.length) return;
 
-    // 1. Update Skeleton Bone Lines
     if (boneLinesMesh && boneLinePairs.length > 0) {
       const posAttr = boneLinesMesh.geometry.getAttribute('position');
       const arr = posAttr.array;
@@ -586,7 +616,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       posAttr.needsUpdate = true;
     }
 
-    // 2. Update Joint Sphere Nodes
     if (bonePointsMesh) {
       const posAttr = bonePointsMesh.geometry.getAttribute('position');
       const arr = posAttr.array;
@@ -602,7 +631,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
   }
 
-  // Find bone by keywords
   function findBone(bones, keywords) {
     for (const b of bones) {
       const name = b.userData.name;
@@ -611,7 +639,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     return null;
   }
 
-  // Apply Real Skeletal Kinematic Animation
+  // Apply Real Skeletal Kinematic Animation to Bones
   function applySkeletalAnimation(bones, track, t) {
     if (!bones || !bones.length) return;
 
@@ -984,9 +1012,13 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         }
       }
 
+      // 1. Build Real Three.js Skeleton Hierarchy First
+      buildSkeletonHierarchy(data.skeletons);
+
       let hasMeshes = false;
       const bounds = new THREE.Box3();
 
+      // 2. Build Meshes and Bind to Skeleton
       for (const mesh of data.meshes || []) {
         const positions = floats(mesh.positions, Float32Array, 4);
         const indices = floats(mesh.indices, Uint16Array, 2);
@@ -1002,8 +1034,32 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
 
         const tex = textures.get(mesh.texture_key);
         const material = makeMapMaterial(tex, null, false);
-        const rendered = new THREE.Mesh(geometry, material);
-        entityGroup.add(rendered);
+
+        let rendered = null;
+
+        // Bind GPU SkinnedMesh if bones and skeleton exist
+        if (activeSkeleton && activeBones.length > 0) {
+          let sIndices, sWeights;
+          if (mesh.skin_indices && mesh.skin_weights) {
+            sIndices = floats(mesh.skin_indices, Uint16Array, 2);
+            sWeights = floats(mesh.skin_weights, Float32Array, 4);
+          } else {
+            const prox = generateProximitySkinWeights(positions, activeBones);
+            sIndices = prox.sIndices;
+            sWeights = prox.sWeights;
+          }
+
+          geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(sIndices, 4));
+          geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sWeights, 4));
+
+          const skinnedMesh = new THREE.SkinnedMesh(geometry, material);
+          skinnedMesh.bind(activeSkeleton);
+          rendered = skinnedMesh;
+          entityGroup.add(skinnedMesh);
+        } else {
+          rendered = new THREE.Mesh(geometry, material);
+          entityGroup.add(rendered);
+        }
 
         geometry.computeBoundingBox();
         bounds.union(geometry.boundingBox);
@@ -1015,9 +1071,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
           origY: rendered.position.y
         });
       }
-
-      // Build Real Three.js Skeleton Hierarchy
-      buildSkeletonHierarchy(data.skeletons);
 
       if (hasMeshes) {
         const center = bounds.getCenter(new THREE.Vector3());
@@ -1060,13 +1113,19 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
   }
 
-  // Animation Update loop hook with full skeletal kinematics
+  // Animation Update loop hook with full skeletal kinematics & GPU skinning
   function updateAnimation(dt) {
     if (!isPlayingAnim) return;
     animTime += dt;
 
     if (activeBones.length > 0) {
       applySkeletalAnimation(activeBones, currentAnimTrack, animTime);
+      for (let i = 0; i < activeBones.length; i++) {
+        activeBones[i].updateMatrixWorld(true);
+      }
+      if (activeSkeleton) {
+        activeSkeleton.update();
+      }
       updateSkeletonVisualizerPositions();
     }
   }
