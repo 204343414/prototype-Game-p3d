@@ -10,7 +10,50 @@
 > `docs/animation_format.md` 为准**。项目级目标、建设顺序与验收门槛见
 > `docs/PROJECT_TARGETS.md`。
 
-最后核对：2026-09-16。当前接手顺序是**保留已验收角色/骨骼/动画，推进地图与音效**。
+最后核对：2026-09-17。当前状态：**已回滚至稳定基线 Commit `540e3ca`**。
+
+## 2026-09-17 最新进度：Pure3D 实体陈列架、骨骼蒙皮与动作播放排查交接
+
+### 1. 当前系统基线（已稳定回滚至 Commit `540e3ca`）
+- **查看器前端架构（端口 8421）**：
+  - 已彻底移除所有外部 CDN 依赖（`unpkg.com`），Three.js 0.160.0 ES 模块（`OrbitControls`, `GLTFLoader`, `BufferGeometryUtils`）已完整本地化打包到 `viewer/static/vendor/`。
+  - 前端支持五大分类（主角形态 `powers`、载具 `vehicles`、剧情角色 `characters`、路人 NPC `pedestrians`、可破坏道具 `props`），支持网格卡片陈列与 3D 检视抽屉。
+- **运行环境与服务**：
+  - 远程主机：`liang@8700k.top`（通过 Cloudflare SSH 连接）。
+  - 隔离测试预览目录：`/tmp/prototype-map-preview.LRlPDWCg`（端口 8421，严禁触碰 8420）。
+
+### 2. 核心已知 Bug 与排查证据（给下一个 Agent 的关键突破点）
+
+#### 🔴 Bug A: 骨骼蒙皮顶点拉丝 / 局部权重错乱（详见用户最新截图）
+- **现象**：
+  在利爪形态（`alex_claws.p3d.rz`）或部分肢体上，右爪正常跟随骨骼摆动，但左爪一部分手指/刀刃顶点出现向远处拉丝缩放（Stretching）。
+- **底层证据与排查方向**：
+  1. **骨骼调色板 `Matrix Palette (0x1000D)`**：
+     - 在 Pure3D 结构中，`0x1000D` 的前 4 字节是 `uint32 count` 还是纯 `uint32[]` 数组？在 `alex_blades` / `alex_claws` / `alex_reg_body` 中需要实测每个 Skin 的局部调色板索引与顶点流中的 `blendIndices` 匹配关系。
+  2. **衍生辅助骨骼（Helper Bones / Shoulder Connectors）**：
+     - 用户指出：肩膀部分有衍生骨骼（如 `Shoulder_Con_L / Shoulder_Con_R`），移动它时不应该带动整条手臂位移，而是仅影响局部肌肉变形。需要检查骨骼父子级关系与世界变换矩阵计算。
+  3. **SkinnedMesh 绑定矩阵**：
+     - Three.js 中 `activeSkeleton = new THREE.Skeleton(bones, boneInverses)`，`boneInverses` 必须在 `skeletonGroup.updateMatrixWorld(true)` 之后由世界逆矩阵生成，避免多次调用 `.add()` 导致骨骼根节点被各子 Mesh 抢占移出。
+
+#### 🔴 Bug B: 贴图 UV 镜像 / 倒置问题
+- **现象**：
+  部分模型贴图出现局部迷彩或图案左右/上下翻转。
+- **底层证据**：
+  - 顶点数据流：双流网格（Dual Stream）中，Stream 0 为 56 字节（位置/法线/切线/骨骼权重），Stream 1 为 12 字节（前 4 字节为顶点颜色，后 8 字节为 Float32 U/V）。
+  - 需要在 Direct3D 9（DirectX UV 空间）与 WebGL（Three.js UV 空间）之间确立精准的零误差 UV 映射公式。
+
+#### 🔴 Bug C: 动作播放与根运动（Root Motion）真实还原
+- **用户核心诉求**：
+  - **不要人为锁定或伪造动作**：严格忠实还原游戏原始动画文件（`0x121000`）中的所有通道。
+  - **动画通道类型**：
+    - `0x121102` / `0x121119`：`TRAN`（Float32 3D 位移向量，包含 `Motion_Root` 与 `Character_Root` 物理位移）。
+    - `0x121112` / `0x121114` / `0x121118`：`ROT`（旋转四元数）。
+  - 脚掌贴地：确保根骨骼和脚踝骨骼的高度、旋转精确解耦，不做动作时脚掌自然着地，做战斗/跳跃动作时物理曲线完全吻合。
+
+#### 🔴 Bug D: 独立形态与通用动作库分离
+- **设计原则**：
+  - 保持各形态包（利刃、利爪、重锤、鞭拳）自身专属动作的独立性，先不与 Alex 基础库强行混淆。
+  - 后续可根据游戏状态机（State Tree）设计可插拔的形态武器挂载方案。
 
 ## 最新重大突破：广告牌/时代广场巨幅海报与全城材质代码推导全面还原（2026-09-16）
 
