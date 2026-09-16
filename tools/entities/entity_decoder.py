@@ -1,7 +1,6 @@
 """Decode complete 3D entity geometry, UVs, textures and skeleton for web preview.
 
-Extracts DXT1/DXT3/DXT5 DDS textures, binds shaders to primitive groups,
-and isolates specific props/LODs.
+Multi-stream vertex buffer support (Stream 0 positions/normals, Stream 1 UVs for characters).
 """
 from __future__ import annotations
 
@@ -155,6 +154,17 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
             except Exception:
                 pass
 
+    # Check for LOD0 meshes
+    all_geom_names: list[str] = []
+    for idx, record in enumerate(records):
+        if record["type_id"] in (POLYSKIN, GEOMETRY):
+            try:
+                gn, _ = _p3d_string(record["payload"])
+                all_geom_names.append(gn)
+            except Exception:
+                pass
+    has_lod0 = any(n.endswith(("_00", "_LOD0", "_lod0")) for n in all_geom_names)
+
     # 4. Extract Meshes (Geometry / Polyskin)
     meshes = []
     for idx, record in enumerate(records):
@@ -170,6 +180,9 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
             clean_shape = shape_filter.strip()
             if not (geom_name == clean_shape or geom_name.startswith(clean_shape) or clean_shape.startswith(geom_name)):
                 continue
+        elif has_lod0 and geom_name.endswith(("_11", "_21", "_31", "_LOD1", "_LOD2", "_lod1", "_lod2")):
+            # Skip lower LOD models when high detail LOD0 exists
+            continue
             
         for pidx, pg_rec in children.get(idx, []):
             if pg_rec["type_id"] != PRIMITIVE_GROUP:
@@ -210,26 +223,51 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
             if vertex_count <= 0 or v_bytes < vertex_count:
                 continue
                 
-            stride = v_bytes // vertex_count if (v_bytes % vertex_count == 0) else 56
-            
+            pos_stride = v_bytes // vertex_count if (v_bytes % vertex_count == 0) else 56
             pos_buf = bytearray(vertex_count * 12)
             uv_buf = bytearray(vertex_count * 8)
             
-            uv_offset = 20 if stride in (64, 56, 28) else (24 if stride >= 32 else 16)
-            if d_lists and len(d_lists[0]) >= 16:
-                desc = d_lists[0]
-                for off in range(16, len(desc), 17):
-                    if off + 17 <= len(desc):
-                        shash, _src, aoff, _st, _et, _ui = struct.unpack_from("<IIIHHB", desc, off)
-                        if shash == 0x00364509: # TEXCOORD0
-                            uv_offset = aoff
-                            break
-
+            # 1. Unpack positions from Stream 0
             for i in range(vertex_count):
-                if i * stride + 12 <= len(v_body):
-                    pos_buf[i * 12: i * 12 + 12] = v_body[i * stride: i * stride + 12]
-                if i * stride + uv_offset + 8 <= len(v_body):
-                    uv_buf[i * 8: i * 8 + 8] = v_body[i * stride + uv_offset: i * stride + uv_offset + 8]
+                if i * pos_stride + 12 <= len(v_body):
+                    pos_buf[i * 12: i * 12 + 12] = v_body[i * pos_stride: i * pos_stride + 12]
+
+            # 2. Resolve UV stream & offset
+            uv_stream_idx = -1
+            uv_offset = -1
+            for didx, desc in enumerate(d_lists):
+                if len(desc) >= 16:
+                    for off in range(16, len(desc), 17):
+                        if off + 17 <= len(desc):
+                            shash, _, aoff, _, _, _ = struct.unpack_from("<IIIHHB", desc, off)
+                            if shash == 0x00364509: # TEXCOORD0
+                                uv_stream_idx = didx
+                                uv_offset = aoff
+                                break
+                    if uv_stream_idx >= 0:
+                        break
+
+            if uv_stream_idx >= 0 and uv_stream_idx < len(v_lists):
+                uv_vl = v_lists[uv_stream_idx]
+                if len(uv_vl) >= 12:
+                    uv_bytes = struct.unpack_from("<I", uv_vl, 8)[0]
+                    uv_body = uv_vl[12:12 + uv_bytes]
+                    uv_stride = uv_bytes // vertex_count if (uv_bytes % vertex_count == 0) else (8 if uv_stream_idx > 0 else pos_stride)
+                    for i in range(vertex_count):
+                        src_idx = i * uv_stride + uv_offset
+                        if src_idx + 8 <= len(uv_body):
+                            uv_buf[i * 8: i * 8 + 8] = uv_body[src_idx: src_idx + 8]
+            elif len(v_lists) > 1 and len(v_lists[1]) >= 12 + vertex_count * 8:
+                # Direct Stream 1 fallback (8 bytes per vertex)
+                uv_body = v_lists[1][12:]
+                uv_buf[:vertex_count * 8] = uv_body[:vertex_count * 8]
+            else:
+                # Interleaved fallback on Stream 0
+                uv_off = 16 if pos_stride in (52, 64, 80) else (20 if pos_stride in (56, 28) else 16)
+                for i in range(vertex_count):
+                    src_idx = i * pos_stride + uv_off
+                    if src_idx + 8 <= len(v_body):
+                        uv_buf[i * 8: i * 8 + 8] = v_body[src_idx: src_idx + 8]
                     
             i_bytes = struct.unpack_from("<I", il_payload, 8)[0]
             i_body = il_payload[12:12 + i_bytes]
