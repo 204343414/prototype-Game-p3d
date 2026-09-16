@@ -8,6 +8,13 @@ const CAT_ICONS = {
   props: '🏢'
 };
 
+const CATEGORIES = [
+  { id: 'powers', name: '主角能力与武装形态', icon: '⚡', desc: 'Alex Mercer 原型体、利爪、刀锋、重锤、充能装甲、地刺与伪装全形态' },
+  { id: 'vehicles', name: '载具与重装武备系统', icon: '🚗', desc: 'M1A2 艾布拉姆斯主战坦克、黑鹰直升机、阿帕奇武装直升机、装甲运兵车、警车与民用车系' },
+  { id: 'characters', name: '角色、感染生物与黑色守望部队', icon: '🧟', desc: '达娜·墨瑟、伊丽莎白·格林、克罗斯队长、超级士兵、猎手、九头蛇、至尊猎手及黑色守望军团' },
+  { id: 'props', name: '曼哈顿环境道具与可破坏设施', icon: '🏢', desc: '屋顶水塔、大型变压器、空调外机、路障、消防栓、垃圾箱与核动力航母等城市动态道具' }
+];
+
 const THUMB_CACHE = new Map();
 
 // IndexedDB persistence for 1:1 snapshots
@@ -105,7 +112,7 @@ function floats(encoded, Type, size) {
 }
 
 export function createEntityShelf({ scene, camera, controls, renderer, onStatus, onSelectEntity }) {
-  let activeCategory = 'powers';
+  let activeDrawerCategory = 'all';
   let entityData = null;
   let currentEntity = null;
   let currentShape = null;
@@ -170,13 +177,20 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
   }
 
   function renderCounts(counts) {
+    let total = 0;
     for (const [cat, count] of Object.entries(counts || {})) {
+      total += count;
       const el = document.getElementById(`count-${cat}`);
       if (el) el.textContent = count;
+      const secBadge = document.getElementById(`sec-badge-${cat}`);
+      if (secBadge) secBadge.textContent = `${count} 款`;
     }
+    const countAll = document.getElementById('count-all');
+    if (countAll) countAll.textContent = total;
+
     const toggleCount = document.getElementById('toggle-count');
-    if (toggleCount && entityData) {
-      toggleCount.textContent = entityData.total_entities;
+    if (toggleCount) {
+      toggleCount.textContent = total;
     }
   }
 
@@ -336,6 +350,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     const card = document.createElement('div');
     card.className = `entity-card ${currentEntity?.id === item.id ? 'active' : ''}`;
     card.dataset.id = item.id;
+    card.dataset.cat = item.category;
     
     const icon = CAT_ICONS[item.category] || '📦';
     const shapeCount = item.shape_count || item.geometry_count || 1;
@@ -367,47 +382,86 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
   }
 
   function renderGrid() {
-    const gridFull = document.getElementById('entity-grid-full');
-    const gridDrawer = document.getElementById('entity-grid-drawer');
     if (!entityData) return;
 
-    const items = (entityData.categories && entityData.categories[activeCategory]) || [];
-    
-    // 1. Full-screen Grid
-    if (gridFull) {
-      gridFull.innerHTML = '';
-      const searchFull = (document.getElementById('entity-search-full')?.value || '').trim().toLowerCase();
-      const filteredFull = items.filter(item => 
+    const searchFull = (document.getElementById('entity-search-full')?.value || '').trim().toLowerCase();
+    const searchDrawer = (document.getElementById('entity-search-drawer')?.value || '').trim().toLowerCase();
+
+    // 1. Populate Fullscreen Scrollable Groups
+    for (const cat of CATEGORIES) {
+      const gridEl = document.getElementById(`grid-${cat.id}`);
+      const sectionEl = document.getElementById(`entity-group-${cat.id}`);
+      const badgeEl = document.getElementById(`sec-badge-${cat.id}`);
+      if (!gridEl || !sectionEl) continue;
+
+      gridEl.innerHTML = '';
+      const items = (entityData.categories && entityData.categories[cat.id]) || [];
+      const filtered = items.filter(item => 
         !searchFull || 
         item.name.toLowerCase().includes(searchFull) || 
         item.id.toLowerCase().includes(searchFull)
       );
 
-      if (!filteredFull.length) {
-        gridFull.innerHTML = `<div style="grid-column:1/-1; padding:40px; text-align:center; color:#6b7280; font-size:14px;">未找到匹配的实体</div>`;
+      if (filtered.length === 0) {
+        sectionEl.style.display = searchFull ? 'none' : 'block';
+        if (!searchFull) {
+          gridEl.innerHTML = `<div style="grid-column:1/-1; padding:20px; text-align:center; color:#6b7280; font-size:12px;">暂无实体</div>`;
+        }
       } else {
-        for (const item of filteredFull) {
-          gridFull.appendChild(renderCard(item, false));
+        sectionEl.style.display = 'block';
+        if (badgeEl) badgeEl.textContent = `${filtered.length} 款`;
+        for (const item of filtered) {
+          gridEl.appendChild(renderCard(item, false));
         }
       }
     }
 
-    // 2. Drawer Grid
+    // 2. Populate Right Drawer Grid
+    const gridDrawer = document.getElementById('entity-grid-drawer');
     if (gridDrawer) {
       gridDrawer.innerHTML = '';
-      const searchDrawer = (document.getElementById('entity-search-drawer')?.value || '').trim().toLowerCase();
-      const filteredDrawer = items.filter(item => 
-        !searchDrawer || 
-        item.name.toLowerCase().includes(searchDrawer) || 
-        item.id.toLowerCase().includes(searchDrawer)
-      );
+      
+      const catsToRender = (activeDrawerCategory === 'all') 
+        ? CATEGORIES 
+        : CATEGORIES.filter(c => c.id === activeDrawerCategory);
 
-      if (!filteredDrawer.length) {
-        gridDrawer.innerHTML = `<div style="grid-column:1/-1; padding:20px; text-align:center; color:#6b7280; font-size:11px;">无匹配项</div>`;
-      } else {
-        for (const item of filteredDrawer) {
+      let totalDrawerMatches = 0;
+
+      for (const cat of catsToRender) {
+        const items = (entityData.categories && entityData.categories[cat.id]) || [];
+        const filtered = items.filter(item => 
+          !searchDrawer || 
+          item.name.toLowerCase().includes(searchDrawer) || 
+          item.id.toLowerCase().includes(searchDrawer)
+        );
+
+        if (!filtered.length) continue;
+        totalDrawerMatches += filtered.length;
+
+        if (activeDrawerCategory === 'all') {
+          const header = document.createElement('div');
+          header.style.gridColumn = '1 / -1';
+          header.style.fontSize = '11px';
+          header.style.fontWeight = '600';
+          header.style.color = '#7fd4ff';
+          header.style.background = '#182232';
+          header.style.padding = '5px 8px';
+          header.style.borderRadius = '4px';
+          header.style.borderLeft = '3px solid #3b82f6';
+          header.style.marginTop = '6px';
+          header.style.display = 'flex';
+          header.style.justifyContent = 'space-between';
+          header.innerHTML = `<span>${cat.icon} ${cat.name}</span><span style="color:#94a3b8; font-size:10px;">${filtered.length} 款</span>`;
+          gridDrawer.appendChild(header);
+        }
+
+        for (const item of filtered) {
           gridDrawer.appendChild(renderCard(item, true));
         }
+      }
+
+      if (totalDrawerMatches === 0) {
+        gridDrawer.innerHTML = `<div style="grid-column:1/-1; padding:30px; text-align:center; color:#6b7280; font-size:12px;">无匹配项</div>`;
       }
     }
   }
@@ -426,7 +480,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     const joints = skel.joints || [];
     if (!joints.length) return;
 
-    // Compute world positions of joints from local matrices
     const worldMatrices = [];
     const jointPositions = [];
 
@@ -448,7 +501,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       jointPositions.push(pos);
     }
 
-    // Build line segments between joint and parent
     const linePositions = [];
     for (let i = 0; i < joints.length; i++) {
       const pIdx = joints[i].parent;
@@ -477,7 +529,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       skeletonGroup.add(lines);
     }
 
-    // Add glowing joint node spheres
     const nodeGeom = new THREE.BufferGeometry();
     const nodePos = [];
     jointPositions.forEach(p => { nodePos.push(p.x, p.y, p.z); });
@@ -525,7 +576,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     if (!listEl) return;
     listEl.innerHTML = '';
 
-    // Skeleton Line Controller Row
     const jointCount = skeletons?.[0]?.joints?.length || 0;
     const skelRow = document.createElement('div');
     skelRow.className = 'mesh-row';
@@ -545,7 +595,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
     listEl.appendChild(skelRow);
 
-    // Render Submeshes List
     meshes.forEach((item, idx) => {
       const row = document.createElement('div');
       row.className = 'mesh-row';
@@ -563,7 +612,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       listEl.appendChild(row);
     });
 
-    // Render Animation Section
     currentAnimations = animations || [];
     currentAnimIdx = -1;
 
@@ -615,7 +663,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
 
     onStatus(`正在解析 3D 实体模型：${item.name}…`);
 
-    // Clear previous entity meshes & skeleton
     while (entityGroup.children.length > 0) {
       const child = entityGroup.children[0];
       entityGroup.remove(child);
@@ -736,7 +783,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
   function updateAnimation(dt) {
     if (!isPlayingAnim || !entityGroup.visible) return;
     animTime += dt;
-    // Animate subtle idle breath / transform oscillation
     const wobble = Math.sin(animTime * 4.0) * 0.03;
     entityGroup.position.y = wobble;
     skeletonGroup.position.y = wobble;
@@ -755,10 +801,9 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     isBatchScanning = true;
     updateBatchUI();
 
-    const allCategories = ['powers', 'vehicles', 'characters', 'props'];
     const allItems = [];
-    for (const cat of allCategories) {
-      const items = entityData.categories?.[cat] || [];
+    for (const cat of CATEGORIES) {
+      const items = entityData.categories?.[cat.id] || [];
       for (const item of items) {
         allItems.push(item);
       }
@@ -871,18 +916,48 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     };
   }
 
-  // Setup Fullscreen Category Tabs
+  // Setup Fullscreen Category Tabs Anchor Scroll
   document.querySelectorAll('.shelf-header .cat-tab').forEach(tab => {
     tab.addEventListener('click', (e) => {
       const btn = e.target.closest('.cat-tab') || tab;
       document.querySelectorAll('.shelf-header .cat-tab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
-      activeCategory = btn.dataset.cat;
-      // Sync drawer tabs
-      document.querySelectorAll('.drawer-cat-tab').forEach(t => t.classList.toggle('active', t.dataset.cat === activeCategory));
-      renderGrid();
+      const cat = btn.dataset.cat;
+      const scrollHost = document.getElementById('entity-shelf-scroll');
+
+      if (cat === 'all') {
+        if (scrollHost) scrollHost.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        const targetSection = document.getElementById(`entity-group-${cat}`);
+        if (targetSection && scrollHost) {
+          const topOffset = targetSection.offsetTop - scrollHost.offsetTop - 10;
+          scrollHost.scrollTo({ top: Math.max(0, topOffset), behavior: 'smooth' });
+        }
+      }
     });
   });
+
+  // Setup Scroll Spy on the Shelf Scroll Container
+  const shelfScroll = document.getElementById('entity-shelf-scroll');
+  if (shelfScroll) {
+    shelfScroll.addEventListener('scroll', () => {
+      if (shelfScroll.scrollTop < 60) {
+        document.querySelectorAll('.shelf-header .cat-tab').forEach(t => t.classList.toggle('active', t.dataset.cat === 'all'));
+        return;
+      }
+      for (let i = CATEGORIES.length - 1; i >= 0; i--) {
+        const cat = CATEGORIES[i];
+        const sec = document.getElementById(`entity-group-${cat.id}`);
+        if (sec && sec.style.display !== 'none') {
+          const offset = sec.offsetTop - shelfScroll.offsetTop - 80;
+          if (shelfScroll.scrollTop >= offset) {
+            document.querySelectorAll('.shelf-header .cat-tab').forEach(t => t.classList.toggle('active', t.dataset.cat === cat.id));
+            break;
+          }
+        }
+      }
+    }, { passive: true });
+  }
 
   // Setup Drawer Category Tabs
   document.querySelectorAll('.drawer-cat-tab').forEach(tab => {
@@ -890,9 +965,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       const btn = e.target.closest('.drawer-cat-tab') || tab;
       document.querySelectorAll('.drawer-cat-tab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
-      activeCategory = btn.dataset.cat;
-      // Sync full tabs
-      document.querySelectorAll('.shelf-header .cat-tab').forEach(t => t.classList.toggle('active', t.dataset.cat === activeCategory));
+      activeDrawerCategory = btn.dataset.cat;
       renderGrid();
     });
   });
@@ -926,13 +999,17 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
 
       // 2. Otherwise in Entity browsing mode
       if (entityData) {
-        const items = entityData.categories?.[activeCategory] || [];
-        if (!items.length) return;
-        const curIdx = items.findIndex(it => it.id === currentEntity?.id);
+        const allItems = [];
+        for (const cat of CATEGORIES) {
+          const items = entityData.categories?.[cat.id] || [];
+          for (const item of items) allItems.push(item);
+        }
+        if (!allItems.length) return;
+        const curIdx = allItems.findIndex(it => it.id === currentEntity?.id);
         let nextIdx = isUp ? (curIdx - 1) : (curIdx + 1);
-        if (nextIdx < 0) nextIdx = items.length - 1;
-        if (nextIdx >= items.length) nextIdx = 0;
-        selectEntity(items[nextIdx]);
+        if (nextIdx < 0) nextIdx = allItems.length - 1;
+        if (nextIdx >= allItems.length) nextIdx = 0;
+        selectEntity(allItems[nextIdx]);
       }
     } else if (e.code === 'Space') {
       e.preventDefault();
