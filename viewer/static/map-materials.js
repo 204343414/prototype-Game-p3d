@@ -4,7 +4,7 @@ export function makeMapTexture(descriptor) {
   const formats = { DXT1: THREE.RGBA_S3TC_DXT1_Format, DXT3: THREE.RGBA_S3TC_DXT3_Format, DXT5: THREE.RGBA_S3TC_DXT5_Format };
   const format = formats[descriptor.format];
   if (!format) throw new Error(`Unsupported map texture format: ${descriptor.format}`);
-  const mipmaps = descriptor.mips.map(m => ({ width: m.width, height: m.height,
+  const mipmaps = (descriptor.mips || descriptor.mipmaps).map(m => ({ width: m.width, height: m.height,
     data: Uint8Array.from(atob(m.data), c => c.charCodeAt(0)) }));
   const texture = new THREE.CompressedTexture(mipmaps, mipmaps[0].width, mipmaps[0].height, format);
   texture.colorSpace = THREE.SRGBColorSpace;
