@@ -5,14 +5,16 @@ const CAT_ICONS = {
   powers: '⚡',
   vehicles: '🚗',
   characters: '🧟',
+  pedestrians: '🚶',
   props: '🏢'
 };
 
 const CATEGORIES = [
-  { id: 'powers', name: '主角能力与武装形态', icon: '⚡', desc: 'Alex Mercer 原型体、利爪、刀锋、重锤、充能装甲、地刺与伪装全形态' },
+  { id: 'powers', name: '主角形态与生化武装', icon: '⚡', desc: 'Alex Mercer 原型体、利爪、刀锋、重锤、充能装甲、地刺与军方/特工伪装全形态' },
   { id: 'vehicles', name: '载具与重装武备系统', icon: '🚗', desc: 'M1A2 艾布拉姆斯主战坦克、黑鹰直升机、阿帕奇武装直升机、装甲运兵车、警车与民用车系' },
-  { id: 'characters', name: '角色、感染生物与黑色守望部队', icon: '🧟', desc: '达娜·墨瑟、伊丽莎白·格林、克罗斯队长、超级士兵、猎手、九头蛇、至尊猎手及黑色守望军团' },
-  { id: 'props', name: '曼哈顿环境道具与可破坏设施', icon: '🏢', desc: '屋顶水塔、大型变压器、空调外机、路障、消防栓、垃圾箱与核动力航母等城市动态道具' }
+  { id: 'characters', name: '剧情角色、变异体与守望军团', icon: '🧟', desc: '达娜·墨瑟、伊丽莎白·格林、克罗斯队长、超级士兵、猎手、九头蛇、至尊猎手及黑色守望军团' },
+  { id: 'pedestrians', name: '曼哈顿市民与路人 NPC', icon: '🚶', desc: '商务西装、大衣冬装、休闲便服各年龄段男女市民及初期轻度感染市民' },
+  { id: 'props', name: '曼哈顿环境与可破坏道具', icon: '🏢', desc: '屋顶水塔、大型变压器、空调外机、路障、消防栓、垃圾箱与核动力航母等城市动态道具' }
 ];
 
 const THUMB_CACHE = new Map();
@@ -128,15 +130,22 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
   let renderedMeshList = [];
   let currentAnimations = [];
   let currentAnimIdx = -1;
+  let currentAnimTrack = null;
   let isPlayingAnim = false;
   let animTime = 0;
   let showSkeleton = false;
-  let focusMode = 'entity'; // 'entity' or 'animation'
+  let focusMode = 'entity';
+
+  // Active Three.js bones for skeletal animation
+  let activeBones = [];
+  let boneLinesMesh = null;
+  let bonePointsMesh = null;
+  let boneLinePairs = [];
 
   // Batch snapshot state
   let isBatchScanning = false;
 
-  // Offscreen 1:1 renderer for taking high-res square 45-degree snapshots (256x256)
+  // Offscreen 1:1 renderer for high-res square 45-degree snapshots (256x256)
   const offCanvas = document.createElement('canvas');
   offCanvas.width = 256;
   offCanvas.height = 256;
@@ -154,12 +163,10 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
   }
 
   async function loadCatalog(artPath) {
-    onStatus('正在从 art.rcf 读取四大分类实体清单…');
+    onStatus('正在从 art.rcf 读取五大分类实体清单…');
     try {
-      // 1. Preload any existing persistent snapshots from IndexedDB
       await loadAllCachedSnapshots();
 
-      // 2. Fetch catalog list from backend
       const resp = await fetch(`/api/entities?path=${encodeURIComponent(artPath || '')}`);
       const data = await resp.json();
       if (data.error) {
@@ -170,7 +177,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       renderCounts(data.counts);
       updateStatsBadge();
       renderGrid();
-      onStatus(`已索引四大类共 ${data.total_entities} 个实体 (已恢复 ${THUMB_CACHE.size} 个持久化快照)`);
+      onStatus(`已索引五大分类共 ${data.total_entities} 个实体 (已恢复 ${THUMB_CACHE.size} 个持久化快照)`);
     } catch (err) {
       onStatus('请求实体清单失败：' + err.message);
     }
@@ -214,10 +221,8 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     const boxSize = bounds.getSize(new THREE.Vector3());
     const maxDim = Math.max(boxSize.x, boxSize.y, boxSize.z) || 2.0;
 
-    // Strict 1:1 Square Perspective Camera
     const snapCam = new THREE.PerspectiveCamera(45, 1.0, 0.01, 2000);
     const dist = maxDim * 1.5;
-    // 45-degree angled isometric position
     snapCam.position.set(center.x + dist * 0.72, center.y + dist * 0.55, center.z + dist * 0.72);
     snapCam.lookAt(center);
     return snapCam;
@@ -266,7 +271,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       const data = await resp.json();
       if (data.error || !data.meshes || !data.meshes.length) return null;
 
-      // Build textures
       const textures = new Map();
       for (const desc of data.textures || []) {
         try {
@@ -321,7 +325,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       offRenderer.render(snapScene, snapCam);
       const dataUrl = offCanvas.toDataURL('image/webp', 0.85);
 
-      // Free memory
       createdGeoms.forEach(g => g.dispose());
       createdMats.forEach(m => m.dispose());
       textures.forEach(t => t.dispose());
@@ -466,13 +469,18 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
   }
 
-  function buildSkeletonVisualizer(skeletons) {
+  // Build Real Three.js Bone Hierarchy & Dynamic Visualizer
+  function buildSkeletonHierarchy(skeletons) {
     while (skeletonGroup.children.length > 0) {
       const c = skeletonGroup.children[0];
       skeletonGroup.remove(c);
       if (c.geometry) c.geometry.dispose();
       if (c.material) c.material.dispose();
     }
+    activeBones = [];
+    boneLinesMesh = null;
+    bonePointsMesh = null;
+    boneLinePairs = [];
 
     if (!skeletons || !skeletons.length) return;
 
@@ -480,43 +488,48 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     const joints = skel.joints || [];
     if (!joints.length) return;
 
-    const worldMatrices = [];
-    const jointPositions = [];
-
+    // 1. Create THREE.Bone objects
+    const bones = [];
     for (let i = 0; i < joints.length; i++) {
       const j = joints[i];
+      const bone = new THREE.Bone();
+      bone.name = j.name || `Joint_${i}`;
+
       const m = new THREE.Matrix4();
       if (j.matrix && j.matrix.length === 16) {
         m.fromArray(j.matrix);
       }
-      
-      const parentIdx = j.parent;
-      if (parentIdx >= 0 && parentIdx < i && worldMatrices[parentIdx]) {
-        m.multiplyMatrices(worldMatrices[parentIdx], m);
-      }
-      worldMatrices.push(m);
+      m.decompose(bone.position, bone.quaternion, bone.scale);
 
-      const pos = new THREE.Vector3();
-      pos.setFromMatrixPosition(m);
-      jointPositions.push(pos);
+      bone.userData = {
+        origPos: bone.position.clone(),
+        origRot: bone.quaternion.clone(),
+        origScale: bone.scale.clone(),
+        parentIdx: j.parent,
+        index: i,
+        name: (j.name || '').toLowerCase()
+      };
+      bones.push(bone);
     }
 
-    const linePositions = [];
+    // 2. Assemble Tree Hierarchy
     for (let i = 0; i < joints.length; i++) {
       const pIdx = joints[i].parent;
-      if (pIdx >= 0 && pIdx < joints.length) {
-        const p1 = jointPositions[i];
-        const p0 = jointPositions[pIdx];
-        if (p1.distanceTo(p0) < 5.0) {
-          linePositions.push(p0.x, p0.y, p0.z);
-          linePositions.push(p1.x, p1.y, p1.z);
-        }
+      if (pIdx >= 0 && pIdx < bones.length) {
+        bones[pIdx].add(bones[i]);
+        boneLinePairs.push({ child: bones[i], parent: bones[pIdx] });
+      } else {
+        skeletonGroup.add(bones[i]);
       }
     }
 
-    if (linePositions.length > 0) {
+    activeBones = bones;
+
+    // 3. Create Dynamic Line Segments & Glowing Joint Nodes
+    if (boneLinePairs.length > 0) {
+      const linePositions = new Float32Array(boneLinePairs.length * 6);
       const geom = new THREE.BufferGeometry();
-      geom.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
+      geom.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
       const mat = new THREE.LineBasicMaterial({
         color: 0xff7722,
         linewidth: 2,
@@ -524,15 +537,14 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         transparent: true,
         opacity: 0.95
       });
-      const lines = new THREE.LineSegments(geom, mat);
-      lines.renderOrder = 999;
-      skeletonGroup.add(lines);
+      boneLinesMesh = new THREE.LineSegments(geom, mat);
+      boneLinesMesh.renderOrder = 999;
+      skeletonGroup.add(boneLinesMesh);
     }
 
+    const nodePositions = new Float32Array(bones.length * 3);
     const nodeGeom = new THREE.BufferGeometry();
-    const nodePos = [];
-    jointPositions.forEach(p => { nodePos.push(p.x, p.y, p.z); });
-    nodeGeom.setAttribute('position', new THREE.Float32BufferAttribute(nodePos, 3));
+    nodeGeom.setAttribute('position', new THREE.BufferAttribute(nodePositions, 3));
     const nodeMat = new THREE.PointsMaterial({
       color: 0x7fd4ff,
       size: 6,
@@ -541,17 +553,286 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       transparent: true,
       opacity: 0.9
     });
-    const nodes = new THREE.Points(nodeGeom, nodeMat);
-    nodes.renderOrder = 1000;
-    skeletonGroup.add(nodes);
+    bonePointsMesh = new THREE.Points(nodeGeom, nodeMat);
+    bonePointsMesh.renderOrder = 1000;
+    skeletonGroup.add(bonePointsMesh);
 
     skeletonGroup.visible = showSkeleton;
+    updateSkeletonVisualizerPositions();
+  }
+
+  function updateSkeletonVisualizerPositions() {
+    if (!activeBones.length) return;
+
+    // 1. Update Skeleton Bone Lines
+    if (boneLinesMesh && boneLinePairs.length > 0) {
+      const posAttr = boneLinesMesh.geometry.getAttribute('position');
+      const arr = posAttr.array;
+      const v0 = new THREE.Vector3();
+      const v1 = new THREE.Vector3();
+
+      for (let i = 0; i < boneLinePairs.length; i++) {
+        const pair = boneLinePairs[i];
+        pair.parent.getWorldPosition(v0);
+        pair.child.getWorldPosition(v1);
+
+        arr[i * 6 + 0] = v0.x;
+        arr[i * 6 + 1] = v0.y;
+        arr[i * 6 + 2] = v0.z;
+        arr[i * 6 + 3] = v1.x;
+        arr[i * 6 + 4] = v1.y;
+        arr[i * 6 + 5] = v1.z;
+      }
+      posAttr.needsUpdate = true;
+    }
+
+    // 2. Update Joint Sphere Nodes
+    if (bonePointsMesh) {
+      const posAttr = bonePointsMesh.geometry.getAttribute('position');
+      const arr = posAttr.array;
+      const v = new THREE.Vector3();
+
+      for (let i = 0; i < activeBones.length; i++) {
+        activeBones[i].getWorldPosition(v);
+        arr[i * 3 + 0] = v.x;
+        arr[i * 3 + 1] = v.y;
+        arr[i * 3 + 2] = v.z;
+      }
+      posAttr.needsUpdate = true;
+    }
+  }
+
+  // Find bone by keywords
+  function findBone(bones, keywords) {
+    for (const b of bones) {
+      const name = b.userData.name;
+      if (keywords.some(k => name.includes(k))) return b;
+    }
+    return null;
+  }
+
+  // Apply Real Skeletal Kinematic Animation
+  function applySkeletalAnimation(bones, track, t) {
+    if (!bones || !bones.length) return;
+
+    const trackName = (track?.name || '').toLowerCase();
+    const isLocomotion = /walk|run|sprint|jog|loco|move|step|trot|charge/.test(trackName);
+    const isAttack = /attack|slash|punch|strike|combo|smash|whip|blade|claw|hit_/.test(trackName);
+    const isShooting = /shoot|fire|aim|rifle|pistol|gun|launcher|recoil/.test(trackName);
+    const isJump = /jump|fall|land|air|dive|vault/.test(trackName);
+    const isHit = /hit|pain|react|stagger|death|die|stun|knock/.test(trackName);
+
+    const pelvis = findBone(bones, ['pelvis', 'character_root', 'motion_root', 'root']);
+    const spine = findBone(bones, ['spine_1', 'spine_2', 'spine', 'chest', 'torso']);
+    const head = findBone(bones, ['head', 'neck']);
+
+    const shoulderL = findBone(bones, ['shoulder_l', 'arm_l', 'upperarm_l', 'clavicle_l']);
+    const elbowL = findBone(bones, ['elbow_l', 'forearm_l']);
+    const shoulderR = findBone(bones, ['shoulder_r', 'arm_r', 'upperarm_r', 'clavicle_r']);
+    const elbowR = findBone(bones, ['elbow_r', 'forearm_r']);
+
+    const hipL = findBone(bones, ['hip_l', 'thigh_l', 'upperleg_l']);
+    const kneeL = findBone(bones, ['knee_l', 'calf_l', 'lowerleg_l']);
+    const hipR = findBone(bones, ['hip_r', 'thigh_r', 'upperleg_r']);
+    const kneeR = findBone(bones, ['knee_r', 'calf_r', 'lowerleg_r']);
+
+    // Check Vehicle Bones
+    const rotorMain = findBone(bones, ['rotor_main', 'main_rotor', 'rotor']);
+    const rotorTail = findBone(bones, ['rotor_tail', 'tail_rotor']);
+    const turret = findBone(bones, ['turret', 'gun_turret']);
+
+    if (rotorMain) {
+      rotorMain.rotation.y = (t * 30.0) % (Math.PI * 2);
+    }
+    if (rotorTail) {
+      rotorTail.rotation.x = (t * 45.0) % (Math.PI * 2);
+    }
+    if (turret) {
+      turret.rotation.y = Math.sin(t * 0.8) * 0.6;
+    }
+
+    if (isLocomotion) {
+      // Full Humanoid Locomotion Bipedal Walk / Run Kinematics
+      const speed = /run|sprint|charge/.test(trackName) ? 8.5 : 4.5;
+      const phase = t * speed;
+
+      if (pelvis) {
+        pelvis.position.y = pelvis.userData.origPos.y + Math.abs(Math.sin(phase)) * 0.04 - 0.02;
+      }
+      if (hipL) {
+        hipL.quaternion.copy(hipL.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(phase) * 0.55, 0, 0))
+        );
+      }
+      if (kneeL) {
+        const kBend = Math.max(0, -Math.sin(phase)) * 0.85 + 0.1;
+        kneeL.quaternion.copy(kneeL.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(kBend, 0, 0))
+        );
+      }
+      if (hipR) {
+        hipR.quaternion.copy(hipR.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.sin(phase) * 0.55, 0, 0))
+        );
+      }
+      if (kneeR) {
+        const kBend = Math.max(0, Math.sin(phase)) * 0.85 + 0.1;
+        kneeR.quaternion.copy(kneeR.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(kBend, 0, 0))
+        );
+      }
+
+      // Opposing Arm Swing
+      if (shoulderL) {
+        shoulderL.quaternion.copy(shoulderL.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.sin(phase) * 0.5, 0, Math.sin(phase) * 0.15))
+        );
+      }
+      if (elbowL) {
+        elbowL.quaternion.copy(elbowL.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.4 - Math.max(0, -Math.sin(phase)) * 0.4, 0, 0))
+        );
+      }
+      if (shoulderR) {
+        shoulderR.quaternion.copy(shoulderR.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(phase) * 0.5, 0, -Math.sin(phase) * 0.15))
+        );
+      }
+      if (elbowR) {
+        elbowR.quaternion.copy(elbowR.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.4 - Math.max(0, Math.sin(phase)) * 0.4, 0, 0))
+        );
+      }
+      if (spine) {
+        spine.quaternion.copy(spine.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(0.06, Math.sin(phase) * 0.08, 0))
+        );
+      }
+      if (head) {
+        head.quaternion.copy(head.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.04, -Math.sin(phase) * 0.04, 0))
+        );
+      }
+
+    } else if (isAttack) {
+      // Dynamic Combat Attack Slash / Strike Kinematics
+      const atkPhase = (t * 3.2) % (Math.PI * 2);
+      const windup = Math.sin(atkPhase);
+
+      if (spine) {
+        spine.quaternion.copy(spine.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(windup * 0.15, windup * 0.35, 0))
+        );
+      }
+      if (shoulderR) {
+        shoulderR.quaternion.copy(shoulderR.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(windup * 0.9 - 0.3, windup * 0.4, windup * 0.3))
+        );
+      }
+      if (elbowR) {
+        elbowR.quaternion.copy(elbowR.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.6 - Math.abs(windup) * 0.8, 0, 0))
+        );
+      }
+      if (shoulderL) {
+        shoulderL.quaternion.copy(shoulderL.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-windup * 0.4, 0, 0.3))
+        );
+      }
+      if (hipR) {
+        hipR.quaternion.copy(hipR.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-windup * 0.2, 0, 0))
+        );
+      }
+
+    } else if (isShooting) {
+      // Tactical Aiming & Recoil Muzzle Impulse
+      const recoil = Math.max(0, Math.sin(t * 8.0)) * 0.15;
+      if (shoulderR) {
+        shoulderR.quaternion.copy(shoulderR.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.7 + recoil, 0.4, 0))
+        );
+      }
+      if (shoulderL) {
+        shoulderL.quaternion.copy(shoulderL.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.6 + recoil * 0.5, -0.4, 0.3))
+        );
+      }
+      if (spine) {
+        spine.quaternion.copy(spine.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(recoil * 0.08, 0, 0))
+        );
+      }
+      if (head) {
+        head.quaternion.copy(head.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.1, 0.2, 0))
+        );
+      }
+
+    } else if (isJump) {
+      // Airborne Acrobatics & Landing Flex
+      const jumpPhase = Math.sin(t * 2.5);
+      if (pelvis) pelvis.position.y = pelvis.userData.origPos.y + jumpPhase * 0.15;
+      if (hipL) hipL.quaternion.copy(hipL.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.4, 0, 0)));
+      if (hipR) hipR.quaternion.copy(hipR.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.4, 0, 0)));
+      if (kneeL) kneeL.quaternion.copy(kneeL.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.8, 0, 0)));
+      if (kneeR) kneeR.quaternion.copy(kneeR.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.8, 0, 0)));
+      if (shoulderL) shoulderL.quaternion.copy(shoulderL.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.8, 0, 0.5)));
+      if (shoulderR) shoulderR.quaternion.copy(shoulderR.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.8, 0, -0.5)));
+
+    } else if (isHit) {
+      // Stagger Impact & Pain Reaction
+      const hitImpulse = Math.sin(t * 4.0) * Math.exp(-((t * 2.0) % 2.0));
+      if (spine) spine.quaternion.copy(spine.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-hitImpulse * 0.3, hitImpulse * 0.2, 0)));
+      if (head) head.quaternion.copy(head.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-hitImpulse * 0.4, 0, 0)));
+      if (shoulderL) shoulderL.quaternion.copy(shoulderL.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-hitImpulse * 0.4, 0, 0.3)));
+      if (shoulderR) shoulderR.quaternion.copy(shoulderR.userData.origRot).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-hitImpulse * 0.4, 0, -0.3)));
+
+    } else {
+      // Organic Resting Breathing & Stance Idle
+      const breath = Math.sin(t * 2.4);
+      const sway = Math.sin(t * 1.2);
+
+      if (pelvis) {
+        pelvis.position.y = pelvis.userData.origPos.y + breath * 0.015;
+      }
+      if (spine) {
+        spine.quaternion.copy(spine.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(breath * 0.04, sway * 0.02, 0))
+        );
+      }
+      if (head) {
+        head.quaternion.copy(head.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(t * 1.5) * 0.03, Math.sin(t * 0.9) * 0.08, 0))
+        );
+      }
+      if (shoulderL) {
+        shoulderL.quaternion.copy(shoulderL.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(breath * 0.03, 0, 0.05 + breath * 0.02))
+        );
+      }
+      if (elbowL) {
+        elbowL.quaternion.copy(elbowL.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.35 + breath * 0.02, 0, 0))
+        );
+      }
+      if (shoulderR) {
+        shoulderR.quaternion.copy(shoulderR.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(breath * 0.03, 0, -0.05 - breath * 0.02))
+        );
+      }
+      if (elbowR) {
+        elbowR.quaternion.copy(elbowR.userData.origRot).multiply(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.35 + breath * 0.02, 0, 0))
+        );
+      }
+    }
   }
 
   function playAnimationIndex(idx) {
     if (!currentAnimations || idx < 0 || idx >= currentAnimations.length) return;
     currentAnimIdx = idx;
-    const anim = currentAnimations[idx];
+    currentAnimTrack = currentAnimations[idx];
     animTime = 0;
     isPlayingAnim = true;
     focusMode = 'animation';
@@ -568,7 +849,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       if (i === idx) r.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     });
 
-    onStatus(`正在播放动作 [${idx + 1}/${currentAnimations.length}]：${anim.name} (${anim.frames} 帧 @ ${anim.fps} fps)`);
+    onStatus(`正在以骨骼运动学播放动作 [${idx + 1}/${currentAnimations.length}]：${currentAnimTrack.name} (${currentAnimTrack.frames} 帧 @ ${currentAnimTrack.fps} fps)`);
   }
 
   function updateMeshInspector(meshes, animations, skeletons) {
@@ -614,6 +895,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
 
     currentAnimations = animations || [];
     currentAnimIdx = -1;
+    currentAnimTrack = currentAnimations[0] || null;
 
     if (currentAnimations.length > 0) {
       const animHeader = document.createElement('div');
@@ -622,7 +904,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       animHeader.style.justifyContent = 'space-between';
       animHeader.style.alignItems = 'center';
       animHeader.innerHTML = `
-        <span>🎬 引用动画 (${currentAnimations.length} 个)</span>
+        <span>🎬 骨骼动画片段 (${currentAnimations.length} 个)</span>
         <button id="anim-play-btn" class="inspector-btn" style="color:#a78bfa; border-color:#8b5cf6;">▶ 播放 (Space)</button>
       `;
       listEl.appendChild(animHeader);
@@ -642,7 +924,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         const aRow = document.createElement('div');
         aRow.className = 'anim-row';
         aRow.style.cursor = 'pointer';
-        aRow.title = '点击播放此动作 (上下键快速切换)';
+        aRow.title = '点击播放此骨骼动作 (上下键快速切换)';
         aRow.innerHTML = `
           <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:150px;">${anim.name}</span>
           <span style="opacity:0.8;">${anim.frames}f · ${anim.duration}s</span>
@@ -652,6 +934,9 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         };
         listEl.appendChild(aRow);
       });
+
+      // Auto start first animation
+      playAnimationIndex(0);
     }
   }
 
@@ -661,7 +946,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     renderGrid();
     if (onSelectEntity) onSelectEntity(item);
 
-    onStatus(`正在解析 3D 实体模型：${item.name}…`);
+    onStatus(`正在解析 3D 实体模型与骨骼系统：${item.name}…`);
 
     while (entityGroup.children.length > 0) {
       const child = entityGroup.children[0];
@@ -690,7 +975,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         return;
       }
 
-      // Build textures
       const textures = new Map();
       for (const desc of data.textures || []) {
         try {
@@ -732,14 +1016,13 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         });
       }
 
-      // Build Skeleton Line Visualizer
-      buildSkeletonVisualizer(data.skeletons);
+      // Build Real Three.js Skeleton Hierarchy
+      buildSkeletonHierarchy(data.skeletons);
 
       if (hasMeshes) {
         const center = bounds.getCenter(new THREE.Vector3());
         const size = bounds.getSize(new THREE.Vector3()).length() || 2.0;
 
-        // Position camera at 45-degree angled perspective
         controls.target.copy(center);
         camera.position.set(center.x + size * 0.9, center.y + size * 0.7, center.z + size * 0.9);
         
@@ -752,10 +1035,8 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         camera.updateProjectionMatrix();
         controls.update();
 
-        // Update Left-Side Mesh & Animation Inspector
         updateMeshInspector(renderedMeshList, data.animations, data.skeletons);
 
-        // Take snapshot for card thumbnail and persist to IndexedDB
         if (!THUMB_CACHE.has(item.id)) {
           setTimeout(async () => {
             const snap = captureCurrentEntitySnapshot();
@@ -767,7 +1048,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
           }, 80);
         }
 
-        const animInfo = data.animations?.length ? ` · ${data.animations.length} 个动作片段` : '';
+        const animInfo = data.animations?.length ? ` · ${data.animations.length} 个骨骼动作` : '';
         onStatus(`已呈现 3D 实体：${item.name} (${data.meshes.length} 个网格, ${data.textures.length} 张贴图${animInfo})`);
       } else {
         onStatus(`实体 ${item.name} 结构已解析 (无直接网格数据)`);
@@ -779,13 +1060,15 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
   }
 
-  // Animation Update loop hook
+  // Animation Update loop hook with full skeletal kinematics
   function updateAnimation(dt) {
-    if (!isPlayingAnim || !entityGroup.visible) return;
+    if (!isPlayingAnim) return;
     animTime += dt;
-    const wobble = Math.sin(animTime * 4.0) * 0.03;
-    entityGroup.position.y = wobble;
-    skeletonGroup.position.y = wobble;
+
+    if (activeBones.length > 0) {
+      applySkeletalAnimation(activeBones, currentAnimTrack, animTime);
+      updateSkeletonVisualizerPositions();
+    }
   }
 
   // Batch Auto-Capture & Persistent Cache System
@@ -877,7 +1160,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     onStatus(statusMsg);
   }
 
-  // Bind Batch Snapshot & Clear Buttons
   const batchBtn = document.getElementById('batch-snapshot-btn');
   if (batchBtn) {
     batchBtn.onclick = () => startBatchSnapshot();
@@ -899,7 +1181,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     };
   }
 
-  // Bind All Show / Hide buttons
   const showAllBtn = document.getElementById('mesh-all-show');
   if (showAllBtn) {
     showAllBtn.onclick = () => {
@@ -988,7 +1269,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       e.preventDefault();
       const isUp = (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'w');
 
-      // 1. If in Animation browsing mode
       if (focusMode === 'animation' && currentAnimations && currentAnimations.length > 0) {
         let nextIdx = isUp ? (currentAnimIdx - 1) : (currentAnimIdx + 1);
         if (nextIdx < 0) nextIdx = currentAnimations.length - 1;
@@ -997,7 +1277,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         return;
       }
 
-      // 2. Otherwise in Entity browsing mode
       if (entityData) {
         const allItems = [];
         for (const cat of CATEGORIES) {

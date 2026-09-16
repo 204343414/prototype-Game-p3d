@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__))))
 
 from entity_catalog import (
-    CATEGORY_POWERS, CATEGORY_VEHICLES, CATEGORY_CHARACTERS, CATEGORY_PROPS,
+    CATEGORY_POWERS, CATEGORY_VEHICLES, CATEGORY_CHARACTERS, CATEGORY_PEDESTRIANS, CATEGORY_PROPS,
     classify_entry, inspect_p3d_package, parse_props_library,
     GEOMETRY, POLYSKIN, SKELETON_V1, SKELETON_V2, ANIMATION, COMPOSITE_DRAWABLE, TEXTURE
 )
@@ -29,6 +29,7 @@ class EntityCatalogTests(unittest.TestCase):
         self.assertEqual(classify_entry(r"\art\packages\missions\tank_ram_marine\tank_ram_marine.p3d.rz"), CATEGORY_VEHICLES)
         self.assertEqual(classify_entry(r"\art\packages\missions\DanaMercer\DanaMercer.p3d.rz"), CATEGORY_CHARACTERS)
         self.assertEqual(classify_entry(r"\art\packages\missions\Brawler\Brawler.p3d.rz"), CATEGORY_CHARACTERS)
+        self.assertEqual(classify_entry(r"\art\packages\pedestrians\ped_f_LI_01_MT_01_MT_01\ped_f_LI_01_MT_01_MT_01.p3d.rz"), CATEGORY_PEDESTRIANS)
         self.assertEqual(classify_entry(r"\art\locations\manhattan\props.p3d.rz"), CATEGORY_PROPS)
         self.assertIsNone(classify_entry(r"\art\alex\alex_tod.p3d.rz"))
         self.assertIsNone(classify_entry(r"\art\packages\powers\alex_claws\alex_claws_fig.p3d.rz"))

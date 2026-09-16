@@ -1,15 +1,16 @@
 """Prototype entity catalog and census engine.
 
-Categorizes and indexes all Pure3D entities in art.rcf into four standard categories:
+Categorizes and indexes all Pure3D entities in art.rcf into five standard categories:
   1. powers: Alex Mercer base model, weapon morphs (Claws, Blade, Hammerfist, Whipfist,
-     Musclemass), defensive powers (Shield, Armor), devastators (Spines, Parasite),
-     and military/civilian disguises.
-  2. vehicles: Military vehicles (Tanks, APCs, Blackhawk, Gunship, F45 Jet) and
+     Musclemass), defensive powers (Shield, Armor), devastators (Groundspike, Tendril Barrage),
+     and military/civilian tactical disguises.
+  2. vehicles: Heavy military armor (Tanks, APCs, Blackhawk, Gunship, F45 Jet) and
      civilian city vehicles (Taxis, Police cars, Ambulances, Buses, Trucks, Sedans).
   3. characters: Story NPCs (Dana, Karen, Greene, Specialist Cross, Dr. Ragland),
      bosses/infected (Brawler, Hunter, Hydra, Supreme Hunter), SuperSoldiers,
-     Blackwatch troopers, Marines, and pedestrians.
-  4. props: Interactive & destructible Manhattan environment entities (Water towers,
+     Blackwatch troopers, and Marines.
+  4. pedestrians: Manhattan civilians and pedestrian demographic NPCs (ped_m_*, ped_f_*).
+  5. props: Interactive & destructible Manhattan environment entities (Water towers,
      HVAC ventilation units, transformers, antennas, barriers, bus shelters, hydrants).
 """
 from __future__ import annotations
@@ -45,87 +46,139 @@ TEXTURE = 0x00019000
 CATEGORY_POWERS = "powers"
 CATEGORY_VEHICLES = "vehicles"
 CATEGORY_CHARACTERS = "characters"
+CATEGORY_PEDESTRIANS = "pedestrians"
 CATEGORY_PROPS = "props"
 
-CATEGORIES = (CATEGORY_POWERS, CATEGORY_VEHICLES, CATEGORY_CHARACTERS, CATEGORY_PROPS)
+CATEGORIES = (
+    CATEGORY_POWERS,
+    CATEGORY_VEHICLES,
+    CATEGORY_CHARACTERS,
+    CATEGORY_PEDESTRIANS,
+    CATEGORY_PROPS,
+)
 
 CATEGORY_NAMES_ZH = {
-    CATEGORY_POWERS: "主角形态与能力",
-    CATEGORY_VEHICLES: "载具系统",
-    CATEGORY_CHARACTERS: "角色与生物",
-    CATEGORY_PROPS: "环境与可破坏道具",
+    CATEGORY_POWERS: "主角形态与生化武装",
+    CATEGORY_VEHICLES: "载具与重装武备系统",
+    CATEGORY_CHARACTERS: "剧情角色、变异体与守望军团",
+    CATEGORY_PEDESTRIANS: "曼哈顿市民与路人 NPC",
+    CATEGORY_PROPS: "曼哈顿环境与可破坏道具",
 }
 
 # Friendly entity display titles
 FRIENDLY_NAMES = {
-    # Powers
+    # Powers (主角形态与能力)
     "alex": "Alex Mercer (默认兜帽本体)",
-    "alex_claws": "利爪形态 (Claws)",
-    "alex_blades": "利刃/刀锋形态 (Blade)",
-    "alex_hammerfist": "充气重拳 (Hammerfist)",
-    "alex_whipfist": "鞭拳形态 (Whipfist)",
-    "alex_musclemass": "肌肉强化 (Musclemass)",
-    "alex_shield": "生化护盾 (Shield)",
-    "alex_armour": "重装甲模式 (Armor)",
-    "alex_spines": "墓碑地刺 (Groundspike)",
-    "alex_parasite": "万千触须 (Tendril Barrage)",
-    "soldier_disguise": "常规陆军伪装 (Soldier)",
-    "commander_disguise": "军方指挥官伪装 (Commander)",
-    "pilot_disguise": "飞行员伪装 (Pilot)",
-    "bwtrooper_disguise": "黑色守望突击队员 (Blackwatch Trooper)",
-    "bwofficer_disguise": "黑色守望军官 (Blackwatch Officer)",
-    "bwscientist2008_disguise": "便衣科学家伪装 (Scientist)",
-    "alexshotbody_disguise": "破损负伤躯体 (Damaged Body)",
-    # Vehicles
-    "tank_ram_marine": "M1A2 艾布拉姆斯坦克",
-    "tank_ram_thermobolic": "热压重型坦克 (Thermobaric)",
+    "alex_claws": "生化利爪形态 (Claws)",
+    "alex_blades": "致命利刃形态 (Blade)",
+    "alex_hammerfist": "充气重锤巨拳 (Hammerfist)",
+    "alex_whipfist": "远距生化鞭拳 (Whipfist)",
+    "alex_musclemass": "肌肉强化模式 (Musclemass)",
+    "alex_shield": "生化护盾模式 (Shield)",
+    "alex_armour": "充能重装甲模式 (Armor)",
+    "alex_spines": "墓碑地刺歼灭技 (Groundspike)",
+    "alex_parasite": "万千触须终结技 (Tendril Barrage)",
+    "alexshotbody_disguise": "负伤残躯 (Damaged Body)",
+    "soldier_disguise": "陆军战术伪装 (Soldier Disguise)",
+    "commander_disguise": "军方指挥官伪装 (Commander Disguise)",
+    "pilot_disguise": "军用飞行员伪装 (Pilot Disguise)",
+    "bwtrooper_disguise": "黑色守望突击队员伪装 (Blackwatch Trooper)",
+    "bwofficer_disguise": "黑色守望军官伪装 (Blackwatch Officer)",
+    "bwscientist2008_disguise": "便衣科研人员伪装 (Scientist Disguise)",
+    "bwplainclothes01_disguise": "便衣特工 01 伪装 (Plainclothes Agent 01)",
+    "bwplainclothes02_disguise": "便衣特工 02 伪装 (Plainclothes Agent 02)",
+    # Vehicles (载具与重装武备)
+    "tank_ram_marine": "M1A2 艾布拉姆斯主战坦克",
+    "tank_ram_thermobolic": "热压重型攻坚坦克 (Thermobaric)",
     "apc_m2_marine": "M2 步兵装甲运兵车 (APC)",
-    "heli_bh_marine": "UH-60 黑鹰直升机",
+    "heli_bh_marine": "UH-60 黑鹰武装运输直升机",
     "heli_gunship_marine_core": "AH-64 阿帕奇武装直升机",
-    "f45Thunder001Military": "F-45 雷霆战斗机",
+    "f45Thunder001Military": "F-45 雷霆超音速战斗机",
     "bloodtoxDriller001": "毒气钻机车 (Bloodtox Driller)",
-    "generic_taxi": "纽约黄色出租车 (Taxi)",
+    "generic_taxi": "纽约经典黄色出租车 (Taxi)",
     "Mini_van_Taxi": "商务出租车 (Minivan Taxi)",
     "police_car": "纽约警车 (Police Car)",
-    "ambulance": "紧急救护车 (Ambulance)",
-    "busOS001": "单层城市巴士",
-    "redTourBus001": "双层红色观光巴士",
-    "limoOS001": "加长礼宾豪华轿车",
-    "humveeAvenger001": "复仇者防空悍马",
+    "ambulance": "紧急救援救护车 (Ambulance)",
+    "busOS001": "城市单层公交巴士",
+    "redTourBus001": "曼哈顿双层红色观光巴士",
+    "limoOS001": "加长礼宾豪华轿车 (Limo)",
+    "humveeAvenger001": "复仇者防空悍马 (Humvee)",
     "titaniumGT001": "钛金跑车 GT",
     "tankerTruck001": "大型重载油罐车",
-    # Characters
+    "garbageTruck001": "城市环卫垃圾车",
+    "fireTruck001": "重型消防云梯车",
+    "flatbedTruck001": "平板重型卡车",
+    "armoredCar001": "重装防弹运钞车",
+    # Characters (剧情角色、变异体与守望部队)
     "Soldier": "黑色守望与陆军军备全家桶 (Soldier/Blackwatch/Weapons)",
     "soldier": "黑色守望与陆军军备全家桶 (Soldier/Blackwatch/Weapons)",
     "DanaMercer": "达娜·墨瑟 (Dana Mercer)",
     "karen_parker": "凯伦·帕克 (Karen Parker)",
     "ElizabethGreene": "伊丽莎白·格林 (Elizabeth Greene)",
     "mother": "格林母体巨兽形态 (Mother)",
-    "specialist": "队长 Cross (Specialist)",
+    "specialist": "黑色守望指挥官 Cross (Specialist)",
+    "Specialist": "黑色守望指挥官 Cross (Specialist)",
     "ragland_suit": "拉格兰医生 (Dr. Ragland)",
+    "ragland_morgue_ingame": "停尸房内的拉格兰医生",
     "SuperSoldier": "黑色守望超级士兵 (Super Soldier)",
+    "SuperSoldierE10M4": "强化型超级士兵 (Super Soldier Elite)",
     "Brawler": "格斗者变异体 (Brawler)",
     "LeaderHunter": "猎手领袖 (Leader Hunter)",
-    "StripedLeaderHunter": "斑纹猎手领袖",
+    "StripedLeaderHunter": "斑纹猎手领袖 (Striped Leader Hunter)",
     "Hydra": "九头蛇巨兽触手 (Hydra)",
     "supreme_hunter": "终极至尊猎手 (Supreme Hunter)",
+    "supreme_hunter_weak": "虚弱状态至尊猎手",
+    "bw_scientist_2008": "黑色守望主任科学家",
+    "infected2_all": "二次感染变异人群",
+    "infected_businessman_fat": "变异肥胖商人",
 }
 
 
 def classify_entry(name: str) -> str | None:
-    """Classify an RCF entry path into one of the 4 sub-categories."""
-    clean = name.lower()
+    """Classify an RCF entry path into one of the 5 standard categories."""
+    clean = name.lower().replace("\\", "/")
     if clean.endswith(("_tod.p3d.rz", "_fig.p3d.rz", "_lod.p3d.rz", "_camera.p3d.rz", "_nis.p3d.rz")):
         return None
-    if "\\powers\\" in clean or clean == "\\art\\alex\\alex.p3d.rz":
+    if "/powers/" in clean or clean == "/art/alex/alex.p3d.rz":
         return CATEGORY_POWERS
-    if "\\vehicles\\" in clean or ("\\missions\\" in clean and any(k in clean for k in ("tank", "apc", "heli", "f45", "driller"))):
+    if "/vehicles/" in clean or ("/missions/" in clean and any(k in clean for k in ("tank", "apc", "heli", "f45", "driller"))):
         return CATEGORY_VEHICLES
-    if ("\\missions\\" in clean and not any(k in clean for k in ("tank", "apc", "heli", "f45", "driller", "props", "tod", "fig", "effects", "characters"))) or "\\pedestrians\\" in clean:
+    if "/pedestrians/" in clean:
+        return CATEGORY_PEDESTRIANS
+    if "/missions/" in clean and not any(k in clean for k in ("tank", "apc", "heli", "f45", "driller", "props", "tod", "fig", "effects", "characters")):
         return CATEGORY_CHARACTERS
-    if clean == "\\art\\locations\\manhattan\\props.p3d.rz":
+    if clean == "/art/locations/manhattan/props.p3d.rz":
         return CATEGORY_PROPS
     return None
+
+
+def format_pedestrian_title(entity_id: str) -> str:
+    """Generate friendly localized names for pedestrian variants."""
+    clean = entity_id
+    gender = "女性市民" if "ped_f_" in clean else ("男性市民" if "ped_m_" in clean else "纽约市民")
+    
+    tags = []
+    if "inf_" in clean:
+        tags.append("轻度感染")
+    if "su_" in clean or "suit" in clean.lower():
+        tags.append("西装")
+    elif "bu_" in clean or "business" in clean.lower():
+        tags.append("商务")
+    elif "ct_" in clean or "coat" in clean.lower():
+        tags.append("大衣外套")
+    elif "li_" in clean:
+        tags.append("休闲夹克")
+    elif "uw_" in clean:
+        tags.append("冬装棉服")
+    elif "fd_" in clean:
+        tags.append("卫衣长裤")
+    elif "hr_" in clean:
+        tags.append("短袖衬衫")
+    elif "ue_" in clean:
+        tags.append("便服")
+        
+    tag_str = f" [{', '.join(tags)}]" if tags else ""
+    return f"{gender}{tag_str} ({entity_id})"
 
 
 def inspect_p3d_package(data: bytes) -> dict[str, Any]:
@@ -244,7 +297,7 @@ def parse_props_library(data: bytes) -> list[dict[str, Any]]:
 _ENTITY_CATALOG_CACHE: dict[str, dict[str, Any]] = {}
 
 def build_entity_catalog(art_rcf_path: str) -> dict[str, Any]:
-    """Scan and index all entities from art.rcf into 4 standard categories."""
+    """Scan and index all entities from art.rcf into 5 standard categories."""
     if art_rcf_path in _ENTITY_CATALOG_CACHE:
         return _ENTITY_CATALOG_CACHE[art_rcf_path]
         
@@ -257,6 +310,7 @@ def build_entity_catalog(art_rcf_path: str) -> dict[str, Any]:
         CATEGORY_POWERS: [],
         CATEGORY_VEHICLES: [],
         CATEGORY_CHARACTERS: [],
+        CATEGORY_PEDESTRIANS: [],
         CATEGORY_PROPS: [],
     }
     
@@ -283,9 +337,16 @@ def build_entity_catalog(art_rcf_path: str) -> dict[str, Any]:
                 parts = [p for p in meta.name.split("\\") if p]
                 entity_id = parts[-1].replace(".p3d.rz", "")
                 
+                name = FRIENDLY_NAMES.get(entity_id)
+                if not name:
+                    if cat == CATEGORY_PEDESTRIANS:
+                        name = format_pedestrian_title(entity_id)
+                    else:
+                        name = entity_id
+                
                 catalog[cat].append({
                     "id": entity_id,
-                    "name": FRIENDLY_NAMES.get(entity_id, entity_id),
+                    "name": name,
                     "category": cat,
                     "entry_path": meta.name,
                     "size": entry.size,

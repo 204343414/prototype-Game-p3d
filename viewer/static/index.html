@@ -185,17 +185,18 @@
     <div id="entity-shelf-view">
       <div class="shelf-header">
         <div class="title-group">
-          <h2>📁 实体展厅 / 4大分类全览</h2>
+          <h2>📁 实体展厅 / 5大分类全景画廊</h2>
         </div>
         <div class="category-tabs">
           <button class="cat-tab active" data-cat="all">🌟 全部实体 (<span id="count-all">494</span>)</button>
-          <button class="cat-tab" data-cat="powers">⚡ 主角能力 (<span id="count-powers">19</span>)</button>
+          <button class="cat-tab" data-cat="powers">⚡ 主角形态与能力 (<span id="count-powers">19</span>)</button>
           <button class="cat-tab" data-cat="vehicles">🚗 载具系统 (<span id="count-vehicles">50</span>)</button>
-          <button class="cat-tab" data-cat="characters">🧟 角色与生物 (<span id="count-characters">151</span>)</button>
+          <button class="cat-tab" data-cat="characters">🧟 剧情角色与变异体 (<span id="count-characters">103</span>)</button>
+          <button class="cat-tab" data-cat="pedestrians">🚶 曼哈顿市民与路人 (<span id="count-pedestrians">116</span>)</button>
           <button class="cat-tab" data-cat="props">🏢 环境道具 (<span id="count-props">274</span>)</button>
         </div>
         <div class="shelf-search">
-          <input id="entity-search-full" type="search" placeholder="🔍 快速搜索 494 个实体 (如 claws, tank, soldier)..." />
+          <input id="entity-search-full" type="search" placeholder="🔍 快速搜索 494 个实体 (如 claws, tank, soldier, dana)..." />
         </div>
         <div class="shelf-actions">
           <button id="batch-snapshot-btn" class="batch-snap-btn" title="一键后台轮询生成所有实体的 1:1 3D 高清快照并永久缓存到浏览器">📸 自动拍照并持久缓存</button>
@@ -204,15 +205,15 @@
         </div>
       </div>
       <div id="entity-shelf-scroll" class="entity-shelf-scroll">
-        <!-- 4大子类独立分段与 1:1 照片网格 -->
+        <!-- 5大子类独立分段与 1:1 照片网格 -->
         <div id="entity-group-powers" class="entity-group-section">
           <div class="group-header">
             <div class="group-title-box">
               <span class="group-icon">⚡</span>
-              <h3 class="group-title">主角能力与武装形态 (Powers)</h3>
+              <h3 class="group-title">主角形态与生化武装 (Alex Mercer Powers & Morphs)</h3>
               <span id="sec-badge-powers" class="group-badge">19 款</span>
             </div>
-            <div class="group-desc">Alex Mercer 原型体、利爪、刀锋、重锤、充能装甲、地刺与伪装全形态</div>
+            <div class="group-desc">Alex Mercer 原型体、利爪、刀锋、重锤、充能装甲、地刺与军方/特工伪装全形态</div>
           </div>
           <div id="grid-powers" class="group-grid"></div>
         </div>
@@ -221,7 +222,7 @@
           <div class="group-header">
             <div class="group-title-box">
               <span class="group-icon">🚗</span>
-              <h3 class="group-title">载具与重装武备系统 (Vehicles)</h3>
+              <h3 class="group-title">载具与重装武备系统 (Vehicles & Heavy Armament)</h3>
               <span id="sec-badge-vehicles" class="group-badge">50 款</span>
             </div>
             <div class="group-desc">M1A2 艾布拉姆斯主战坦克、黑鹰直升机、阿帕奇武装直升机、装甲运兵车、警车与民用车系</div>
@@ -233,19 +234,31 @@
           <div class="group-header">
             <div class="group-title-box">
               <span class="group-icon">🧟</span>
-              <h3 class="group-title">角色、感染生物与黑色守望部队 (Characters & Creatures)</h3>
-              <span id="sec-badge-characters" class="group-badge">151 款</span>
+              <h3 class="group-title">剧情角色、感染生物与黑色守望部队 (Story NPCs & Bosses)</h3>
+              <span id="sec-badge-characters" class="group-badge">103 款</span>
             </div>
             <div class="group-desc">达娜·墨瑟、伊丽莎白·格林、克罗斯队长、超级士兵、猎手、九头蛇、至尊猎手及黑色守望军团</div>
           </div>
           <div id="grid-characters" class="group-grid"></div>
         </div>
 
+        <div id="entity-group-pedestrians" class="entity-group-section">
+          <div class="group-header">
+            <div class="group-title-box">
+              <span class="group-icon">🚶</span>
+              <h3 class="group-title">曼哈顿市民、人群与路人 NPC (Manhattan Pedestrians & Civilians)</h3>
+              <span id="sec-badge-pedestrians" class="group-badge">116 款</span>
+            </div>
+            <div class="group-desc">商务西装、大衣冬装、休闲便服各年龄段男女市民及初期轻度感染市民</div>
+          </div>
+          <div id="grid-pedestrians" class="group-grid"></div>
+        </div>
+
         <div id="entity-group-props" class="entity-group-section">
           <div class="group-header">
             <div class="group-title-box">
               <span class="group-icon">🏢</span>
-              <h3 class="group-title">曼哈顿环境道具与可破坏设施 (Props)</h3>
+              <h3 class="group-title">曼哈顿环境道具与可破坏设施 (Manhattan City Props)</h3>
               <span id="sec-badge-props" class="group-badge">274 件</span>
             </div>
             <div class="group-desc">屋顶水塔、大型变压器、空调外机、路障、消防栓、垃圾箱与核动力航母等城市动态道具</div>
@@ -353,6 +366,7 @@
           <button class="drawer-cat-tab" data-cat="powers">⚡能力</button>
           <button class="drawer-cat-tab" data-cat="vehicles">🚗载具</button>
           <button class="drawer-cat-tab" data-cat="characters">🧟角色</button>
+          <button class="drawer-cat-tab" data-cat="pedestrians">🚶路人</button>
           <button class="drawer-cat-tab" data-cat="props">🏢道具</button>
         </div>
         <div class="drawer-search-box">
