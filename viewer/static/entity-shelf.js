@@ -3,7 +3,8 @@
  * Full 5-Category Catalog, 3D Mesh Inspection, Skeleton_2 Bind Pose & Real GPU Animation Playback
  */
 
-import { makeMapTexture, makeMapMaterial } from './map-materials.js?v=20260917_01';
+import * as THREE from 'three';
+import { makeMapTexture, makeMapMaterial } from './map-materials.js';
 
 const CAT_ICONS = {
   powers: '⚡',
