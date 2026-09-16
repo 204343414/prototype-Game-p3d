@@ -20,7 +20,7 @@ function floats(encoded, Type, size) {
   return values;
 }
 
-export function createEntityShelf({ scene, camera, controls, renderer, onStatus }) {
+export function createEntityShelf({ scene, camera, controls, renderer, onStatus, onSelectEntity }) {
   let activeCategory = 'powers';
   let entityData = null;
   let currentEntity = null;
@@ -54,55 +54,81 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus 
       const el = document.getElementById(`count-${cat}`);
       if (el) el.textContent = count;
     }
+    const toggleCount = document.getElementById('toggle-count');
+    if (toggleCount && entityData) {
+      toggleCount.textContent = entityData.total_entities;
+    }
+  }
+
+  function renderCard(item, isDrawer = false) {
+    const card = document.createElement('div');
+    card.className = `entity-card ${currentEntity?.id === item.id ? 'active' : ''}`;
+    
+    const icon = CAT_ICONS[item.category] || '📦';
+    const shapeCount = item.shape_count || item.geometry_count || 1;
+    const skelCount = item.skeleton_count || 0;
+    const animCount = item.animation_count || 0;
+
+    card.innerHTML = `
+      <div class="card-preview-thumb" style="${isDrawer ? 'height:50px;' : ''}">
+        <div class="iso-box" style="${isDrawer ? 'width:24px; height:24px;' : ''}"></div>
+        <span class="cat-icon" style="${isDrawer ? 'font-size:18px;' : ''}">${icon}</span>
+      </div>
+      <div class="card-title" title="${item.name}">${item.name}</div>
+      <div class="card-meta">
+        <span class="card-badge geom" title="网格/形态数量">🧊 ${shapeCount}</span>
+        ${skelCount > 0 ? `<span class="card-badge skel" title="骨骼数量">🦴 ${skelCount}</span>` : ''}
+        ${animCount > 0 ? `<span class="card-badge anim" title="动画片段">🎬 ${animCount}</span>` : ''}
+      </div>
+    `;
+
+    card.onclick = () => selectEntity(item);
+    return card;
   }
 
   function renderGrid() {
-    const gridEl = document.getElementById('entity-grid');
-    if (!gridEl) return;
-    gridEl.innerHTML = '';
-
-    if (!entityData) {
-      gridEl.innerHTML = `<div style="grid-column:1/-1; padding:20px; text-align:center; color:#6b7280; font-size:12px;">正在加载实体清单…</div>`;
-      return;
-    }
+    const gridFull = document.getElementById('entity-grid-full');
+    const gridDrawer = document.getElementById('entity-grid-drawer');
+    if (!entityData) return;
 
     const items = (entityData.categories && entityData.categories[activeCategory]) || [];
-    const search = (document.getElementById('entity-search')?.value || '').trim().toLowerCase();
-    const filtered = items.filter(item => 
-      !search || 
-      item.name.toLowerCase().includes(search) || 
-      item.id.toLowerCase().includes(search)
-    );
+    
+    // 1. Full-screen Grid
+    if (gridFull) {
+      gridFull.innerHTML = '';
+      const searchFull = (document.getElementById('entity-search-full')?.value || '').trim().toLowerCase();
+      const filteredFull = items.filter(item => 
+        !searchFull || 
+        item.name.toLowerCase().includes(searchFull) || 
+        item.id.toLowerCase().includes(searchFull)
+      );
 
-    if (!filtered.length) {
-      gridEl.innerHTML = `<div style="grid-column:1/-1; padding:20px; text-align:center; color:#6b7280; font-size:12px;">未找到匹配的实体</div>`;
-      return;
+      if (!filteredFull.length) {
+        gridFull.innerHTML = `<div style="grid-column:1/-1; padding:40px; text-align:center; color:#6b7280; font-size:14px;">未找到匹配的实体</div>`;
+      } else {
+        for (const item of filteredFull) {
+          gridFull.appendChild(renderCard(item, false));
+        }
+      }
     }
 
-    for (const item of filtered) {
-      const card = document.createElement('div');
-      card.className = `entity-card ${currentEntity?.id === item.id ? 'active' : ''}`;
-      
-      const icon = CAT_ICONS[item.category] || '📦';
-      const shapeCount = item.shape_count || item.geometry_count || 1;
-      const skelCount = item.skeleton_count || 0;
-      const animCount = item.animation_count || 0;
+    // 2. Drawer Grid
+    if (gridDrawer) {
+      gridDrawer.innerHTML = '';
+      const searchDrawer = (document.getElementById('entity-search-drawer')?.value || '').trim().toLowerCase();
+      const filteredDrawer = items.filter(item => 
+        !searchDrawer || 
+        item.name.toLowerCase().includes(searchDrawer) || 
+        item.id.toLowerCase().includes(searchDrawer)
+      );
 
-      card.innerHTML = `
-        <div class="card-preview-thumb">
-          <div class="iso-box"></div>
-          <span class="cat-icon">${icon}</span>
-        </div>
-        <div class="card-title" title="${item.name}">${item.name}</div>
-        <div class="card-meta">
-          <span class="card-badge geom" title="网格/形态数量">🧊 ${shapeCount}</span>
-          ${skelCount > 0 ? `<span class="card-badge skel" title="骨骼数量">🦴 ${skelCount}</span>` : ''}
-          ${animCount > 0 ? `<span class="card-badge anim" title="动画片段">🎬 ${animCount}</span>` : ''}
-        </div>
-      `;
-
-      card.onclick = () => selectEntity(item);
-      gridEl.appendChild(card);
+      if (!filteredDrawer.length) {
+        gridDrawer.innerHTML = `<div style="grid-column:1/-1; padding:20px; text-align:center; color:#6b7280; font-size:11px;">无匹配项</div>`;
+      } else {
+        for (const item of filteredDrawer) {
+          gridDrawer.appendChild(renderCard(item, true));
+        }
+      }
     }
   }
 
@@ -110,6 +136,8 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus 
     currentEntity = item;
     currentShape = shapeName;
     renderGrid();
+    if (onSelectEntity) onSelectEntity(item);
+
     onStatus(`正在解析 3D 实体模型：${item.name}…`);
 
     // Clear previous entity meshes & skeleton
@@ -129,10 +157,12 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus 
 
     try {
       const artPath = document.getElementById('map-shared')?.value || '';
+      // For props, pass the item ID or first shape to isolate from other props
+      const targetShape = shapeName || (item.category === 'props' ? (item.shapes?.[0] || item.id) : '');
       const params = new URLSearchParams({
         path: artPath,
         entry: item.entry_path,
-        shape: shapeName || ''
+        shape: targetShape
       });
       const resp = await fetch(`/api/entity_mesh?${params}`);
       const data = await resp.json();
@@ -189,7 +219,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus 
         camera.updateProjectionMatrix();
         controls.update();
 
-        const shapesList = item.shapes ? ` · 可切换形态: ${item.shapes.join(', ')}` : '';
+        const shapesList = item.shapes ? ` · 可切换形态: ${item.shapes.length} 个` : '';
         onStatus(`已呈现 3D 实体：${item.name} (${data.meshes.length} 个网格, ${data.textures.length} 张贴图${shapesList})`);
       } else {
         onStatus(`实体 ${item.name} 结构已解析 (无直接网格数据)`);
@@ -200,21 +230,40 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus 
     }
   }
 
-  // Setup UI tabs & search listeners
-  const tabs = document.querySelectorAll('.cat-tab');
-  tabs.forEach(tab => {
+  // Setup Fullscreen Category Tabs
+  document.querySelectorAll('.shelf-header .cat-tab').forEach(tab => {
     tab.addEventListener('click', (e) => {
       const btn = e.target.closest('.cat-tab') || tab;
-      tabs.forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.shelf-header .cat-tab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
       activeCategory = btn.dataset.cat;
+      // Sync drawer tabs
+      document.querySelectorAll('.drawer-cat-tab').forEach(t => t.classList.toggle('active', t.dataset.cat === activeCategory));
       renderGrid();
     });
   });
 
-  const searchInput = document.getElementById('entity-search');
-  if (searchInput) {
-    searchInput.addEventListener('input', () => renderGrid());
+  // Setup Drawer Category Tabs
+  document.querySelectorAll('.drawer-cat-tab').forEach(tab => {
+    tab.addEventListener('click', (e) => {
+      const btn = e.target.closest('.drawer-cat-tab') || tab;
+      document.querySelectorAll('.drawer-cat-tab').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      activeCategory = btn.dataset.cat;
+      // Sync full tabs
+      document.querySelectorAll('.shelf-header .cat-tab').forEach(t => t.classList.toggle('active', t.dataset.cat === activeCategory));
+      renderGrid();
+    });
+  });
+
+  const searchFull = document.getElementById('entity-search-full');
+  if (searchFull) {
+    searchFull.addEventListener('input', () => renderGrid());
+  }
+
+  const searchDrawer = document.getElementById('entity-search-drawer');
+  if (searchDrawer) {
+    searchDrawer.addEventListener('input', () => renderGrid());
   }
 
   return {
