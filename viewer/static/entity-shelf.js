@@ -9,10 +9,12 @@ const CAT_ICONS = {
 };
 
 function floats(encoded, Type, size) {
+  if (!encoded) return new Type(0);
   const raw = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
   const view = new DataView(raw.buffer);
-  const values = new Type(raw.length / size);
-  for (let i = 0; i < values.length; i++) {
+  const count = Math.floor(raw.length / size);
+  const values = new Type(count);
+  for (let i = 0; i < count; i++) {
     values[i] = size === 4 ? view.getFloat32(i * size, true) : view.getUint16(i * size, true);
   }
   return values;
@@ -56,10 +58,15 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus 
 
   function renderGrid() {
     const gridEl = document.getElementById('entity-grid');
-    if (!gridEl || !entityData) return;
+    if (!gridEl) return;
     gridEl.innerHTML = '';
 
-    const items = entityData.categories[activeCategory] || [];
+    if (!entityData) {
+      gridEl.innerHTML = `<div style="grid-column:1/-1; padding:20px; text-align:center; color:#6b7280; font-size:12px;">正在加载实体清单…</div>`;
+      return;
+    }
+
+    const items = (entityData.categories && entityData.categories[activeCategory]) || [];
     const search = (document.getElementById('entity-search')?.value || '').trim().toLowerCase();
     const filtered = items.filter(item => 
       !search || 
@@ -110,7 +117,10 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus 
       const child = entityGroup.children[0];
       entityGroup.remove(child);
       if (child.geometry) child.geometry.dispose();
-      if (child.material) child.material.dispose();
+      if (child.material) {
+        if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+        else child.material.dispose();
+      }
     }
     if (skeletonHelper) {
       scene.remove(skeletonHelper);
@@ -134,7 +144,11 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus 
       // Build textures
       const textures = new Map();
       for (const desc of data.textures || []) {
-        textures.set(desc.key, makeMapTexture(desc));
+        try {
+          textures.set(desc.key, makeMapTexture(desc));
+        } catch (e) {
+          console.warn('Texture parse failed:', desc.key, e);
+        }
       }
 
       let hasMeshes = false;
@@ -144,6 +158,8 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus 
         const positions = floats(mesh.positions, Float32Array, 4);
         const indices = floats(mesh.indices, Uint16Array, 2);
         const uv = mesh.uv ? floats(mesh.uv, Float32Array, 4) : new Float32Array(mesh.vertex_count * 2);
+
+        if (positions.length < 3 || indices.length < 3) continue;
 
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -167,16 +183,16 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus 
 
         // Position camera at classic 45-degree angled snapshot perspective!
         controls.target.copy(center);
-        camera.position.set(center.x + size * 1.0, center.y + size * 0.75, center.z + size * 1.0);
-        camera.near = size / 100;
-        camera.far = size * 100;
+        camera.position.set(center.x + size * 0.9, center.y + size * 0.7, center.z + size * 0.9);
+        camera.near = Math.max(0.01, size / 100);
+        camera.far = Math.max(100, size * 100);
         camera.updateProjectionMatrix();
         controls.update();
 
         const shapesList = item.shapes ? ` · 可切换形态: ${item.shapes.join(', ')}` : '';
         onStatus(`已呈现 3D 实体：${item.name} (${data.meshes.length} 个网格, ${data.textures.length} 张贴图${shapesList})`);
       } else {
-        onStatus(`实体 ${item.name} 结构已解析 (无独立 TriangleList 网格)`);
+        onStatus(`实体 ${item.name} 结构已解析 (无直接网格数据)`);
       }
 
     } catch (err) {
@@ -187,10 +203,11 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus 
   // Setup UI tabs & search listeners
   const tabs = document.querySelectorAll('.cat-tab');
   tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
+    tab.addEventListener('click', (e) => {
+      const btn = e.target.closest('.cat-tab') || tab;
       tabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      activeCategory = tab.dataset.cat;
+      btn.classList.add('active');
+      activeCategory = btn.dataset.cat;
       renderGrid();
     });
   });
@@ -203,6 +220,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus 
   return {
     loadCatalog,
     selectEntity,
+    renderGrid,
     setVisible(visible) {
       entityGroup.visible = visible;
       if (skeletonHelper) skeletonHelper.visible = visible;
