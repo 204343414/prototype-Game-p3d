@@ -177,7 +177,7 @@
       <button class="tab" data-view="audio">音效</button>
       <button class="tab" data-view="tools">GLB 浏览器</button>
     </div>
-    <div class="connection">127.0.0.1:8420</div>
+    <div class="connection">正在连接 8421 服务…</div>
   </div>
 
   <div id="main">
@@ -298,86 +298,67 @@
       <div id="panel-audio" class="panel hidden">
         <h2>音频归档</h2>
         <div class="sub">两个 audio archive 已复核，解码待实现</div>
-        <div style="padding: 8px;">
-          <div class="cell-item">
-            <div class="name">00audio.rcf</div>
-            <div class="info">归档统计已完成</div>
-          </div>
-          <div class="cell-item">
-            <div class="name">01audio.rcf</div>
-            <div class="info">归档统计已完成</div>
-          </div>
-        </div>
-        <div class="sub">音频解码和试听功能开发中</div>
       </div>
 
-      <!-- 工具面板 -->
+      <!-- GLB 工具面板 -->
       <div id="panel-tools" class="panel hidden">
         <h2>GLB 模型浏览器</h2>
-        <div class="sub">浏览和预览工作区中的 .glb / .gltf 文件</div>
+        <div class="sub">浏览和预览导出的 .glb / .gltf 文件</div>
         <div id="pathbar-tools">
-          <button id="upbtn-tools" title="上一级目录">⬆</button>
-          <input id="pathinput-tools" type="text" value="/" />
-          <button id="gobtn-tools">Go</button>
+          <input id="pathinput-tools" type="text" placeholder="输入目录路径" />
+          <button id="gobtn-tools" type="button">前往</button>
+          <button id="upbtn-tools" type="button">上级</button>
         </div>
         <div id="filelist-tools"></div>
-        <div id="status-tools" class="sub" style="border-top:1px solid #1f2937; padding:8px 10px; margin:0;">
-          就绪
-        </div>
+        <div id="status-tools" class="sub">准备就绪</div>
       </div>
     </div>
 
-    <!-- 右侧 3D 预览视口 -->
+    <!-- 3D 渲染主视口 -->
     <div id="viewer">
       <div id="canvas-host"></div>
       <div id="hint">
-        45° 等轴俯视视角 · 鼠标左键拖动＝旋转，滚轮＝平滑缩放，右键拖动＝平移
+        <b>🖱️ 操作指引：</b>鼠标左键旋转视角，滚轮缩放，右键平移。点击卡片检视实体，按 <b>Space</b> 播放/暂停动作，按 <b>B</b> 切换骨骼线条，按 <b>↑/↓</b> 切换动画。
       </div>
-      <div id="loading">加载中…</div>
+      <div id="loading">正在加载 3D 资产…</div>
 
-      <!-- 左侧网格组件分层与动画列表面板 -->
+      <!-- 左侧网格与部件检视面板 -->
       <div id="entity-mesh-inspector" class="hidden">
         <div class="inspector-header">
-          <span class="title">🧊 网格与动画分层</span>
+          <span class="title">🧩 部件与动作清单</span>
           <div class="controls">
-            <button id="mesh-all-show" class="inspector-btn" title="显示全部网格">全显</button>
-            <button id="mesh-all-hide" class="inspector-btn" title="隐藏全部网格">全隐</button>
+            <button id="mesh-all-show" class="inspector-btn">全显</button>
+            <button id="mesh-all-hide" class="inspector-btn">全隐</button>
           </div>
         </div>
-        <div id="inspector-mesh-list" class="inspector-body">
-          <!-- 动态填充子网格开关 -->
-        </div>
+        <div id="inspector-mesh-list" class="inspector-body"></div>
       </div>
 
-      <!-- 实体快速切换悬浮按钮 -->
-      <button id="entity-drawer-toggle" class="hidden" title="点击展开实体抽屉">
-        📁 实体清单 (<span id="toggle-count">494</span>) ◀
-      </button>
+      <!-- 悬浮抽屉触发按钮 -->
+      <button id="entity-drawer-toggle" class="hidden" title="展开/收起实体选择抽屉">📦 实体图库</button>
 
-      <!-- 实体右侧凸出悬浮抽屉 -->
+      <!-- 右侧快速选择抽屉 -->
       <div id="entity-drawer" class="collapsed">
         <div class="drawer-header">
-          <div class="title">📁 快速筛选实体</div>
-          <button id="entity-expand-full-btn" class="drawer-btn" title="返回全屏网格展厅">🗖 全屏网格</button>
-          <button id="entity-drawer-close-btn" class="drawer-btn" title="收起抽屉">▶</button>
+          <div class="title">📦 实体快速选择</div>
+          <div style="display: flex; gap: 6px;">
+            <button id="entity-expand-full-btn" class="drawer-btn" title="返回全屏网格展厅">⛶ 全屏画廊</button>
+            <button id="entity-drawer-close-btn" class="drawer-btn" title="收起抽屉">✕</button>
+          </div>
         </div>
         <div class="drawer-category-tabs">
-          <button class="drawer-cat-tab active" data-cat="all">🌟全部</button>
-          <button class="drawer-cat-tab" data-cat="powers">⚡能力</button>
-          <button class="drawer-cat-tab" data-cat="vehicles">🚗载具</button>
-          <button class="drawer-cat-tab" data-cat="characters">🧟角色</button>
-          <button class="drawer-cat-tab" data-cat="pedestrians">🚶路人</button>
-          <button class="drawer-cat-tab" data-cat="props">🏢道具</button>
+          <div class="drawer-cat-tab active" data-cat="all">全部</div>
+          <div class="drawer-cat-tab" data-cat="powers">能力</div>
+          <div class="drawer-cat-tab" data-cat="vehicles">载具</div>
+          <div class="drawer-cat-tab" data-cat="characters">角色</div>
+          <div class="drawer-cat-tab" data-cat="pedestrians">市民</div>
+          <div class="drawer-cat-tab" data-cat="props">道具</div>
         </div>
         <div class="drawer-search-box">
-          <input id="entity-search-drawer" type="search" placeholder="🔍 快速搜索..." />
+          <input id="entity-drawer-search" type="search" placeholder="筛选实体名称…" />
         </div>
-        <div id="entity-grid-drawer" class="drawer-grid">
-          <!-- 紧凑卡片 -->
-        </div>
-        <div id="entity-drawer-status" class="sub" style="border-top:1px solid #1f2937; padding:8px 10px; margin:0; font-size:11px;">
-          就绪 · 点击卡片切换 3D 模型
-        </div>
+        <div id="entity-drawer-status" style="padding: 4px 10px; font-size: 10px; color: #7fd4ff; background: #0c1017;"></div>
+        <div id="entity-drawer-grid" class="drawer-grid"></div>
       </div>
 
       <!-- 地图工具条 -->
@@ -401,8 +382,8 @@
 <script type="importmap">
 {
   "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/addons/"
   }
 }
 </script>
@@ -410,8 +391,10 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { createMapWorkbench } from "./map-view.js?v=decal-dxt3";
-import { createEntityShelf } from "./entity-shelf.js?v=20260917_02";
+import { createMapWorkbench } from "./map-view.js?v=20260917_03";
+import { createEntityShelf } from "./entity-shelf.js?v=20260917_03";
+
+console.log("[Prototype Viewer] Starting frontend runtime...");
 
 // ---- 1. three.js 查看器基础环境搭建 ----
 const host = document.getElementById("canvas-host");
@@ -445,7 +428,13 @@ let mixer = null;
 const clock = new THREE.Clock();
 
 // ---- 2. 创建 Map & Entity 工作台 ----
-const mapWorkbench = createMapWorkbench({ scene, camera, controls, renderer });
+let mapWorkbench = null;
+try {
+  mapWorkbench = createMapWorkbench({ scene, camera, controls, renderer });
+} catch (e) {
+  console.error("Map workbench init error:", e);
+}
+
 const entityShelf = createEntityShelf({
   scene,
   camera,
@@ -683,7 +672,7 @@ function loadModel(path) {
 // ---- 7. 初始化加载实体清单与健康检查 ----
 fetch('/api/health').then(r => r.json()).then(health => {
   const connEl = document.querySelector('.connection');
-  if (connEl) connEl.textContent = `${location.host} · ${health.git_commit || '临时预览'}`;
+  if (connEl) connEl.textContent = `${location.host} (在线)`;
   const artPath = health.root.replace(/\/$/, '') + '/art.rcf';
   const cellsPath = health.root.replace(/\/$/, '') + '/cells.rcf';
   
@@ -693,7 +682,8 @@ fetch('/api/health').then(r => r.json()).then(health => {
   if (mapShared) mapShared.value = artPath;
   
   entityShelf.loadCatalog(artPath);
-}).catch(() => { 
+}).catch((e) => { 
+  console.warn("Health check error:", e);
   const connEl = document.querySelector('.connection');
   if (connEl) connEl.textContent = '后端未连接';
 });
