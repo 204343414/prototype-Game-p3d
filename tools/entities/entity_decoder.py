@@ -1,6 +1,7 @@
-"""Decode complete 3D entity geometry, UVs, textures and skeleton for web preview.
+"""Decode complete 3D entity geometry, UVs, textures, skeletons and animations.
 
-Multi-stream vertex buffer support (Stream 0 positions/normals, Stream 1 UVs for characters).
+Multi-stream vertex buffer support (Stream 0 positions/normals, Stream 1 UVs for characters),
+LOD0 prioritization, shape isolation, and animation track extraction.
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ MEMORY_INDEX_LIST = 0x00010013
 SKELETON_V1 = 0x00002200
 SKELETON_V2 = 0x00023000
 SKELETON_JOINT = 0x00002201
+ANIMATION = 0x00121000
 NEW_SHADER = 0x00011015
 OLD_SHADER = 0x00010003
 TEXTURE_PARAM = 0x00011016
@@ -154,6 +156,29 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
             except Exception:
                 pass
 
+    # 4. Extract Animation Clips (0x121000)
+    animations = []
+    for idx, record in enumerate(records):
+        if record["type_id"] == ANIMATION:
+            try:
+                p = record["payload"]
+                anim_name, off = _p3d_string(p, 4) if len(p) > 4 else ("", 0)
+                if not anim_name:
+                    anim_name, off = _p3d_string(p, 0)
+                if off + 12 <= len(p):
+                    fourcc = p[off:off+4].decode("latin-1", errors="ignore").strip("\x00") or "PTRN"
+                    num_frames, rate = struct.unpack_from("<2f", p, off + 4)
+                    duration = round(num_frames / rate, 2) if rate > 0 else 0.0
+                    animations.append({
+                        "name": anim_name or f"Track_{len(animations) + 1}",
+                        "type": fourcc,
+                        "frames": round(num_frames),
+                        "fps": round(rate, 1),
+                        "duration": duration,
+                    })
+            except Exception:
+                pass
+
     # Check for LOD0 meshes
     all_geom_names: list[str] = []
     for idx, record in enumerate(records):
@@ -165,7 +190,7 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
                 pass
     has_lod0 = any(n.endswith(("_00", "_LOD0", "_lod0")) for n in all_geom_names)
 
-    # 4. Extract Meshes (Geometry / Polyskin)
+    # 5. Extract Meshes (Geometry / Polyskin)
     meshes = []
     for idx, record in enumerate(records):
         if record["type_id"] not in (POLYSKIN, GEOMETRY):
@@ -252,7 +277,7 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
                 if len(uv_vl) >= 12:
                     uv_bytes = struct.unpack_from("<I", uv_vl, 8)[0]
                     uv_body = uv_vl[12:12 + uv_bytes]
-                    uv_stride = uv_bytes // vertex_count if (uv_bytes % vertex_count == 0) else (8 if uv_stream_idx > 0 else pos_stride)
+                    uv_stride = uv_bytes // vertex_count if (v_bytes % vertex_count == 0) else (8 if uv_stream_idx > 0 else pos_stride)
                     for i in range(vertex_count):
                         src_idx = i * uv_stride + uv_offset
                         if src_idx + 8 <= len(uv_body):
@@ -305,4 +330,5 @@ def decode_entity_meshes(data: bytes, shape_filter: str | None = None) -> dict[s
         "meshes": meshes,
         "textures": unique_textures,
         "skeletons": skeletons,
+        "animations": animations,
     }

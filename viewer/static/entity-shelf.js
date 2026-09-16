@@ -30,6 +30,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
   scene.add(entityGroup);
 
   let skeletonHelper = null;
+  let renderedMeshList = [];
 
   async function loadCatalog(artPath) {
     onStatus('正在从 art.rcf 读取四大分类实体清单…');
@@ -132,6 +133,52 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
   }
 
+  function updateMeshInspector(meshes, animations) {
+    const listEl = document.getElementById('inspector-mesh-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+
+    // Render Sub-meshes
+    meshes.forEach((meshObj, idx) => {
+      const row = document.createElement('div');
+      row.className = 'mesh-row';
+
+      const shortName = meshObj.meshData.geometry_name.split('_').slice(-2).join('_') || meshObj.meshData.geometry_name;
+      row.innerHTML = `
+        <div class="mesh-info">
+          <div class="mesh-name" title="${meshObj.meshData.geometry_name}">${shortName}</div>
+          <div class="mesh-counts">${meshObj.meshData.vertex_count}v · ${meshObj.meshData.triangle_count}△</div>
+        </div>
+        <input type="checkbox" class="mesh-toggle" checked title="显示/隐藏此网格" />
+      `;
+
+      const toggle = row.querySelector('.mesh-toggle');
+      toggle.onchange = (e) => {
+        meshObj.threeMesh.visible = e.target.checked;
+      };
+
+      listEl.appendChild(row);
+    });
+
+    // Render Animation tracks
+    if (animations && animations.length > 0) {
+      const animTitle = document.createElement('div');
+      animTitle.className = 'anim-section-title';
+      animTitle.textContent = `🎬 引用动画 (${animations.length} 个片段)`;
+      listEl.appendChild(animTitle);
+
+      animations.forEach(anim => {
+        const aRow = document.createElement('div');
+        aRow.className = 'anim-row';
+        aRow.innerHTML = `
+          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:160px;" title="${anim.name}">${anim.name}</span>
+          <span style="opacity:0.8;">${anim.frames}f · ${anim.duration}s</span>
+        `;
+        listEl.appendChild(aRow);
+      });
+    }
+  }
+
   async function selectEntity(item, shapeName = null) {
     currentEntity = item;
     currentShape = shapeName;
@@ -154,10 +201,10 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       scene.remove(skeletonHelper);
       skeletonHelper = null;
     }
+    renderedMeshList = [];
 
     try {
       const artPath = document.getElementById('map-shared')?.value || '';
-      // For props, pass the item ID or first shape to isolate from other props
       const targetShape = shapeName || (item.category === 'props' ? (item.shapes?.[0] || item.id) : '');
       const params = new URLSearchParams({
         path: artPath,
@@ -205,6 +252,11 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         geometry.computeBoundingBox();
         bounds.union(geometry.boundingBox);
         hasMeshes = true;
+
+        renderedMeshList.push({
+          meshData: mesh,
+          threeMesh: rendered
+        });
       }
 
       if (hasMeshes) {
@@ -214,20 +266,45 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         // Position camera at classic 45-degree angled snapshot perspective!
         controls.target.copy(center);
         camera.position.set(center.x + size * 0.9, center.y + size * 0.7, center.z + size * 0.9);
-        camera.near = Math.max(0.01, size / 100);
-        camera.far = Math.max(100, size * 100);
+        
+        // Fix zoom clipping & perspective bug:
+        camera.near = 0.01;
+        camera.far = 3000;
+        controls.minDistance = Math.max(0.05, size * 0.05);
+        controls.maxDistance = Math.max(50.0, size * 15.0);
         camera.updateProjectionMatrix();
         controls.update();
 
-        const shapesList = item.shapes ? ` · 可切换形态: ${item.shapes.length} 个` : '';
-        onStatus(`已呈现 3D 实体：${item.name} (${data.meshes.length} 个网格, ${data.textures.length} 张贴图${shapesList})`);
+        // Update Left-Side Mesh Inspector
+        updateMeshInspector(renderedMeshList, data.animations);
+
+        const animInfo = data.animations?.length ? ` · ${data.animations.length} 个动作片段` : '';
+        onStatus(`已呈现 3D 实体：${item.name} (${data.meshes.length} 个网格, ${data.textures.length} 张贴图${animInfo})`);
       } else {
         onStatus(`实体 ${item.name} 结构已解析 (无直接网格数据)`);
+        updateMeshInspector([], data.animations);
       }
 
     } catch (err) {
       onStatus('渲染 3D 实体失败：' + err.message);
     }
+  }
+
+  // Bind All Show / Hide buttons
+  const showAllBtn = document.getElementById('mesh-all-show');
+  if (showAllBtn) {
+    showAllBtn.onclick = () => {
+      renderedMeshList.forEach(m => { m.threeMesh.visible = true; });
+      document.querySelectorAll('.mesh-toggle').forEach(t => { t.checked = true; });
+    };
+  }
+
+  const hideAllBtn = document.getElementById('mesh-all-hide');
+  if (hideAllBtn) {
+    hideAllBtn.onclick = () => {
+      renderedMeshList.forEach(m => { m.threeMesh.visible = false; });
+      document.querySelectorAll('.mesh-toggle').forEach(t => { t.checked = false; });
+    };
   }
 
   // Setup Fullscreen Category Tabs
