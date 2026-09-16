@@ -77,7 +77,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     
     const icon = CAT_ICONS[item.category] || '📦';
     const shapeCount = item.shape_count || item.geometry_count || 1;
-    const skelCount = item.skeleton_count || 0;
+    const jointCount = item.total_joints || (item.skeleton_count > 0 ? (item.skeleton_count * 12) : 0);
     const animCount = item.animation_count || 0;
 
     card.innerHTML = `
@@ -88,7 +88,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       <div class="card-title" title="${item.name}">${item.name}</div>
       <div class="card-meta">
         <span class="card-badge geom" title="网格/形态数量">🧊 ${shapeCount}</span>
-        ${skelCount > 0 ? `<span class="card-badge skel" title="骨骼数量">🦴 ${skelCount}</span>` : ''}
+        ${jointCount > 0 ? `<span class="card-badge skel" title="骨骼关节数">🦴 ${jointCount}</span>` : ''}
         ${animCount > 0 ? `<span class="card-badge anim" title="动画片段">🎬 ${animCount}</span>` : ''}
       </div>
     `;
@@ -233,6 +233,8 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     if (!listEl) return;
     listEl.innerHTML = '';
 
+    const jointCount = skeletons?.[0]?.joint_count || 0;
+
     // Skeleton toggle header row
     const skelRow = document.createElement('div');
     skelRow.className = 'mesh-row';
@@ -240,7 +242,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     skelRow.style.borderColor = '#3b82f6';
     skelRow.innerHTML = `
       <div class="mesh-info">
-        <div class="mesh-name" style="color:#7fd4ff; font-weight:600;">🦴 骨骼线条 (${skeletons?.[0]?.joint_count || 0} 个关节)</div>
+        <div class="mesh-name" style="color:#7fd4ff; font-weight:600;">🦴 骨骼线条 (${jointCount} 个关节)</div>
       </div>
       <input type="checkbox" class="mesh-toggle" ${showSkeleton ? 'checked' : ''} id="toggle-skeleton-lines" title="开启/关闭骨骼透视线条" />
     `;
@@ -409,11 +411,11 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         controls.target.copy(center);
         camera.position.set(center.x + size * 0.9, center.y + size * 0.7, center.z + size * 0.9);
         
-        // Refined zoom limits and gentle zoom sensitivity
-        controls.zoomSpeed = 0.55;
-        controls.dampingFactor = 0.08;
-        controls.minDistance = Math.max(0.1, size * 0.2);
-        controls.maxDistance = Math.max(5.0, size * 4.0);
+        // Gentle, precise zoom speed and strict bounds
+        controls.zoomSpeed = 0.35;
+        controls.dampingFactor = 0.1;
+        controls.minDistance = Math.max(0.3, size * 0.35);
+        controls.maxDistance = Math.max(3.0, size * 2.5);
         camera.near = 0.01;
         camera.far = 3000;
         camera.updateProjectionMatrix();

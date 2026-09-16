@@ -11,9 +11,6 @@ Categorizes and indexes all Pure3D entities in art.rcf into four standard catego
      Blackwatch troopers, Marines, and pedestrians.
   4. props: Interactive & destructible Manhattan environment entities (Water towers,
      HVAC ventilation units, transformers, antennas, barriers, bus shelters, hydrants).
-
-All structural bindings (meshes, skeletons, animation clips, textures, and destruction
-shapes) are strictly derived from binary Pure3D chunk headers.
 """
 from __future__ import annotations
 
@@ -39,6 +36,8 @@ GEOMETRY = 0x00010000
 POLYSKIN = 0x00010001
 SKELETON_V1 = 0x00002200
 SKELETON_V2 = 0x00023000
+SKELETON_JOINT = 0x00002201
+SKELETON_JOINT_V2 = 0x00023001
 ANIMATION = 0x00121000
 COMPOSITE_DRAWABLE = 0x00123000
 TEXTURE = 0x00019000
@@ -114,7 +113,7 @@ FRIENDLY_NAMES = {
 def classify_entry(name: str) -> str | None:
     """Classify an RCF entry path into one of the 4 sub-categories."""
     clean = name.lower()
-    if clean.endswith(("_tod.p3d.rz", "_fig.p3d.rz", "_lod.p3d.rz", "_camera.p3d.rz")):
+    if clean.endswith(("_tod.p3d.rz", "_fig.p3d.rz", "_lod.p3d.rz", "_camera.p3d.rz", "_nis.p3d.rz")):
         return None
     if "\\powers\\" in clean or clean == "\\art\\alex\\alex.p3d.rz":
         return CATEGORY_POWERS
@@ -133,11 +132,12 @@ def inspect_p3d_package(data: bytes) -> dict[str, Any]:
     
     geometries: list[str] = []
     skeletons: list[str] = []
+    total_joints = 0
     comp_drawables: list[str] = []
     animations: list[str] = []
     textures: list[str] = []
     
-    for record in records:
+    for idx, record in enumerate(records):
         tid = record["type_id"]
         if tid in (POLYSKIN, GEOMETRY):
             try:
@@ -151,6 +151,9 @@ def inspect_p3d_package(data: bytes) -> dict[str, Any]:
                 name, _ = _p3d_string(record["payload"])
                 if name and name not in skeletons:
                     skeletons.append(name)
+                # Count joints under this skeleton
+                j_count = sum(1 for _, c in children.get(idx, []) if c["type_id"] in (SKELETON_JOINT, SKELETON_JOINT_V2))
+                total_joints = max(total_joints, j_count)
             except (ValueError, IndexError):
                 pass
         elif tid == COMPOSITE_DRAWABLE:
@@ -162,7 +165,12 @@ def inspect_p3d_package(data: bytes) -> dict[str, Any]:
                 pass
         elif tid == ANIMATION:
             try:
-                name, _ = _p3d_string(record["payload"])
+                p = record["payload"]
+                name = ""
+                if len(p) >= 5 and p[:4] == b"\x00\x00\x00\x00":
+                    name, _ = _p3d_string(p, 4)
+                if not name:
+                    name, _ = _p3d_string(p, 0)
                 if name and name not in animations:
                     animations.append(name)
             except (ValueError, IndexError):
@@ -178,6 +186,7 @@ def inspect_p3d_package(data: bytes) -> dict[str, Any]:
     return {
         "geometries": geometries,
         "skeletons": skeletons,
+        "total_joints": total_joints,
         "composite_drawables": comp_drawables,
         "animations": animations,
         "textures": textures,
@@ -223,6 +232,9 @@ def parse_props_library(data: bytes) -> list[dict[str, Any]]:
             "shapes": shapes,
             "shape_count": len(shapes),
             "geometry_count": len(shapes),
+            "total_joints": 0,
+            "skeleton_count": 0,
+            "animation_count": 0,
             "textures": textures[:4],
         })
     return items
@@ -280,6 +292,7 @@ def build_entity_catalog(art_rcf_path: str) -> dict[str, Any]:
                     "geometry_count": len(info["geometries"]),
                     "geometries": info["geometries"][:8],
                     "skeleton_count": len(info["skeletons"]),
+                    "total_joints": info["total_joints"],
                     "skeletons": info["skeletons"][:4],
                     "animation_count": len(info["animations"]),
                     "texture_count": len(info["textures"]),
