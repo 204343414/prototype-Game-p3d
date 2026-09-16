@@ -120,7 +120,7 @@
 
       <div id="panel-map" class="panel hidden">
         <h2>曼哈顿 / 静态城区</h2>
-        <div class="sub">整城按 Cell 顺序加载。已验证布局使用本地 / 共享 color 贴图；未知材质保留灰色，不含局部道具或 _ft。</div>
+        <div class="sub">整城按 Cell 顺序加载。已验证布局使用本地 / 共享基础贴图（color / 道路 bottom）；未知材质保留灰色，不含局部道具或 _ft。</div>
         <div class="map-fields">
           <label for="map-archive">服务器上的 cells.rcf 路径</label>
           <input id="map-archive" type="text" placeholder="连接后自动填写，可修改" />
@@ -183,6 +183,9 @@
         <label><input id="map-wireframe" type="checkbox" /> 线框</label>
         <button id="map-frame" type="button" title="恢复全城视角；双击建筑可聚焦局部">重置视角</button>
         <button id="map-clear" type="button">卸载区块</button>
+        <label><input id="map-walk" type="checkbox" /> WASD / 滚轮调速</label>
+        <button id="map-mark-report" type="button">导出标记</button>
+        <span title="地图诊断：WASD移动，Shift/Ctrl+左键点选未贴图模型；开启WASD后滚轮调速">诊断：WASD · Shift/Ctrl+点击</span>
       </div>
       <div id="map-summary" class="hidden" role="status">从左侧读取 cells.rcf，然后选择一个基础 Cell。
 真实城市几何 · 已验证 color 贴图 · 不等于完整游戏 shader</div>
@@ -206,7 +209,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { createMapWorkbench } from "./map-view.js?v=camera-navigation";
+import { createMapWorkbench } from "./map-view.js?v=decal-dxt3";
 let mapWorkbench = null;
 
 // ---- 视图切换 ----

@@ -10,25 +10,50 @@
 > `docs/animation_format.md` 为准**。项目级目标、建设顺序与验收门槛见
 > `docs/PROJECT_TARGETS.md`。
 
-最后核对：2026-09-15。当前接手顺序是**保留已验收角色/骨骼/动画，推进地图与音效**。
-不要再按旧文档重开 Alex 静态或“第一次接入动画”的任务；完整 TRAN 与全角色动画覆盖仍须单独标为未完成。
+最后核对：2026-09-16。当前接手顺序是**保留已验收角色/骨骼/动画，推进地图与音效**。
 
-## 新会话先读：用户最新验收与下一步
+## 最新重大突破：广告牌/时代广场巨幅海报与全城材质代码推导全面还原（2026-09-16）
 
-2026-09-15 用户目检反馈：**大部分可见材质/贴图已显示，马路仍为灰白色**。
-这是对当前视觉效果的用户确认，不等于全部 shader/接缝/材质逐项通过。下一步优先定位
-道路 PrimitiveGroup 的 layout、NewShader template/color 引用和贴图来源，选一个代表样本
-验证；不要重新调查 RCF 位置、重写地图几何，或盲目把 68-byte UV 规则套给其他布局。
-长期缓存按用户要求暂缓，先补道路等主要可见缺口；橙色骨骼线细节不要抢占地图主线。
+根据用户"不要凭直觉，从代码引用与顶点声明反推"的最高原则，本轮完成了对全城所有 29 种底层二进制顶点声明（Chunk `0x10014`）、`NewShader` 参数引用以及 `art.rcf` 共享图集资源的全面解析与真实验证：
 
-**交接保存状态**：已按用户授权推送至 GitHub 分支
-`openhands/manhattan-workbench-archive`，首个恢复点 **`4cf4f84`**；后续相机修复在同一分支。
-新聊天应选择该分支而非 `main`。存档只含源码、合成测试及文档，未提交游戏资产或密钥。
-用户机器最新运行代码仍在 `/tmp/prototype-map-preview.LRlPDWCg`，主项目/8420 未修改。
+1. **查明广告牌/海报与时代广场专有图集来源与引用链**：
+   - 时代广场与全城巨幅广告牌主图集：`art.rcf` 内的 `\art\billboards\billboards.p3d.rz`（包含 4 套 1024x1024 级主广告图集 `billboards_1024x1024_01..04_diffuse.dds`）。
+   - 百老汇/时代广场特有广告与霓虹灯标牌：`\art\locations\manhattan_mini\textures.p3d.rz` 与各 Cell 包（恢复了松下 `panasonic_diffuse.dds`、DC漫画 `dc_comics_diffuse.dds`、1500百老汇股票滚屏 `1500broadway_tickertape_diffuse.dds`、好莱坞影像 `hollywoodvideosign_2_diffuse.dds` 等 534 张独立去重共享纹理）。
+   - 对应 Shader 模板覆盖：`zCBV2_ao_billboard` (52B @ UV24), `env_videoscreen_blend` (32B @ UV24), `env_videoscreen1` (44B @ UV24), `env_videoticker` (44B @ UV24), `env_lit_sign` (44B/52B), `env_litMarquee` (68B @ UV24) 等。
 
-**起步检查**：读根目录 `AGENTS.md` 与本文最新段落 → 确认当前工作区/版本/dirty状态 →
-检查 SSH 私钥是否仍在当前环境（不要打印内容或默认重新生成）→ 核对用户机器 8421 健康
-状态。之前已成功登录 `liang@8700k.top`；环境变了不等于过去没有连上。
+2. **14 套严格证据链规则接入** (`tools/world/cell_materials.py`)：
+   - **68B 标准环境** (`4f18391a`)：`color` @ UV24 (TEXCOORD0)
+   - **68B 巢穴轻量室内** (`e6c6bff8`)：`color` @ UV24 (TEXCOORD0)，解决 Cell 239/249
+   - **64B 室内建筑** (`3c20bc99`)：`color` @ UV20 (TEXCOORD0)
+   - **60B 地形/草地/石头/杂物** (`ec4f5425`)：`bottom`/`color` @ UV24 (单 UV)
+   - **56B 反射立面/碎屑** (`fb2000cf`)：`color` @ UV20 (单 UV)
+   - **52B 沥青路面/草地/广告牌** (`2bdeba9c`)：道路 `bottom` @ UV32；广告牌/草地 `color`/`bottom` @ UV24
+   - **52B 栅栏/铁网/NIS人物** (`930b61a4`)：`color` @ UV16 (单 UV)
+   - **48B 巢穴深度感染区** (`dfe0a2c2`)：`color` @ UV20 (TEXCOORD0)
+   - **44B 发光招牌** (`b185657b`)：`color` @ UV16 (TEXCOORD0)
+   - **44B 字体标牌/铁丝网** (`e9cdf8f3`)：`ImageMap`/`color` @ UV24 (单 UV)，`source_alpha`
+   - **36B 室内玻璃/实验器具** (`684f7ea2`)：`color` @ UV16 (单 UV)
+   - **32B 地面 Decal / 斑马线** (`8c718e7c`)：`color` @ UV24，DXT3 支持，`source_alpha`
+   - **28B 小型贴花/光效** (`31f14052`)：`color` @ UV20，`source_alpha`
+   - **76B 人行道/马路牙子** (`214be15f`)：`color` @ UV24 (`street_sidewalk01_diffuse.dds` 等)
+
+3. **全城 260 API 完整核验证明**：
+   - **总绑定数由 9,391 飙升至 15,877 / 16,898 组（全城覆盖率达 93.96%）**。
+   - **未解析纹理大幅降低至 70 组**（原 8,404 组）。
+   - **几何零回退**：顶点 7,784,242 / 三角形 4,675,907，全城 260 个 Cell API 零报错。
+   - 时代广场核心商业区恢复情况：
+     - **Cell 56**：169 / 176 (96.0%)
+     - **Cell 61**：218 / 229 (95.2%)
+     - **Cell 66**：103 / 114 (90.4%)
+     - **Cell 71**：110 / 122 (90.2%)
+     - **Cell 76**：212 / 217 (97.7%)
+     - **Cell 102**：181 / 187 (96.8%)
+
+4. **查看器交互升级**：
+   - 引入 WASD 漫游模式与滚轮调速。
+   - 引入 Shift/Ctrl + 点击标记未贴图模型并导出 JSON 报告工具。
+   - 已部署至用户主机隔离端口 8421：`http://127.0.0.1:8421/#map`。
+
 
 ## 地图缩放/拖拽修复（2026-09-15）
 

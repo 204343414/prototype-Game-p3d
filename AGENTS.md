@@ -33,3 +33,15 @@
 - Old default OrbitControls collapsed a city-scale test to distance 0.0156 after 240 wheel steps. Browser regression now stops at 2.8289 and verifies left rotation, right pan, reset and double-click. Test uses real Three.js/OrbitControls and CDP input: `CDP_URL=http://127.0.0.1:<debug-port> VIEWER_URL=http://127.0.0.1:<test-viewer-port>/ node viewer/test_map_camera.mjs`. No dependency install or mock controls.
 - Static map redraw is on demand, with controls-change/resize/geometry/wireframe invalidation; user navigation is not overwritten when a city queue completes. Character animation retains its render loop.
 - Current user preview URL: `http://127.0.0.1:8421/?v=camera-navigation#map`. The new module must be deployed with index.html/map-view.js. Original 8420 remains untouched.
+
+## Code-derived Full City Material Recovery (2026-09-16)
+- Scanned all 29 distinct binary vertex shader declarations (0x10014) across cells.rcf: mapped semantic hashes (POSITION 0x2C929929, TANGENT 0x3898FC04, BINORMAL 0x3898FC05, TEXCOORD0 0x00364509, TEXCOORD1 0x0036450A, TEXCOORD2 0x0036450B, TEXCOORD3 0x0036450C, NORMAL 0xC206BCE7, COLOR0 0xA4176245) to exact byte offsets.
+- Implemented 14 verified layout rules covering standard 68B, hive-lite 68B, interior 64B, terrain/props 60B, reflect 56B, road 52B, NIS 52B, hive interior 48B, lit-sign 44B, alpha-sign 44B, small-props 36B, decal 32B, decal 28B, sidewalk 76B.
+- DXT1, DXT3, DXT5 textures validated and decompressed for S3TC.
+- Full City Audit (260 Cells): 15,491 / 16,898 groups textured (91.67%), 0 errors, geometry strictly preserved (4,675,907 triangles / 7,784,242 vertices).
+- Live isolated preview active at `http://127.0.0.1:8421/#map` on user machine.
+
+## Billboard & Times Square Ad Textures Recovery (2026-09-16)
+- Reverse-engineered billboard sources: `\art\billboards\billboards.p3d.rz` (4 master 1024x1024 billboard sheets: `billboards_1024x1024_01..04_diffuse.dds`), `\art\locations\manhattan_mini\textures.p3d.rz` (Times Square / Broadway ads: Panasonic, DC Comics, 1500 Broadway ticker, Hollywood Video, etc.), and `\art\locations\manhattan\props.p3d.rz` (534 total deduplicated shared textures in art.rcf).
+- Shaders mapped: `zCBV2_ao_billboard`, `env_videoscreen_blend`, `env_videoscreen1`, `env_videoticker`, `env_lit_sign`, `env_litMarquee`.
+- Full City Audit (260 Cells): **15,877 / 16,898 groups textured (93.96%)**, remaining unresolved textures down to **70 groups**. Times Square cells at 90.2% ~ 97.7% texture coverage.

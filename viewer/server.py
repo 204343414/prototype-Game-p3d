@@ -109,9 +109,54 @@ def _read_preview_entry(path, name):
 
 @lru_cache(maxsize=1)
 def _shared_texture_index(path, mtime_ns, size):
-    # Process-only reuse avoids reparsing the same shared pack for every Cell.
-    data = _read_preview_entry(path, r"\art\locations\manhattan\textures.p3d.rz")
-    return build_texture_index(data)
+    # Comprehensive process-only shared texture index from art.rcf.
+    archive = rcf_extract.CementFile.load(path)
+    combined = {}
+
+    # Priority shared packages
+    shared_packages = (
+        r"\art\locations\manhattan\textures.p3d.rz",
+        r"\art\billboards\billboards.p3d.rz",
+        r"\art\locations\manhattan_mini\textures.p3d.rz",
+        r"\art\locations\manhattan\props.p3d.rz",
+    )
+
+    entries_by_name = {}
+    for entry in archive.entries:
+        meta = archive.get_metadata(entry.name_hash)
+        if meta and meta.name:
+            entries_by_name[meta.name] = entry
+
+    with open(path, "rb") as f:
+        for pkg in shared_packages:
+            entry = entries_by_name.get(pkg)
+            if entry is not None:
+                try:
+                    f.seek(entry.offset)
+                    raw = f.read(entry.size)
+                    data = rcf_extract.decompress_rz_payload(raw) if raw.startswith(b"RZ") else raw
+                    texs = build_texture_index(data)
+                    for k, v in texs.items():
+                        if v is not None and k not in combined:
+                            combined[k] = v
+                except Exception:
+                    continue
+
+        # Also index specialized Times Square / Broadway billboards from manhattan_mini cells
+        for name, entry in entries_by_name.items():
+            if name.startswith(r"\art\locations\manhattan_mini\manhattan_mini_Cell_") and name.endswith(".p3d.rz"):
+                try:
+                    f.seek(entry.offset)
+                    raw = f.read(entry.size)
+                    data = rcf_extract.decompress_rz_payload(raw) if raw.startswith(b"RZ") else raw
+                    texs = build_texture_index(data)
+                    for k, v in texs.items():
+                        if v is not None and k not in combined:
+                            combined[k] = v
+                except Exception:
+                    continue
+
+    return combined
 
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
