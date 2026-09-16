@@ -10,6 +10,88 @@ const CAT_ICONS = {
 
 const THUMB_CACHE = new Map();
 
+// IndexedDB persistence for 1:1 snapshots
+const DB_NAME = 'PrototypeEntitySnapshotsDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'snapshots';
+
+function openSnapshotDB() {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined' || !window.indexedDB) {
+      resolve(null);
+      return;
+    }
+    try {
+      const req = window.indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => {
+        console.warn('IndexedDB open error:', req.error);
+        resolve(null);
+      };
+    } catch (e) {
+      console.warn('IndexedDB init exception:', e);
+      resolve(null);
+    }
+  });
+}
+
+async function loadAllCachedSnapshots() {
+  const db = await openSnapshotDB();
+  if (!db) return 0;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const records = req.result || [];
+        for (const rec of records) {
+          if (rec.id && rec.dataUrl) {
+            THUMB_CACHE.set(rec.id, rec.dataUrl);
+          }
+        }
+        resolve(records.length);
+      };
+      req.onerror = () => resolve(0);
+    } catch (e) {
+      console.warn('IndexedDB read error:', e);
+      resolve(0);
+    }
+  });
+}
+
+async function persistSnapshot(id, dataUrl) {
+  THUMB_CACHE.set(id, dataUrl);
+  const db = await openSnapshotDB();
+  if (!db) return;
+  try {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    store.put({ id, dataUrl, time: Date.now() });
+  } catch (e) {
+    console.warn('IndexedDB write error:', e);
+  }
+}
+
+async function clearAllSnapshotsDB() {
+  THUMB_CACHE.clear();
+  const db = await openSnapshotDB();
+  if (!db) return;
+  try {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    store.clear();
+  } catch (e) {
+    console.warn('IndexedDB clear error:', e);
+  }
+}
+
 function floats(encoded, Type, size) {
   if (!encoded) return new Type(0);
   const raw = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
@@ -44,14 +126,22 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
   let showSkeleton = false;
   let focusMode = 'entity'; // 'entity' or 'animation'
 
-  // Offscreen renderer for taking real 45-deg snapshots
+  // Batch snapshot state
+  let isBatchScanning = false;
+
+  // Offscreen 1:1 renderer for taking high-res square 45-degree snapshots (256x256)
   const offCanvas = document.createElement('canvas');
-  offCanvas.width = 160;
-  offCanvas.height = 120;
+  offCanvas.width = 256;
+  offCanvas.height = 256;
   let offRenderer = null;
   try {
-    offRenderer = new THREE.WebGLRenderer({ canvas: offCanvas, antialias: true, alpha: true });
-    offRenderer.setSize(160, 120);
+    offRenderer = new THREE.WebGLRenderer({
+      canvas: offCanvas,
+      antialias: true,
+      alpha: true,
+      preserveDrawingBuffer: true
+    });
+    offRenderer.setSize(256, 256);
   } catch (e) {
     console.warn('Offscreen renderer unavailable:', e);
   }
@@ -59,6 +149,10 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
   async function loadCatalog(artPath) {
     onStatus('正在从 art.rcf 读取四大分类实体清单…');
     try {
+      // 1. Preload any existing persistent snapshots from IndexedDB
+      await loadAllCachedSnapshots();
+
+      // 2. Fetch catalog list from backend
       const resp = await fetch(`/api/entities?path=${encodeURIComponent(artPath || '')}`);
       const data = await resp.json();
       if (data.error) {
@@ -67,8 +161,9 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       }
       entityData = data;
       renderCounts(data.counts);
+      updateStatsBadge();
       renderGrid();
-      onStatus(`已索引四大类共 ${data.total_entities} 个实体`);
+      onStatus(`已索引四大类共 ${data.total_entities} 个实体 (已恢复 ${THUMB_CACHE.size} 个持久化快照)`);
     } catch (err) {
       onStatus('请求实体清单失败：' + err.message);
     }
@@ -85,25 +180,48 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
   }
 
-  function capture45DegreeSnapshot() {
+  function updateStatsBadge() {
+    const badge = document.getElementById('snapshot-stats-badge');
+    if (!badge || !entityData) return;
+    const total = entityData.total_entities || 0;
+    const cached = THUMB_CACHE.size;
+    badge.textContent = `已缓存: ${cached} / ${total}`;
+    if (cached >= total && total > 0) {
+      badge.style.color = '#4ade80';
+      badge.style.borderColor = '#22c55e';
+    } else {
+      badge.style.color = '#94a3b8';
+      badge.style.borderColor = '#334155';
+    }
+  }
+
+  function captureCameraForBounds(bounds) {
+    const center = bounds.getCenter(new THREE.Vector3());
+    const boxSize = bounds.getSize(new THREE.Vector3());
+    const maxDim = Math.max(boxSize.x, boxSize.y, boxSize.z) || 2.0;
+
+    // Strict 1:1 Square Perspective Camera
+    const snapCam = new THREE.PerspectiveCamera(45, 1.0, 0.01, 2000);
+    const dist = maxDim * 1.5;
+    // 45-degree angled isometric position
+    snapCam.position.set(center.x + dist * 0.72, center.y + dist * 0.55, center.z + dist * 0.72);
+    snapCam.lookAt(center);
+    return snapCam;
+  }
+
+  function captureCurrentEntitySnapshot() {
     if (!offRenderer || !entityGroup.children.length) return null;
     try {
       const bounds = new THREE.Box3().setFromObject(entityGroup);
-      const center = bounds.getCenter(new THREE.Vector3());
-      const size = bounds.getSize(new THREE.Vector3()).length() || 2.0;
-
-      const snapCam = new THREE.PerspectiveCamera(45, 160 / 120, 0.01, 1000);
-      snapCam.position.set(center.x + size * 0.9, center.y + size * 0.7, center.z + size * 0.9);
-      snapCam.lookAt(center);
+      const snapCam = captureCameraForBounds(bounds);
 
       const snapScene = new THREE.Scene();
       snapScene.background = null;
-      snapScene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.5));
+      snapScene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.6));
       const light = new THREE.DirectionalLight(0xffffff, 1.8);
-      light.position.set(3, 6, 4);
+      light.position.set(4, 7, 5);
       snapScene.add(light);
 
-      // Clone rendered meshes for clean snap
       const snapGroup = entityGroup.clone(true);
       snapScene.add(snapGroup);
 
@@ -121,6 +239,99 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
   }
 
+  async function generateSnapshotForEntity(item, artPath) {
+    if (!offRenderer) return null;
+    try {
+      const targetShape = (item.category === 'props' ? (item.shapes?.[0] || item.id) : '');
+      const params = new URLSearchParams({
+        path: artPath || '',
+        entry: item.entry_path,
+        shape: targetShape
+      });
+      const resp = await fetch(`/api/entity_mesh?${params}`);
+      const data = await resp.json();
+      if (data.error || !data.meshes || !data.meshes.length) return null;
+
+      // Build textures
+      const textures = new Map();
+      for (const desc of data.textures || []) {
+        try {
+          textures.set(desc.key, makeMapTexture(desc));
+        } catch (e) {
+          console.warn('Texture parse failed in snap:', desc.key, e);
+        }
+      }
+
+      const snapScene = new THREE.Scene();
+      snapScene.background = null;
+      snapScene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.6));
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1.8);
+      dirLight.position.set(4, 7, 5);
+      snapScene.add(dirLight);
+
+      const snapGroup = new THREE.Group();
+      snapScene.add(snapGroup);
+
+      const bounds = new THREE.Box3();
+      const createdGeoms = [];
+      const createdMats = [];
+
+      for (const mesh of data.meshes) {
+        const positions = floats(mesh.positions, Float32Array, 4);
+        const indices = floats(mesh.indices, Uint16Array, 2);
+        const uv = mesh.uv ? floats(mesh.uv, Float32Array, 4) : new Float32Array(mesh.vertex_count * 2);
+
+        if (positions.length < 3 || indices.length < 3) continue;
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+        geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+        geometry.computeVertexNormals();
+
+        const tex = textures.get(mesh.texture_key);
+        const material = makeMapMaterial(tex, null, false);
+        const rendered = new THREE.Mesh(geometry, material);
+        snapGroup.add(rendered);
+
+        geometry.computeBoundingBox();
+        bounds.union(geometry.boundingBox);
+
+        createdGeoms.push(geometry);
+        createdMats.push(material);
+      }
+
+      if (!snapGroup.children.length) return null;
+
+      const snapCam = captureCameraForBounds(bounds);
+      offRenderer.render(snapScene, snapCam);
+      const dataUrl = offCanvas.toDataURL('image/webp', 0.85);
+
+      // Free memory
+      createdGeoms.forEach(g => g.dispose());
+      createdMats.forEach(m => m.dispose());
+      textures.forEach(t => t.dispose());
+
+      return dataUrl;
+    } catch (e) {
+      console.warn('Error in generateSnapshotForEntity:', item.id, e);
+      return null;
+    }
+  }
+
+  function updateCardThumbDOM(id, dataUrl) {
+    document.querySelectorAll(`.entity-card[data-id="${id}"] .card-preview-thumb`).forEach(thumb => {
+      thumb.style.backgroundImage = `url(${dataUrl})`;
+      thumb.style.backgroundSize = 'contain';
+      thumb.style.backgroundPosition = 'center';
+      thumb.style.backgroundRepeat = 'no-repeat';
+      const isoBox = thumb.querySelector('.iso-box');
+      const catIcon = thumb.querySelector('.cat-icon');
+      if (isoBox) isoBox.style.display = 'none';
+      if (catIcon) catIcon.style.display = 'none';
+    });
+  }
+
   function renderCard(item, isDrawer = false) {
     const card = document.createElement('div');
     card.className = `entity-card ${currentEntity?.id === item.id ? 'active' : ''}`;
@@ -134,10 +345,10 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     const cachedThumb = THUMB_CACHE.get(item.id);
 
     card.innerHTML = `
-      <div class="card-preview-thumb" style="${isDrawer ? 'height:50px;' : ''} ${cachedThumb ? `background-image:url(${cachedThumb}); background-size:cover; background-position:center;` : ''}">
+      <div class="card-preview-thumb" style="${cachedThumb ? `background-image:url(${cachedThumb}); background-size:contain; background-position:center; background-repeat:no-repeat;` : ''}">
         ${!cachedThumb ? `
-          <div class="iso-box" style="${isDrawer ? 'width:24px; height:24px;' : ''}"></div>
-          <span class="cat-icon" style="${isDrawer ? 'font-size:18px;' : ''}">${icon}</span>
+          <div class="iso-box" style="${isDrawer ? 'width:32px; height:32px;' : ''}"></div>
+          <span class="cat-icon" style="${isDrawer ? 'font-size:22px;' : ''}">${icon}</span>
         ` : ''}
       </div>
       <div class="card-title" title="${item.name}">${item.name}</div>
@@ -314,13 +525,11 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     if (!listEl) return;
     listEl.innerHTML = '';
 
-    const jointCount = skeletons?.[0]?.joint_count || 0;
-
-    // Skeleton toggle header row
+    // Skeleton Line Controller Row
+    const jointCount = skeletons?.[0]?.joints?.length || 0;
     const skelRow = document.createElement('div');
     skelRow.className = 'mesh-row';
-    skelRow.style.background = '#1e2838';
-    skelRow.style.borderColor = '#3b82f6';
+    skelRow.style.borderLeft = '3px solid #fb923c';
     skelRow.innerHTML = `
       <div class="mesh-info">
         <div class="mesh-name" style="color:#7fd4ff; font-weight:600;">🦴 骨骼线条 (${jointCount} 个关节)</div>
@@ -336,25 +545,21 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
     listEl.appendChild(skelRow);
 
-    // Render Sub-meshes
-    meshes.forEach((meshObj, idx) => {
+    // Render Submeshes List
+    meshes.forEach((item, idx) => {
       const row = document.createElement('div');
       row.className = 'mesh-row';
-
-      const shortName = meshObj.meshData.geometry_name.split('_').slice(-2).join('_') || meshObj.meshData.geometry_name;
       row.innerHTML = `
         <div class="mesh-info">
-          <div class="mesh-name" title="${meshObj.meshData.geometry_name}">${shortName}</div>
-          <div class="mesh-counts">${meshObj.meshData.vertex_count}v · ${meshObj.meshData.triangle_count}△</div>
+          <div class="mesh-name" title="${item.meshData.geometry_name}">${item.meshData.geometry_name || `Part_${idx + 1}`}</div>
+          <div class="mesh-counts">${item.meshData.vertex_count} 顶 · ${item.meshData.triangle_count} 面</div>
         </div>
-        <input type="checkbox" class="mesh-toggle" checked title="显示/隐藏此网格" />
+        <input type="checkbox" class="mesh-toggle" checked id="toggle-mesh-${idx}" title="显示/隐藏此部件" />
       `;
-
-      const toggle = row.querySelector('.mesh-toggle');
+      const toggle = row.querySelector(`#toggle-mesh-${idx}`);
       toggle.onchange = (e) => {
-        meshObj.threeMesh.visible = e.target.checked;
+        item.threeMesh.visible = e.target.checked;
       };
-
       listEl.appendChild(row);
     });
 
@@ -487,11 +692,10 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         const center = bounds.getCenter(new THREE.Vector3());
         const size = bounds.getSize(new THREE.Vector3()).length() || 2.0;
 
-        // Position camera at classic 45-degree angled snapshot perspective!
+        // Position camera at 45-degree angled perspective
         controls.target.copy(center);
         camera.position.set(center.x + size * 0.9, center.y + size * 0.7, center.z + size * 0.9);
         
-        // Gentle, precise zoom speed and strict bounds
         controls.zoomSpeed = 0.35;
         controls.dampingFactor = 0.1;
         controls.minDistance = Math.max(0.3, size * 0.35);
@@ -504,22 +708,14 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         // Update Left-Side Mesh & Animation Inspector
         updateMeshInspector(renderedMeshList, data.animations, data.skeletons);
 
-        // Take snapshot for card thumbnail
+        // Take snapshot for card thumbnail and persist to IndexedDB
         if (!THUMB_CACHE.has(item.id)) {
-          setTimeout(() => {
-            const snap = capture45DegreeSnapshot();
+          setTimeout(async () => {
+            const snap = captureCurrentEntitySnapshot();
             if (snap) {
-              THUMB_CACHE.set(item.id, snap);
-              // update card DOM background
-              document.querySelectorAll(`.entity-card[data-id="${item.id}"] .card-preview-thumb`).forEach(thumb => {
-                thumb.style.backgroundImage = `url(${snap})`;
-                thumb.style.backgroundSize = 'cover';
-                thumb.style.backgroundPosition = 'center';
-                const isoBox = thumb.querySelector('.iso-box');
-                const catIcon = thumb.querySelector('.cat-icon');
-                if (isoBox) isoBox.style.display = 'none';
-                if (catIcon) catIcon.style.display = 'none';
-              });
+              await persistSnapshot(item.id, snap);
+              updateCardThumbDOM(item.id, snap);
+              updateStatsBadge();
             }
           }, 80);
         }
@@ -544,6 +740,118 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     const wobble = Math.sin(animTime * 4.0) * 0.03;
     entityGroup.position.y = wobble;
     skeletonGroup.position.y = wobble;
+  }
+
+  // Batch Auto-Capture & Persistent Cache System
+  async function startBatchSnapshot() {
+    if (!entityData) return;
+    if (isBatchScanning) {
+      isBatchScanning = false;
+      updateBatchUI();
+      onStatus('已停止自动快照扫描');
+      return;
+    }
+
+    isBatchScanning = true;
+    updateBatchUI();
+
+    const allCategories = ['powers', 'vehicles', 'characters', 'props'];
+    const allItems = [];
+    for (const cat of allCategories) {
+      const items = entityData.categories?.[cat] || [];
+      for (const item of items) {
+        allItems.push(item);
+      }
+    }
+
+    const total = allItems.length;
+    let processed = 0;
+
+    const artPath = document.getElementById('map-shared')?.value || '';
+    onStatus(`开始批量拍摄全部 ${total} 个实体的 1:1 3D 高清快照…`);
+
+    for (let i = 0; i < total; i++) {
+      if (!isBatchScanning) break;
+      const item = allItems[i];
+      processed++;
+
+      if (THUMB_CACHE.has(item.id)) {
+        updateBatchProgress(processed, total, item.name, true);
+        continue;
+      }
+
+      updateBatchProgress(processed, total, item.name, false);
+
+      try {
+        const snap = await generateSnapshotForEntity(item, artPath);
+        if (snap) {
+          await persistSnapshot(item.id, snap);
+          updateCardThumbDOM(item.id, snap);
+        }
+      } catch (e) {
+        console.warn('Batch snap item error:', item.id, e);
+      }
+
+      updateStatsBadge();
+      await new Promise(r => setTimeout(r, 20));
+    }
+
+    const wasScanning = isBatchScanning;
+    isBatchScanning = false;
+    updateBatchUI();
+    updateStatsBadge();
+
+    if (wasScanning) {
+      onStatus(`🎉 批量快照处理完成！已持久化缓存 ${THUMB_CACHE.size} / ${total} 个实体缩略图`);
+    }
+  }
+
+  function updateBatchUI() {
+    const btn = document.getElementById('batch-snapshot-btn');
+    if (!btn) return;
+    if (isBatchScanning) {
+      btn.classList.add('running');
+      btn.innerHTML = `⏹ 停止拍照`;
+      btn.title = '点击停止正在进行的批量拍照';
+    } else {
+      btn.classList.remove('running');
+      btn.innerHTML = `📸 自动拍照并持久缓存`;
+      btn.title = '一键后台轮询生成所有实体的 1:1 3D 高清快照并永久缓存到浏览器';
+    }
+  }
+
+  function updateBatchProgress(current, total, name, isSkipped) {
+    const btn = document.getElementById('batch-snapshot-btn');
+    const pct = Math.round((current / total) * 100);
+    if (btn && isBatchScanning) {
+      btn.innerHTML = `⏹ 停止 (${current}/${total} ${pct}%)`;
+    }
+    const statusMsg = isSkipped 
+      ? `[${current}/${total}] ${name} (已从持久缓存读取)`
+      : `正在拍摄 1:1 快照 [${current}/${total}]: ${name}…`;
+    onStatus(statusMsg);
+  }
+
+  // Bind Batch Snapshot & Clear Buttons
+  const batchBtn = document.getElementById('batch-snapshot-btn');
+  if (batchBtn) {
+    batchBtn.onclick = () => startBatchSnapshot();
+  }
+
+  const clearBtn = document.getElementById('clear-snapshot-btn');
+  if (clearBtn) {
+    clearBtn.onclick = async () => {
+      if (confirm('确定要清空所有已持久化缓存的实体缩略图吗？')) {
+        if (isBatchScanning) {
+          isBatchScanning = false;
+          updateBatchUI();
+        }
+        await clearAllSnapshotsDB();
+        updateStatsBadge();
+        renderGrid();
+        onStatus('已清空本地持久缓存的实体快照缩略图');
+      }
+    };
   }
 
   // Bind All Show / Hide buttons
@@ -654,6 +962,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     selectEntity,
     renderGrid,
     updateAnimation,
+    startBatchSnapshot,
     setVisible(visible) {
       entityGroup.visible = visible;
       skeletonGroup.visible = visible && showSkeleton;
