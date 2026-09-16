@@ -35,6 +35,32 @@
   .entry.model { color: #6ee7b7; font-weight: 500; }
   .entry .size { margin-left: auto; color: #6b7280; font-size: 10px; }
 
+  /* 实体展厅与分类文件夹 */
+  .category-tabs { display: flex; gap: 4px; padding: 8px 10px; background: #131924; border-bottom: 1px solid #1f2937; }
+  .cat-tab { flex: 1; background: #1a2230; border: 1px solid #2d3848; color: #9ca3af; padding: 6px 2px; border-radius: 4px; font-size: 11px; text-align: center; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+  .cat-tab:hover { background: #253345; color: #e6e6e6; }
+  .cat-tab.active { background: #2b394e; color: #7fd4ff; border-color: #7fd4ff; font-weight: 600; }
+  
+  .entity-search-box { padding: 8px 10px; border-bottom: 1px solid #1f2937; }
+  .entity-search-box input { width: 100%; box-sizing: border-box; background: #161d2b; border: 1px solid #2c313c; color: #e6e6e6; padding: 6px 8px; border-radius: 4px; font-size: 11px; }
+
+  .entity-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; padding: 8px 10px; flex: 1; overflow-y: auto; }
+  .entity-card { background: #141b27; border: 1px solid #202b3a; border-radius: 6px; padding: 6px; cursor: pointer; display: flex; flex-direction: column; gap: 4px; transition: all 0.15s; position: relative; overflow: hidden; }
+  .entity-card:hover { background: #1b2535; border-color: #3b82f6; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+  .entity-card.active { border-color: #7fd4ff; background: #1a273a; box-shadow: 0 0 10px rgba(127,212,255,0.25); }
+
+  /* 45度角等轴拍摄预览徽章 */
+  .card-preview-thumb { height: 56px; background: linear-gradient(135deg, #182232 0%, #0d131d 100%); border-radius: 4px; display: flex; align-items: center; justify-content: center; position: relative; border: 1px solid #253345; }
+  .card-preview-thumb .iso-box { width: 26px; height: 26px; transform: rotateX(55deg) rotateZ(45deg); background: rgba(127, 212, 255, 0.2); border: 2px solid #7fd4ff; box-shadow: 0 0 8px rgba(127,212,255,0.4); border-radius: 2px; }
+  .card-preview-thumb .cat-icon { font-size: 20px; position: absolute; }
+
+  .card-title { font-size: 11px; font-weight: 600; color: #e6e6e6; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card-meta { display: flex; gap: 3px; flex-wrap: wrap; font-size: 9px; color: #8a93a3; }
+  .card-badge { background: #1a2433; padding: 1px 3px; border-radius: 3px; border: 1px solid #2c3a4e; }
+  .card-badge.anim { color: #a78bfa; border-color: #6d28d9; }
+  .card-badge.skel { color: #fb923c; border-color: #c2410c; }
+  .card-badge.geom { color: #38bdf8; border-color: #0369a1; }
+
   /* 快捷样本区 */
   #samples { padding: 8px; }
   .sample-item { padding: 8px 12px; background: #161d2b; border-radius: 4px; margin-bottom: 6px; cursor: pointer; font-size: 12px; border: 1px solid #1f2937; }
@@ -98,24 +124,24 @@
   <div id="main">
     <!-- 左侧面板容器 -->
     <div id="sidebar">
-      <!-- 角色与动画面板 -->
+      <!-- 实体展厅面板 (4大类) -->
       <div id="panel-characters" class="panel">
-        <h2>已验证样本</h2>
-        <div id="samples">
-          <div class="sample-item" data-note="placeholder">
-            <div class="label">Alex 人物与动画样本 · 待接入</div>
-            <div class="desc">既有成果尚未接入此页；可浏览已有 GLB</div>
-          </div>
+        <h2>📁 实体展厅 / 4大子类</h2>
+        <div class="category-tabs">
+          <button class="cat-tab active" data-cat="powers">⚡能力(<span id="count-powers">19</span>)</button>
+          <button class="cat-tab" data-cat="vehicles">🚗载具(<span id="count-vehicles">50</span>)</button>
+          <button class="cat-tab" data-cat="characters">🧟角色(<span id="count-characters">151</span>)</button>
+          <button class="cat-tab" data-cat="props">🏢道具(<span id="count-props">274</span>)</button>
         </div>
-        <h2>文件浏览</h2>
-        <div class="sub">浏览本地 .glb / .gltf 文件</div>
-        <div id="pathbar">
-          <button id="upbtn" title="上一级目录">⬆</button>
-          <input id="pathinput" type="text" value="/" />
-          <button id="gobtn">Go</button>
+        <div class="entity-search-box">
+          <input id="entity-search" type="search" placeholder="🔍 快速搜索实体名称 (如 claw, tank, greene)..." />
         </div>
-        <div id="filelist"></div>
-        <div id="status">就绪</div>
+        <div id="entity-grid" class="entity-grid">
+          <!-- 动态渲染的 45度角等轴拍摄实体卡片 -->
+        </div>
+        <div id="entity-status" class="sub" style="border-top:1px solid #1f2937; padding:8px 10px; margin:0;">
+          就绪 · 点击卡片 3D 呈现
+        </div>
       </div>
 
       <div id="panel-map" class="panel hidden">
@@ -212,7 +238,9 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { createMapWorkbench } from "./map-view.js?v=decal-dxt3";
+import { createEntityShelf } from "./entity-shelf.js";
 let mapWorkbench = null;
+let entityShelf = null;
 
 // ---- 视图切换 ----
 let currentView = "characters";
@@ -230,7 +258,8 @@ const placeholders = {
 function switchView(view) {
   currentView = view;
   if (mapWorkbench) mapWorkbench.setVisible(view === "map");
-  if (currentModel) currentModel.visible = view !== "map" && view !== "audio";
+  if (entityShelf) entityShelf.setVisible(view === "characters");
+  if (currentModel) currentModel.visible = view !== "map" && view !== "audio" && view !== "characters";
   if (skeletonHelper) skeletonHelper.visible = view === "characters";
   grid.visible = view === "characters" || view === "tools";
   tabs.forEach(t => t.classList.toggle("active", t.dataset.view === view));
@@ -467,13 +496,25 @@ function loadModel(path) {
 }
 
 mapWorkbench = createMapWorkbench({ scene, camera, controls, renderer });
+entityShelf = createEntityShelf({
+  scene,
+  camera,
+  controls,
+  renderer,
+  onStatus: (msg) => {
+    const el = document.getElementById('entity-status');
+    if (el) el.textContent = msg;
+  }
+});
+
 fetch('/api/health').then(r => r.json()).then(health => {
   document.querySelector('.connection').textContent = `${location.host} · ${health.git_commit || '临时预览'}`;
+  const artPath = health.root.replace(/\/$/, '') + '/art.rcf';
   document.getElementById('map-archive').value = health.root.replace(/\/$/, '') + '/cells.rcf';
-  document.getElementById('map-shared').value = health.root.replace(/\/$/, '') + '/art.rcf';
+  document.getElementById('map-shared').value = artPath;
+  entityShelf.loadCatalog(artPath);
 }).catch(() => { document.querySelector('.connection').textContent = '后端未连接'; });
 if (location.hash === '#map') switchView('map');
-browse(pathInput.value);
 </script>
 </body>
 </html>

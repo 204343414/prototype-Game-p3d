@@ -68,13 +68,18 @@ except ImportError:
 # returns bounds and header metadata only; no world geometry is sent through
 # the endpoint.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "world"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "entities"))
 try:
     import probe_static_geometry  # noqa: E402
     import export_static_geometry_diagnostic as cell_geometry  # noqa: E402
     from cell_materials import attach_local_materials, build_texture_index  # noqa: E402
+    from entity_catalog import build_entity_catalog  # noqa: E402
+    from entity_decoder import decode_entity_meshes  # noqa: E402
 except ImportError:
     probe_static_geometry = None
     cell_geometry = None
+    build_entity_catalog = None
+    decode_entity_meshes = None
 
 
 
@@ -347,6 +352,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_rcf_entry(qs)
         if parsed.path == "/api/rcf_cell_preview":
             return self._handle_cell_preview(qs)
+        if parsed.path == "/api/entities":
+            return self._handle_entities(qs)
+        if parsed.path == "/api/entity_mesh":
+            return self._handle_entity_mesh(qs)
         if parsed.path == "/api/health":
             return self._send_json({
                 "ok": True,
@@ -1152,6 +1161,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "chunks_shown": len(chunks),
             "chunks": chunks,
         })
+
+    def _handle_entities(self, qs):
+        """Return the 4-category shelf of all entities in art.rcf."""
+        if build_entity_catalog is None:
+            return self._send_error_json("entity_catalog module unavailable", 503)
+        art_path = qs.get("path", [None])[0] or os.path.join(self.root_dir, "art.rcf")
+        try:
+            target = os.path.realpath(self._safe_resolve(art_path))
+            if not os.path.isfile(target):
+                return self._send_error_json(f"art.rcf not found at {target}", 404)
+            catalog = build_entity_catalog(target)
+            return self._send_json(catalog)
+        except Exception as exc:
+            return self._send_error_json(f"Entity catalog: {exc}", 500)
+
+    def _handle_entity_mesh(self, qs):
+        """Return 3D geometry, UVs, textures and skeleton for a specific entity."""
+        if decode_entity_meshes is None:
+            return self._send_error_json("entity_decoder module unavailable", 503)
+        art_path = qs.get("path", [None])[0] or os.path.join(self.root_dir, "art.rcf")
+        entry = qs.get("entry", [None])[0]
+        shape = qs.get("shape", [None])[0]
+        if not entry:
+            return self._send_error_json("missing ?entry=", 400)
+        try:
+            target = os.path.realpath(self._safe_resolve(art_path))
+            data = _read_preview_entry(target, entry)
+            result = decode_entity_meshes(data, shape_filter=shape)
+            return self._send_json(result)
+        except Exception as exc:
+            return self._send_error_json(f"Entity mesh: {exc}", 500)
 
     def _handle_cell_preview(self, qs):
         """Return strict world-core triangles and optional verified local color textures.
