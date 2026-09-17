@@ -10,25 +10,93 @@
 > `docs/animation_format.md` 为准**。项目级目标、建设顺序与验收门槛见
 > `docs/PROJECT_TARGETS.md`。
 
-最后核对：2026-09-15。当前接手顺序是**保留已验收角色/骨骼/动画，推进地图与音效**。
-不要再按旧文档重开 Alex 静态或“第一次接入动画”的任务；完整 TRAN 与全角色动画覆盖仍须单独标为未完成。
+最后核对：2026-09-17。当前状态：**已回滚至稳定基线 Commit `540e3ca`**。
 
-## 新会话先读：用户最新验收与下一步
+## 2026-09-17 最新进度：Pure3D 实体陈列架、骨骼蒙皮与动作播放排查交接
 
-2026-09-15 用户目检反馈：**大部分可见材质/贴图已显示，马路仍为灰白色**。
-这是对当前视觉效果的用户确认，不等于全部 shader/接缝/材质逐项通过。下一步优先定位
-道路 PrimitiveGroup 的 layout、NewShader template/color 引用和贴图来源，选一个代表样本
-验证；不要重新调查 RCF 位置、重写地图几何，或盲目把 68-byte UV 规则套给其他布局。
-长期缓存按用户要求暂缓，先补道路等主要可见缺口；橙色骨骼线细节不要抢占地图主线。
+### 1. 当前系统基线（已稳定回滚至 Commit `540e3ca`）
+- **查看器前端架构（端口 8421）**：
+  - 已彻底移除所有外部 CDN 依赖（`unpkg.com`），Three.js 0.160.0 ES 模块（`OrbitControls`, `GLTFLoader`, `BufferGeometryUtils`）已完整本地化打包到 `viewer/static/vendor/`。
+  - 前端支持五大分类（主角形态 `powers`、载具 `vehicles`、剧情角色 `characters`、路人 NPC `pedestrians`、可破坏道具 `props`），支持网格卡片陈列与 3D 检视抽屉。
+- **运行环境与服务**：
+  - 远程主机：`liang@8700k.top`（通过 Cloudflare SSH 连接）。
+  - 隔离测试预览目录：`/tmp/prototype-map-preview.LRlPDWCg`（端口 8421，严禁触碰 8420）。
 
-**交接保存状态**：已按用户授权推送至 GitHub 分支
-`openhands/manhattan-workbench-archive`，首个恢复点 **`4cf4f84`**；后续相机修复在同一分支。
-新聊天应选择该分支而非 `main`。存档只含源码、合成测试及文档，未提交游戏资产或密钥。
-用户机器最新运行代码仍在 `/tmp/prototype-map-preview.LRlPDWCg`，主项目/8420 未修改。
+### 2. 核心已知 Bug 与排查证据（给下一个 Agent 的关键突破点）
 
-**起步检查**：读根目录 `AGENTS.md` 与本文最新段落 → 确认当前工作区/版本/dirty状态 →
-检查 SSH 私钥是否仍在当前环境（不要打印内容或默认重新生成）→ 核对用户机器 8421 健康
-状态。之前已成功登录 `liang@8700k.top`；环境变了不等于过去没有连上。
+#### 🔴 Bug A: 骨骼蒙皮顶点拉丝 / 局部权重错乱（详见用户最新截图）
+- **现象**：
+  在利爪形态（`alex_claws.p3d.rz`）或部分肢体上，右爪正常跟随骨骼摆动，但左爪一部分手指/刀刃顶点出现向远处拉丝缩放（Stretching）。
+- **底层证据与排查方向**：
+  1. **骨骼调色板 `Matrix Palette (0x1000D)`**：
+     - 在 Pure3D 结构中，`0x1000D` 的前 4 字节是 `uint32 count` 还是纯 `uint32[]` 数组？在 `alex_blades` / `alex_claws` / `alex_reg_body` 中需要实测每个 Skin 的局部调色板索引与顶点流中的 `blendIndices` 匹配关系。
+  2. **衍生辅助骨骼（Helper Bones / Shoulder Connectors）**：
+     - 用户指出：肩膀部分有衍生骨骼（如 `Shoulder_Con_L / Shoulder_Con_R`），移动它时不应该带动整条手臂位移，而是仅影响局部肌肉变形。需要检查骨骼父子级关系与世界变换矩阵计算。
+  3. **SkinnedMesh 绑定矩阵**：
+     - Three.js 中 `activeSkeleton = new THREE.Skeleton(bones, boneInverses)`，`boneInverses` 必须在 `skeletonGroup.updateMatrixWorld(true)` 之后由世界逆矩阵生成，避免多次调用 `.add()` 导致骨骼根节点被各子 Mesh 抢占移出。
+
+#### 🔴 Bug B: 贴图 UV 镜像 / 倒置问题
+- **现象**：
+  部分模型贴图出现局部迷彩或图案左右/上下翻转。
+- **底层证据**：
+  - 顶点数据流：双流网格（Dual Stream）中，Stream 0 为 56 字节（位置/法线/切线/骨骼权重），Stream 1 为 12 字节（前 4 字节为顶点颜色，后 8 字节为 Float32 U/V）。
+  - 需要在 Direct3D 9（DirectX UV 空间）与 WebGL（Three.js UV 空间）之间确立精准的零误差 UV 映射公式。
+
+#### 🔴 Bug C: 动作播放与根运动（Root Motion）真实还原
+- **用户核心诉求**：
+  - **不要人为锁定或伪造动作**：严格忠实还原游戏原始动画文件（`0x121000`）中的所有通道。
+  - **动画通道类型**：
+    - `0x121102` / `0x121119`：`TRAN`（Float32 3D 位移向量，包含 `Motion_Root` 与 `Character_Root` 物理位移）。
+    - `0x121112` / `0x121114` / `0x121118`：`ROT`（旋转四元数）。
+  - 脚掌贴地：确保根骨骼和脚踝骨骼的高度、旋转精确解耦，不做动作时脚掌自然着地，做战斗/跳跃动作时物理曲线完全吻合。
+
+#### 🔴 Bug D: 独立形态与通用动作库分离
+- **设计原则**：
+  - 保持各形态包（利刃、利爪、重锤、鞭拳）自身专属动作的独立性，先不与 Alex 基础库强行混淆。
+  - 后续可根据游戏状态机（State Tree）设计可插拔的形态武器挂载方案。
+
+## 最新重大突破：广告牌/时代广场巨幅海报与全城材质代码推导全面还原（2026-09-16）
+
+根据用户"不要凭直觉，从代码引用与顶点声明反推"的最高原则，本轮完成了对全城所有 29 种底层二进制顶点声明（Chunk `0x10014`）、`NewShader` 参数引用以及 `art.rcf` 共享图集资源的全面解析与真实验证：
+
+1. **查明广告牌/海报与时代广场专有图集来源与引用链**：
+   - 时代广场与全城巨幅广告牌主图集：`art.rcf` 内的 `\art\billboards\billboards.p3d.rz`（包含 4 套 1024x1024 级主广告图集 `billboards_1024x1024_01..04_diffuse.dds`）。
+   - 百老汇/时代广场特有广告与霓虹灯标牌：`\art\locations\manhattan_mini\textures.p3d.rz` 与各 Cell 包（恢复了松下 `panasonic_diffuse.dds`、DC漫画 `dc_comics_diffuse.dds`、1500百老汇股票滚屏 `1500broadway_tickertape_diffuse.dds`、好莱坞影像 `hollywoodvideosign_2_diffuse.dds` 等 534 张独立去重共享纹理）。
+   - 对应 Shader 模板覆盖：`zCBV2_ao_billboard` (52B @ UV24), `env_videoscreen_blend` (32B @ UV24), `env_videoscreen1` (44B @ UV24), `env_videoticker` (44B @ UV24), `env_lit_sign` (44B/52B), `env_litMarquee` (68B @ UV24) 等。
+
+2. **14 套严格证据链规则接入** (`tools/world/cell_materials.py`)：
+   - **68B 标准环境** (`4f18391a`)：`color` @ UV24 (TEXCOORD0)
+   - **68B 巢穴轻量室内** (`e6c6bff8`)：`color` @ UV24 (TEXCOORD0)，解决 Cell 239/249
+   - **64B 室内建筑** (`3c20bc99`)：`color` @ UV20 (TEXCOORD0)
+   - **60B 地形/草地/石头/杂物** (`ec4f5425`)：`bottom`/`color` @ UV24 (单 UV)
+   - **56B 反射立面/碎屑** (`fb2000cf`)：`color` @ UV20 (单 UV)
+   - **52B 沥青路面/草地/广告牌** (`2bdeba9c`)：道路 `bottom` @ UV32；广告牌/草地 `color`/`bottom` @ UV24
+   - **52B 栅栏/铁网/NIS人物** (`930b61a4`)：`color` @ UV16 (单 UV)
+   - **48B 巢穴深度感染区** (`dfe0a2c2`)：`color` @ UV20 (TEXCOORD0)
+   - **44B 发光招牌** (`b185657b`)：`color` @ UV16 (TEXCOORD0)
+   - **44B 字体标牌/铁丝网** (`e9cdf8f3`)：`ImageMap`/`color` @ UV24 (单 UV)，`source_alpha`
+   - **36B 室内玻璃/实验器具** (`684f7ea2`)：`color` @ UV16 (单 UV)
+   - **32B 地面 Decal / 斑马线** (`8c718e7c`)：`color` @ UV24，DXT3 支持，`source_alpha`
+   - **28B 小型贴花/光效** (`31f14052`)：`color` @ UV20，`source_alpha`
+   - **76B 人行道/马路牙子** (`214be15f`)：`color` @ UV24 (`street_sidewalk01_diffuse.dds` 等)
+
+3. **全城 260 API 完整核验证明**：
+   - **总绑定数由 9,391 飙升至 15,877 / 16,898 组（全城覆盖率达 93.96%）**。
+   - **未解析纹理大幅降低至 70 组**（原 8,404 组）。
+   - **几何零回退**：顶点 7,784,242 / 三角形 4,675,907，全城 260 个 Cell API 零报错。
+   - 时代广场核心商业区恢复情况：
+     - **Cell 56**：169 / 176 (96.0%)
+     - **Cell 61**：218 / 229 (95.2%)
+     - **Cell 66**：103 / 114 (90.4%)
+     - **Cell 71**：110 / 122 (90.2%)
+     - **Cell 76**：212 / 217 (97.7%)
+     - **Cell 102**：181 / 187 (96.8%)
+
+4. **查看器交互升级**：
+   - 引入 WASD 漫游模式与滚轮调速。
+   - 引入 Shift/Ctrl + 点击标记未贴图模型并导出 JSON 报告工具。
+   - 已部署至用户主机隔离端口 8421：`http://127.0.0.1:8421/#map`。
+
 
 ## 地图缩放/拖拽修复（2026-09-15）
 

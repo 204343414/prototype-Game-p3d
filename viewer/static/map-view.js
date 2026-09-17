@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { createMapNavigation } from './map-camera.js';
 import { getJSON } from './map-request.mjs';
+import { makeMapTexture, makeMapMaterial, mapBucketKey } from './map-materials.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const MEMORY_LIMIT = 512 * 1024 * 1024;
@@ -59,6 +60,14 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
   let textureBytes = 0;
   let sessionMaterials = null;
   let sessionShared = '';
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+  const pressed = new Set();
+  const marked = new Set();
+  let lastHits = [];
+  let hitIndex = 0;
+  let walkSpeed = 12;
+  let lastWalk = performance.now();
 
   function frame() {
     navigation.frame();
@@ -91,6 +100,9 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
   }
 
   function clear() {
+    marked.clear();
+    lastHits = [];
+    pressed.clear();
     for (const { group } of loaded.values()) {
       layer.remove(group);
       dispose(group);
@@ -156,20 +168,6 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
     return requested;
   }
 
-  function makeTexture(descriptor) {
-    const mipmaps = descriptor.mips.map(m => ({ width: m.width, height: m.height, data: bytes(m.data) }));
-    const format = descriptor.format === 'DXT1' ? THREE.RGBA_S3TC_DXT1_Format : THREE.RGBA_S3TC_DXT5_Format;
-    const texture = new THREE.CompressedTexture(mipmaps, mipmaps[0].width, mipmaps[0].height, format);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.flipY = false;
-    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-    texture.magFilter = THREE.LinearFilter;
-    const last = mipmaps[mipmaps.length - 1];
-    texture.minFilter = last.width === 1 && last.height === 1 ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
-    texture.needsUpdate = true;
-    return texture;
-  }
-
   async function loadCell(cell, materials) {
     if (loaded.has(cell)) return;
     status.textContent = `正在解析 Cell ${cell}…${materials && !s3tc ? '\n此浏览器不支持 S3TC，保留灰模。' : ''}`;
@@ -193,7 +191,7 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
     const pendingTextures = new Map();
     try {
       for (const descriptor of newTextures) {
-        pendingTextures.set(descriptor.key, { texture: makeTexture(descriptor), bytes: descriptor.bytes });
+        pendingTextures.set(descriptor.key, { texture: makeMapTexture(descriptor), bytes: descriptor.bytes });
       }
       for (const mesh of data.meshes) {
         const positions = floats(mesh.p, Float32Array, 4);
@@ -208,20 +206,30 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
         geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
         geometry.setIndex(new THREE.BufferAttribute(indices, 1));
         geometry.computeVertexNormals();
-        const key = mesh.texture || null;
-        if (!buckets.has(key)) buckets.set(key, []);
-        buckets.get(key).push(geometry);
-      }
-      for (const [key, geometries] of buckets) {
-        const texture = textures.get(key)?.texture || pendingTextures.get(key)?.texture;
-        const geometry = mergeGeometries(geometries, false);
-        if (!geometry) throw new Error('合并几何失败');
-        const material = new THREE.MeshStandardMaterial({
-          color: texture ? 0xffffff : 0x9aaab8, map: texture || null,
-          roughness: 0.9, metalness: 0, flatShading: true, side: THREE.DoubleSide,
-          wireframe: byId('map-wireframe').checked,
+        const key = mapBucketKey(mesh, cell);
+        if (!buckets.has(key)) buckets.set(key, { geometries: [], sources: [], texture: mesh.texture, mode: mesh.preview_render_mode });
+        buckets.get(key).geometries.push(geometry);
+        buckets.get(key).sources.push({
+          cell, mesh: {entry: mesh.entry, geometry: mesh.geometry, group: mesh.group, vertices: mesh.vertices, triangles: mesh.triangles, material_class: mesh.material_class, shader_template: mesh.shader_template, texture_parameter: mesh.texture_parameter}, textured: Boolean(mesh.texture),
+          label: `${cell}/${mesh.geometry || 'geometry'}#${mesh.group ?? '?'}`,
         });
-        group.add(new THREE.Mesh(geometry, material));
+      }
+      for (const bucket of buckets.values()) {
+        const texture = textures.get(bucket.texture)?.texture || pendingTextures.get(bucket.texture)?.texture;
+        const geometry = mergeGeometries(bucket.geometries, false);
+        if (!geometry) throw new Error('合并几何失败');
+        const material = makeMapMaterial(texture, bucket.mode, byId('map-wireframe').checked);
+        const rendered = new THREE.Mesh(geometry, material);
+        rendered.renderOrder = material.transparent ? 1 : 0;
+        rendered.userData.diagnosticSources = bucket.sources;
+        rendered.userData.untextured = !texture;
+        const hideUntextured = byId('map-hide-untextured')?.checked || byId('map-hide-untextured-tb')?.checked;
+        if (rendered.userData.untextured && hideUntextured) {
+          rendered.visible = false;
+        }
+        rendered.userData.baseColor = material.color.clone();
+        rendered.userData.marked = false;
+        group.add(rendered);
         geometry.computeBoundingSphere();
       }
       for (const [key, value] of pendingTextures) textures.set(key, value);
@@ -237,7 +245,7 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
       for (const value of pendingTextures.values()) value.texture.dispose();
       throw error;
     } finally {
-      for (const geometries of buckets.values()) for (const geometry of geometries) geometry.dispose();
+      for (const bucket of buckets.values()) for (const geometry of bucket.geometries) geometry.dispose();
     }
   }
 
@@ -290,6 +298,95 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
   };
   byId('map-stop').onclick = () => { stop = true; status.textContent = '将在当前 Cell 完成后暂停。'; };
 
+  function walk() {
+    const now = performance.now();
+    const seconds = Math.min((now - lastWalk) / 1000, 0.1);
+    lastWalk = now;
+    if (!layer.visible || !pressed.size || !byId('map-walk').checked) return;
+    userNavigated = true;
+    const forward = new THREE.Vector3().subVectors(controls.target, camera.position);
+    forward.y = 0;
+    if (forward.lengthSq() === 0) return;
+    forward.normalize();
+    const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+    const direction = new THREE.Vector3();
+    if (pressed.has('KeyW')) direction.add(forward);
+    if (pressed.has('KeyS')) direction.sub(forward);
+    if (pressed.has('KeyD')) direction.add(right);
+    if (pressed.has('KeyA')) direction.sub(right);
+    if (direction.lengthSq() === 0) return;
+    direction.normalize().multiplyScalar(walkSpeed * seconds);
+    camera.position.add(direction);
+    controls.target.add(direction);
+    controls.update();
+    renderRequested = true;
+  }
+
+  function markHit(hit) {
+    const mesh = hit.object;
+    if (!mesh.userData.untextured) return false;
+    mesh.userData.marked = !mesh.userData.marked;
+    mesh.material.emissive.setHex(0xff7a18);
+    mesh.material.emissiveIntensity = mesh.userData.marked ? 0.85 : 0;
+    if (mesh.userData.marked) marked.add(mesh); else marked.delete(mesh);
+    renderRequested = true;
+    const sources = mesh.userData.diagnosticSources || [];
+    const labels = sources.map(source => source.label).join(', ');
+    status.textContent = `${mesh.userData.marked ? '已标记' : '已取消标记'}未贴图模型：${labels || '来源元数据缺失'}\nShift+左键继续标记；Ctrl+左键循环重叠命中；滚轮调移动速度：${walkSpeed.toFixed(1)}`;
+    return true;
+  }
+
+  function pick(event) {
+    if (!layer.visible || event.button !== 0 || (!event.shiftKey && !event.ctrlKey)) return;
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1);
+    camera.updateMatrixWorld();
+    layer.updateWorldMatrix(true, true);
+    raycaster.setFromCamera(pointer, camera);
+    const seen = new Set();
+    const hits = raycaster.intersectObjects(layer.children, true).filter(hit => {
+      if (!hit.object.userData.untextured || seen.has(hit.object)) return false;
+      seen.add(hit.object); return true;
+    });
+    if (!hits.length) {
+      status.textContent = '当前点没有命中的未贴图模型。';
+      return;
+    }
+    if (event.ctrlKey) {
+      if (lastHits.length !== hits.length || hits.some((hit, index) => hit.object !== lastHits[index]?.object)) hitIndex = 0;
+      else hitIndex = (hitIndex + 1) % hits.length;
+      lastHits = hits;
+    } else {
+      lastHits = hits;
+      hitIndex = 0;
+    }
+    markHit(hits[hitIndex]);
+    event.preventDefault();
+  }
+
+  window.addEventListener('keydown', event => {
+    if (!layer.visible || !byId('map-walk').checked || event.target.closest?.('input, textarea, select, [contenteditable]') || !['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(event.code)) return;
+    pressed.add(event.code);
+    event.preventDefault();
+  });
+  window.addEventListener('keyup', event => pressed.delete(event.code));
+  window.addEventListener('blur', () => pressed.clear());
+  document.addEventListener('visibilitychange', () => pressed.clear());
+  renderer.domElement.addEventListener('pointerdown', event => {
+    if (layer.visible && event.button === 0 && (event.shiftKey || event.ctrlKey)) {
+      event.stopImmediatePropagation(); event.preventDefault();
+    }
+  }, true);
+  renderer.domElement.addEventListener('wheel', event => {
+    if (!layer.visible || !byId('map-walk').checked) return;
+    walkSpeed = THREE.MathUtils.clamp(walkSpeed * Math.exp(-event.deltaY * 0.001), 0.25, 500);
+    status.textContent = `地图诊断移动速度：${walkSpeed.toFixed(1)}\nW/A/S/D 移动；Shift+左键标记未贴图模型；Ctrl+左键循环重叠命中。`;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }, { passive: false, capture: true });
+  renderer.domElement.addEventListener('pointerup', pick);
+
+
   byId('map-list-load').onclick = async () => {
     if (busy) return;
     const path = archive.value.trim();
@@ -313,10 +410,38 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
   byId('map-search').oninput = renderList;
   byId('map-clear').onclick = clear;
   byId('map-frame').onclick = frame;
+  byId('map-mark-report').onclick = () => {
+    const records = [...marked].flatMap(mesh => (mesh.userData.diagnosticSources || []).map(source => {
+      const { p, i, uv, texture, ...metadata } = source.mesh;
+      return { cell: source.cell, ...metadata, marked_mesh: true };
+    }));
+    const blob = new Blob([JSON.stringify({ generated_at: new Date().toISOString(), source,
+      scope: 'user-marked untextured rendered buckets; metadata only; not a game-state classification',
+      movement_speed: walkSpeed, records }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a'); link.href = url; link.download = 'manhattan-untextured-marks.json'; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   byId('map-wireframe').onchange = event => {
     renderRequested = true;
     layer.traverse(mesh => { if (mesh.isMesh) mesh.material.wireframe = event.target.checked; });
   };
+  function updateHideUntextured(hide) {
+    const cb1 = byId('map-hide-untextured');
+    const cb2 = byId('map-hide-untextured-tb');
+    if (cb1) cb1.checked = hide;
+    if (cb2) cb2.checked = hide;
+    layer.traverse(mesh => {
+      if (mesh.isMesh && mesh.userData.untextured) {
+        mesh.visible = !hide;
+      }
+    });
+    renderRequested = true;
+  }
+  const cbSide = byId('map-hide-untextured');
+  if (cbSide) cbSide.onchange = event => updateHideUntextured(event.target.checked);
+  const cbTb = byId('map-hide-untextured-tb');
+  if (cbTb) cbTb.onchange = event => updateHideUntextured(event.target.checked);
   byId('map-report').onclick = () => {
     const records = entries.map(entry => ({ cell: entry.cell, ...states.get(entry.cell),
       geometry: loaded.get(entry.cell)?.report, materials: loaded.get(entry.cell)?.materials }));
@@ -331,12 +456,13 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
   updateSummary();
   return {
     needsRender() {
+      walk();
       const result = renderRequested;
       renderRequested = false;
       return result;
     },
     setVisible(visible) {
-      if (!visible) stop = true;
+      if (!visible) { stop = true; pressed.clear(); }
       navigation.setEnabled(visible);
       layer.visible = visible;
       renderRequested = true;
