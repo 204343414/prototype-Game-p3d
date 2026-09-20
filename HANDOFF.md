@@ -549,3 +549,24 @@ Blackwatch/NIS/gameplay 候选来源见角色地基文档；身份、通用缩�
   实际反推 216 个 "说话者×章节" 分组（nypda=1009 条、alex=93 条等）。
 - `/api/export_audio_bank?bank=…` 整包 ZIP（zipfile 内存组包，小 LRU 缓存
   bank 对象索引）。
+
+## 2026-09-21 — Soldier.p3d 武器贴图引用修复 + 全量平滑着色
+
+用户反馈 Soldier.p3d（黑色守望全家桶）导出后武器没贴图。排查结果：
+
+- **贴图文件本体一直都在**：21 张图全部落盘（weapons001_diffuse.png 等），
+  GLB 材质也都指对该图（baseColorTexture index 17 可验证）。
+- **病灶在 Blender 的 FBX 导出路径**：转换器 `bpy.data.images` 的名字来自
+  glTF，武器几张图在源里叫 `weapons001_diffuse.dds`（README 里调用
+  `export_report` 可见），Blender 导入后 image.name 保留这个 .dds；
+  我们随后 image.filepath 改到 PNG 但**没同步 image.name**,FBX 导出时
+  Texture 节点按 image.name 写 filename 引用 = weapons001_diffuse.dds,
+  Unity/Maya 按这个名找文件必然 miss → 材质白色。
+
+修复（`tools/entities/convert_glb_to_fbx.py`）：
+1. image.name=stem 强制与本地写出的 PNG 文件同名。
+2. 同时顺手把 mesh_smooth_type OFF → FACE 并强制 use_smooth=True，
+   用户"当前文件夹全部换平滑着色"的需求。
+3. 已用 Soldier.p3d 跑通：FBX 重导入武器网格 smooth=100%，贴图引用全部 .png。
+
+已跑 rebuild_mirror_batches（39/39 实体用新链）；完成后包新 ZIP 交付。

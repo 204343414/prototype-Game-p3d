@@ -27,6 +27,14 @@ def main():
         print('MIRROR_LR_APPLIED '+json.dumps(stats,ensure_ascii=False))
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.gltf(filepath=source,import_pack_images=True,merge_vertices=False,import_shading='NORMALS')
+    # 全部网格强制平滑着色（use_smooth）：源数据按平直着色导出时 FBX 里
+    # LayerElementSmoothing 全是 0，Unity/Maya 端呈现为硬边。Blender 导出
+    # mesh_smooth_type='OFF' 时以多边形 use_smooth 为真理，这里从产品需求规定
+    # 全量平滑（后续如需要硬边再按 mesh 白名单加细分）。
+    for _mesh_obj in bpy.context.scene.objects:
+        if _mesh_obj.type!='MESH':continue
+        for _p in _mesh_obj.data.polygons:
+            _p.use_smooth=True
     armatures=[o for o in bpy.context.scene.objects if o.type=='ARMATURE']
     has_armatures=len(armatures)>0
     # Blender's glTF importer creates helper Icospheres in a
@@ -76,6 +84,10 @@ def main():
         if image.packed_file is not None:
             image.unpack(method='USE_ORIGINAL')
         image.filepath=path
+        # 源贴图名可能保留 .dds/.tga 扩展名（如 weapons001_diffuse.dds），
+        # FBX Texture 节点会照这个名记引用；Unity 按它去找 .dds 文件必然 miss。
+        # 强制把图名改成最终写出的 PNG 文件命名，保持 Texture 引用与实际文件一致。
+        image.name=stem
         if os.path.isfile(path):
             with open(path,'rb') as f:
                 h=hashlib.sha256(f.read()).hexdigest()
@@ -122,7 +134,7 @@ def main():
         bake_anim_use_all_actions=False,bake_anim_force_startend_keying=has_armatures,
         bake_anim_step=1.0,bake_anim_simplify_factor=0.0,
         path_mode='STRIP',embed_textures=False,use_custom_props=True,
-        mesh_smooth_type='OFF',use_triangles=True,use_mesh_modifiers=True)
+        mesh_smooth_type='FACE',use_triangles=True,use_mesh_modifiers=True)
     if 'FINISHED' not in result or not os.path.isfile(output):raise RuntimeError(f'FBX export failed: {result}')
     report_mirror=mirror_flag
     report={'source_glb':source,'output_fbx':output,'bytes':os.path.getsize(output),'mirror_lr':report_mirror,
