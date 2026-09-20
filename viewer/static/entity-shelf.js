@@ -2011,18 +2011,20 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       if (!response.ok) throw new Error(job.error || `HTTP ${response.status}`);
       statusEl.textContent = `${job.status} · ${job.completed}/${job.total}${job.current ? ` · ${job.current}` : ''} · 成功 ${job.results.length} · 错误 ${job.errors.length}`;
       if (!['queued','running'].includes(job.status)) {
-        button.disabled=false;button.textContent='批量导出当前筛选结果';
+        button.disabled=false;button.textContent=button.dataset.idleLabel || '批量导出当前筛选结果';
         if (job.status === 'completed' || job.status === 'completed_with_errors') statusEl.textContent += `\n输出：${job.output_dir}`;
         return;
       }
     }
   }
 
-  async function startBatchExport(items) {
-    const pathInput=document.getElementById('entity-export-path');
-    const overwrite=document.getElementById('entity-export-overwrite');
-    const button=document.getElementById('entity-batch-export');
-    const statusEl=document.getElementById('entity-batch-status');
+  async function startBatchExport(items, controls) {
+    const pathInput=document.getElementById(controls.path);
+    const overwrite=document.getElementById(controls.overwrite);
+    const button=document.getElementById(controls.button);
+    const statusEl=document.getElementById(controls.status);
+    if (!pathInput || !overwrite || !button || !statusEl) return;
+    button.dataset.idleLabel ||= button.textContent;
     if (!items.length) { statusEl.textContent='当前筛选没有可导出的实体。'; return; }
     if (!pathInput.value.trim()) { statusEl.textContent='必须填写服务器导出路径。'; return; }
     button.disabled=true;button.textContent=`正在提交 ${items.length} 个实体…`;
@@ -2033,7 +2035,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       statusEl.textContent=`任务 ${result.job_id} 已创建；输出：${result.output_dir}`;
       await pollExportJob(result.job_id,statusEl,button);
     } catch(error) {
-      button.disabled=false;button.textContent='批量导出当前筛选结果';statusEl.textContent='批量导出失败：'+error.message;
+      button.disabled=false;button.textContent=button.dataset.idleLabel;statusEl.textContent='批量导出失败：'+error.message;
     }
   }
 
@@ -2090,8 +2092,14 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     };
   }
 
-  const batchExportBtn = document.getElementById('entity-batch-export');
-  if (batchExportBtn) batchExportBtn.onclick = () => startBatchExport(currentFilteredEntries());
+  const batchControls = {
+    drawer: {path:'entity-export-path', overwrite:'entity-export-overwrite', button:'entity-batch-export', status:'entity-batch-status'},
+    full: {path:'entity-export-path-full', overwrite:'entity-export-overwrite-full', button:'entity-batch-export-full', status:'entity-batch-status-full'},
+  };
+  for (const controls of Object.values(batchControls)) {
+    const button = document.getElementById(controls.button);
+    if (button) button.onclick = () => startBatchExport(currentFilteredEntries(), controls);
+  }
 
   const clearBtn = document.getElementById('clear-snapshot-btn');
   if (clearBtn) {
