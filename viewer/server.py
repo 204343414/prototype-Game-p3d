@@ -471,6 +471,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_export_entity(qs)
         if parsed.path == "/api/export_job":
             return self._handle_export_job(qs)
+        if parsed.path == "/api/export_directories":
+            return self._handle_export_directories(qs)
         if parsed.path == "/api/health":
             return self._send_json({
                 "ok": True,
@@ -493,6 +495,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_alex_simulator_post()
         if parsed.path == "/api/export_entities_batch":
             return self._handle_export_entities_batch()
+        if parsed.path == "/api/export_directory":
+            return self._handle_create_export_directory()
         return self._send_error_json(f"not found: {parsed.path}", 404)
 
     def _alex_simulator(self, session="default", reset=False):
@@ -1646,13 +1650,62 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send_error_json("未知导出资源", 404)
         return self._send_attachment(*item)
 
-    def _safe_export_dir(self, requested):
+    def _resolve_export_dir(self, requested):
         root = EXPORT_ROOT
-        candidate = os.path.realpath(requested if os.path.isabs(requested) else os.path.join(root, requested))
+        candidate = os.path.realpath(requested if os.path.isabs(requested) else os.path.join(root, requested or "."))
         if os.path.commonpath([root, candidate]) != root:
             raise PermissionError(f"导出路径必须位于 {EXPORT_ROOT} 内")
+        return candidate
+
+    def _safe_export_dir(self, requested):
+        candidate = self._resolve_export_dir(requested)
         os.makedirs(candidate, exist_ok=True)
         return candidate
+
+    def _handle_export_directories(self, qs):
+        try:
+            candidate = self._resolve_export_dir(qs.get("path", ["."])[0])
+            if not os.path.isdir(candidate):
+                return self._send_error_json("所选导出目录不存在", 404)
+            directories = []
+            for item in os.scandir(candidate):
+                if item.name.startswith(".") or not item.is_dir(follow_symlinks=False):
+                    continue
+                resolved = os.path.realpath(item.path)
+                if os.path.commonpath([EXPORT_ROOT, resolved]) == EXPORT_ROOT:
+                    directories.append(item.name)
+            directories.sort(key=str.casefold)
+            relative = os.path.relpath(candidate, EXPORT_ROOT)
+            if relative == ".":
+                relative = ""
+            parent = os.path.dirname(relative) if relative else None
+            return self._send_json({
+                "root": EXPORT_ROOT,
+                "current": relative,
+                "parent": parent,
+                "directories": directories,
+            })
+        except (OSError, ValueError, PermissionError) as exc:
+            return self._send_error_json(str(exc), 400)
+
+    def _handle_create_export_directory(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 65536:
+                return self._send_error_json("新建文件夹请求为空或过大", 400)
+            payload = json.loads(self.rfile.read(length))
+            parent = self._resolve_export_dir(str(payload.get("parent", ".")))
+            name = str(payload.get("name", "")).strip()
+            if not name or name in (".", "..") or "/" in name or "\\" in name or "\x00" in name:
+                return self._send_error_json("文件夹名称无效", 400)
+            target = self._resolve_export_dir(os.path.join(parent, name))
+            os.makedirs(target, exist_ok=False)
+            relative = os.path.relpath(target, EXPORT_ROOT)
+            return self._send_json({"ok": True, "path": relative}, 201)
+        except FileExistsError:
+            return self._send_error_json("同名文件夹已存在", 409)
+        except (OSError, ValueError, PermissionError, json.JSONDecodeError) as exc:
+            return self._send_error_json(str(exc), 400)
 
     def _handle_export_job(self, qs):
         job_id = qs.get("id", [""])[0]

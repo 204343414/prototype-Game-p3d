@@ -1988,10 +1988,10 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
   }
 
-  function currentFilteredEntries() {
+  function currentFilteredEntries(category = currentCategory, searchQuery = currentSearchQuery) {
     if (!entityData) return [];
-    const categories = currentCategory === 'all' ? CATEGORIES.map(c => c.id) : [currentCategory];
-    const query = currentSearchQuery.toLowerCase();
+    const categories = category === 'all' ? CATEGORIES.map(c => c.id) : [category];
+    const query = searchQuery.trim().toLowerCase();
     const unique = new Map();
     for (const category of categories) {
       const items = (entityData.categories && entityData.categories[category]) || entityData[category] || [];
@@ -2092,14 +2092,110 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     };
   }
 
-  const batchControls = {
-    drawer: {path:'entity-export-path', overwrite:'entity-export-overwrite', button:'entity-batch-export', status:'entity-batch-status'},
-    full: {path:'entity-export-path-full', overwrite:'entity-export-overwrite-full', button:'entity-batch-export-full', status:'entity-batch-status-full'},
-  };
-  for (const controls of Object.values(batchControls)) {
-    const button = document.getElementById(controls.button);
-    if (button) button.onclick = () => startBatchExport(currentFilteredEntries(), controls);
+  const exportDialog = document.getElementById('entity-export-dialog-backdrop');
+  const folderDialog = document.getElementById('entity-folder-dialog-backdrop');
+  const exportCategory = document.getElementById('entity-export-filter-category');
+  const exportSearch = document.getElementById('entity-export-filter-search');
+  const exportPath = document.getElementById('entity-export-selected-path');
+  const exportMatchCount = document.getElementById('entity-export-match-count');
+  const exportPreview = document.getElementById('entity-export-match-preview');
+  let folderCurrent = '';
+
+  function refreshExportDialogMatches() {
+    const items = currentFilteredEntries(exportCategory.value, exportSearch.value);
+    exportMatchCount.textContent = `${items.length} 个实体`;
+    const names = items.slice(0, 30).map(item => `• ${item.name}`).join('\n');
+    exportPreview.textContent = names + (items.length > 30 ? `\n…另有 ${items.length - 30} 个` : '') || '没有匹配项；请修改分类或关键词。';
+    return items;
   }
+
+  function openExportDialog() {
+    exportCategory.value = currentCategory;
+    exportSearch.value = currentSearchQuery;
+    document.getElementById('entity-export-dialog-status').textContent = '';
+    refreshExportDialogMatches();
+    exportDialog.classList.remove('hidden');
+  }
+
+  for (const id of ['entity-batch-dialog-open-full', 'entity-batch-dialog-open-drawer']) {
+    const button = document.getElementById(id);
+    if (button) button.onclick = openExportDialog;
+  }
+  exportCategory.onchange = refreshExportDialogMatches;
+  exportSearch.oninput = refreshExportDialogMatches;
+  document.getElementById('entity-export-dialog-cancel').onclick = () => exportDialog.classList.add('hidden');
+  document.getElementById('entity-export-dialog-start').onclick = () => {
+    const items = refreshExportDialogMatches();
+    startBatchExport(items, {
+      path:'entity-export-selected-path',
+      overwrite:'entity-export-overwrite-dialog',
+      button:'entity-export-dialog-start',
+      status:'entity-export-dialog-status',
+    });
+  };
+
+  async function loadFolder(path) {
+    const status = document.getElementById('entity-folder-status');
+    const list = document.getElementById('entity-folder-list');
+    status.textContent = '正在读取服务器文件夹…';
+    list.replaceChildren();
+    try {
+      const response = await fetch('/api/export_directories?' + new URLSearchParams({path:path || '.'}));
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      folderCurrent = data.current || '';
+      document.getElementById('entity-folder-root').textContent = data.root;
+      document.getElementById('entity-folder-current').textContent = '/' + folderCurrent;
+      document.getElementById('entity-folder-up').disabled = data.parent === null;
+      document.getElementById('entity-folder-up').dataset.parent = data.parent ?? '';
+      for (const name of data.directories) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'folder-entry';
+        button.textContent = `📁 ${name}`;
+        button.onclick = () => loadFolder(folderCurrent ? `${folderCurrent}/${name}` : name);
+        list.appendChild(button);
+      }
+      if (!data.directories.length) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'padding:18px;color:#74869a;text-align:center';
+        empty.textContent = '此文件夹中没有子文件夹';
+        list.appendChild(empty);
+      }
+      status.textContent = '';
+    } catch (error) {
+      status.textContent = '读取失败：' + error.message;
+    }
+  }
+
+  document.getElementById('entity-export-choose-folder').onclick = () => {
+    folderDialog.classList.remove('hidden');
+    loadFolder(exportPath.value || '.');
+  };
+  document.getElementById('entity-folder-up').onclick = (event) => loadFolder(event.currentTarget.dataset.parent || '.');
+  document.getElementById('entity-folder-cancel').onclick = () => folderDialog.classList.add('hidden');
+  document.getElementById('entity-folder-select').onclick = () => {
+    exportPath.value = folderCurrent || '.';
+    folderDialog.classList.add('hidden');
+  };
+  document.getElementById('entity-folder-create').onclick = async () => {
+    const nameInput = document.getElementById('entity-folder-new-name');
+    const status = document.getElementById('entity-folder-status');
+    const name = nameInput.value.trim();
+    if (!name) { status.textContent = '请输入新文件夹名称。'; return; }
+    try {
+      const response = await fetch('/api/export_directory', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({parent:folderCurrent || '.', name}),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      nameInput.value = '';
+      await loadFolder(data.path);
+    } catch (error) {
+      status.textContent = '新建失败：' + error.message;
+    }
+  };
 
   const clearBtn = document.getElementById('clear-snapshot-btn');
   if (clearBtn) {
