@@ -456,19 +456,71 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
   };
   byId('map-export-fbx').onclick = async () => {
     if (!loaded.size || !source) return;
+    const exportBtn = byId('map-export-fbx');
+    const exportWrap = byId('map-export-progress-wrap');
+    const exportProg = byId('map-export-progress');
+    const exportStage = byId('map-export-stage');
+    const exportPercent = byId('map-export-percent');
+    const exportStatus = byId('map-export-status');
     const cells = [...loaded.keys()].sort((a, b) => a - b).join(',');
     const outputPath = byId('map-export-path').value.trim();
-    const query = new URLSearchParams({ cells, path: source, shared_path: sessionShared || '', output_path: outputPath });
-    status.textContent = `正在服务器生成 ${loaded.size} 个已加载 Cell 的 FBX；请勿重复点击。`;
-    if (!outputPath) {
-      const link = document.createElement('a');link.href='/api/export_loaded_cells?'+query;link.download='loaded-manhattan-cells-FBX.zip';
-      document.body.appendChild(link);link.click();link.remove();return;
-    }
+    const query = new URLSearchParams({ cells, path: source, shared_path: sessionShared || '', output_path: outputPath, async: '1' });
+
+    exportBtn.disabled = true;
+    exportBtn.textContent = '正在导出…';
+    if (exportWrap) exportWrap.classList.remove('hidden');
+    if (exportProg) exportProg.value = 0;
+    if (exportPercent) exportPercent.textContent = '0%';
+    if (exportStage) exportStage.textContent = `准备导出 ${loaded.size} 个已加载区块…`;
+    if (exportStatus) exportStatus.textContent = '任务已启动，正在初始化…';
+
     try {
-      const response=await fetch('/api/export_loaded_cells?'+query);const result=await response.json();
-      if(!response.ok)throw new Error(result.error||`HTTP ${response.status}`);
-      status.textContent=`地图 FBX 已保存：${result.output_dir} · ${result.cells.length} Cells · ${result.textures} 张贴图`;
-    } catch(error) { status.textContent='地图 FBX 导出失败：'+error.message; }
+      const response = await fetch('/api/export_loaded_cells?' + query);
+      const startResult = await response.json();
+      if (!response.ok) throw new Error(startResult.error || `HTTP ${response.status}`);
+      const jobId = startResult.job_id;
+
+      let finished = false;
+      while (!finished) {
+        await new Promise(r => setTimeout(r, 600));
+        const pollResp = await fetch('/api/export_job?' + new URLSearchParams({ id: jobId }));
+        if (!pollResp.ok) throw new Error(`HTTP ${pollResp.status}`);
+        const job = await pollResp.json();
+
+        const pct = Math.max(0, Math.min(100, Math.round(job.progress || 0)));
+        if (exportProg) exportProg.value = pct;
+        if (exportPercent) exportPercent.textContent = `${pct}%`;
+        if (exportStage) exportStage.textContent = job.stage || `${job.status} (${job.completed || 0}/${job.total || loaded.size})`;
+
+        if (job.status === 'completed') {
+          finished = true;
+          if (exportProg) exportProg.value = 100;
+          if (exportPercent) exportPercent.textContent = '100%';
+          if (outputPath) {
+            if (exportStatus) exportStatus.textContent = `地图 FBX 已保存：${job.output_dir} · ${loaded.size} Cells · ${job.textures || 0} 张贴图（原版无损）`;
+            status.textContent = `地图 FBX 已成功导出到服务器：${job.output_dir}`;
+          } else {
+            if (exportStatus) exportStatus.textContent = `导出完成，包含 ${job.textures || 0} 张无损去重贴图；正在下载 ZIP…`;
+            status.textContent = `地图 FBX 压缩包已生成，正在下载…`;
+            const downloadUrl = job.download_url || `/api/export_loaded_cells?download=1&job_id=${jobId}`;
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = 'loaded-manhattan-cells-FBX.zip';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+          }
+        } else if (job.status === 'failed') {
+          throw new Error(job.error || job.stage || '导出失败');
+        }
+      }
+    } catch (error) {
+      if (exportStatus) exportStatus.textContent = '地图 FBX 导出失败：' + error.message;
+      status.textContent = '地图 FBX 导出失败：' + error.message;
+    } finally {
+      exportBtn.disabled = !loaded.size;
+      exportBtn.textContent = '导出当前已加载 Cells（FBX＋贴图）';
+    }
   };
   updateSummary();
   return {

@@ -85,8 +85,8 @@ def classify_material_group(group, template, parameter, textured):
     return 'textured_other'
 
 
-def compressed_texture(image, expected, max_edge=256):
-    """Validate DDS framing and preserve a bounded subset of original mip levels."""
+def compressed_texture(image, expected, max_edge=8192):
+    """Validate DDS framing and preserve original mip levels up to max_edge."""
     if len(image) < 132 or struct.unpack_from('<I', image)[0] != len(image) - 4:
         raise ValueError('invalid count-prefixed DDS length')
     dds = image[4:]
@@ -111,11 +111,12 @@ def compressed_texture(image, expected, max_edge=256):
     offset, w, h = 128, width, height
     selected = []
     byte_count = 0
+    effective_max_edge = max_edge if max_edge is not None else 8192
     for _ in range(mips):
         length = max(1, (w + 3) // 4) * max(1, (h + 3) // 4) * block_size
         if offset + length > len(dds):
             raise ValueError('truncated DDS mip chain')
-        if max(w, h) <= max_edge:
+        if max(w, h) <= effective_max_edge:
             selected.append({'width': w, 'height': h, 'data': base64.b64encode(dds[offset:offset + length]).decode('ascii')})
             byte_count += length
         offset += length
@@ -128,7 +129,7 @@ def compressed_texture(image, expected, max_edge=256):
             'bytes': byte_count, 'original_width': width, 'original_height': height}
 
 
-def _read_texture(records, children, index, color):
+def _read_texture(records, children, index, color, max_edge=8192):
     descendants = [r for _, r in _descendants(index, children)]
     headers = [r for r in descendants if r['type_id'] == TEXTURE_DDS]
     images = [r for r in descendants if r['type_id'] == IMAGE_DATA]
@@ -137,10 +138,12 @@ def _read_texture(records, children, index, color):
     name, w, h, mips, algorithm = _parse_texture_dds_header(headers[0]['payload'])
     if name != color:
         raise ValueError('TextureDDS name mismatch')
-    return compressed_texture(images[0]['payload'], (w, h, mips, algorithm))
+    tex = compressed_texture(images[0]['payload'], (w, h, mips, algorithm), max_edge=max_edge)
+    tex['name'] = color
+    return tex
 
 
-def build_texture_index(data):
+def build_texture_index(data, max_edge=8192):
     records, children = _records(data)
     textures = {}
     for index, record in enumerate(records):
@@ -151,13 +154,13 @@ def build_texture_index(data):
             textures[name] = None
             continue
         try:
-            textures[name] = _read_texture(records, children, index, name)
+            textures[name] = _read_texture(records, children, index, name, max_edge=max_edge)
         except (ValueError, struct.error):
             textures[name] = None
     return textures
 
 
-def attach_local_materials(data, groups, meshes, shared_textures=None):
+def attach_local_materials(data, groups, meshes, shared_textures=None, max_edge=8192):
     records, children = _records(data)
     shaders, textures, vertex_lists = {}, {}, {}
     for index, record in enumerate(records):
@@ -250,7 +253,7 @@ def attach_local_materials(data, groups, meshes, shared_textures=None):
                     index = textures[color]
                     if index is None:
                         raise ValueError('ambiguous local Texture')
-                    texture = _read_texture(records, children, index, color)
+                    texture = _read_texture(records, children, index, color, max_edge=max_edge)
                 else:
                     texture = (shared_textures or {}).get(color)
                     if texture is None:

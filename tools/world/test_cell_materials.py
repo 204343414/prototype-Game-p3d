@@ -210,10 +210,14 @@ class CellMaterialTests(unittest.TestCase):
     def test_keeps_original_bounded_mips_dxt1_dxt3_dxt5(self):
         for fmt in (b'DXT1', b'DXT3', b'DXT5'):
             image = _synthetic_dds(width=512, height=512, mips=10, format_fourcc=fmt)
-            texture = compressed_texture(image, (512, 512, 10, fmt.decode('ascii')))
-            self.assertEqual(texture['mips'][0]['width'], 256)
-            self.assertEqual(base64.b64decode(texture['mips'][0]['data'])[0], 1)
-            self.assertEqual(texture['mips'][-1]['width'], 1)
+            texture_full = compressed_texture(image, (512, 512, 10, fmt.decode('ascii')))
+            self.assertEqual(texture_full['mips'][0]['width'], 512)
+            self.assertEqual(base64.b64decode(texture_full['mips'][0]['data'])[0], 1)
+            self.assertEqual(texture_full['mips'][-1]['width'], 1)
+            texture_bounded = compressed_texture(image, (512, 512, 10, fmt.decode('ascii')), max_edge=256)
+            self.assertEqual(texture_bounded['mips'][0]['width'], 256)
+            self.assertEqual(base64.b64decode(texture_bounded['mips'][0]['data'])[0], 1)
+            self.assertEqual(texture_bounded['mips'][-1]['width'], 1)
 
     def test_truncated_chain_with_correct_prefix_is_rejected(self):
         image = _synthetic_dds(width=4, height=4, mips=1)

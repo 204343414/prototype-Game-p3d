@@ -323,7 +323,14 @@
           <label for="map-export-path">服务器导出路径（留空则下载 ZIP）</label>
           <input id="map-export-path" type="text" placeholder="例如 MapFBX（相对于 PROTOTYPE_EXPORT_ROOT）" />
           <button id="map-export-fbx" type="button" disabled>导出当前已加载 Cells（FBX＋贴图）</button>
-          <div class="sub">填写路径时保存到服务器；留空时下载 ZIP。仅导出当前已验证的城区主体与贴图。</div>
+          <div id="map-export-progress-wrap" class="hidden" style="margin: 6px 0;">
+            <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:3px">
+              <span id="map-export-stage" style="color:var(--text, #d9e3df)">准备导出…</span>
+              <span id="map-export-percent" style="color:var(--accent, #b8ff36); font-weight:bold">0%</span>
+            </div>
+            <progress id="map-export-progress" value="0" max="100" aria-label="地图导出进度" style="width:100%"></progress>
+          </div>
+          <div id="map-export-status" class="sub">填写路径时保存到服务器；留空时下载 ZIP。仅导出当前已验证的城区主体与贴图。</div>
           <input id="map-search" type="search" placeholder="筛选编号，例如 2、18…" />
           <label><input id="map-append" type="checkbox" /> 保留已加载区块</label>
         </div>

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Blender background script: convert source-faithful GLB to binary FBX."""
-import bpy, json, os, re, shutil, sys, traceback
+import bpy, hashlib, json, os, re, shutil, sys, traceback
 
 def args_after_dash():
     return sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
@@ -12,6 +12,7 @@ def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.gltf(filepath=source,import_pack_images=True,merge_vertices=False,import_shading='NORMALS')
     armatures=[o for o in bpy.context.scene.objects if o.type=='ARMATURE']
+    has_armatures=len(armatures)>0
     # Blender's glTF importer creates helper Icospheres in a
     # `glTF_not_exported` collection and assigns them as pose-bone custom
     # shapes. They are editor helpers, not source geometry or FBX bones.
@@ -47,28 +48,50 @@ def main():
     # Unity does not reliably extract Blender FBX embedded media. Write real
     # PNG files and keep relative FBX texture references instead.
     texture_dir=os.path.dirname(output)
-    os.makedirs(texture_dir,exist_ok=True);written_textures=[];used=set()
+    os.makedirs(texture_dir,exist_ok=True);written_textures=[];written_hashes={};used=set()
     for image in bpy.data.images:
         if image.name in {'Render Result','Viewer Node'} or image.size[0] == 0:
             continue
         stem=re.sub(r'[^A-Za-z0-9._-]+','_',os.path.splitext(image.name)[0]).strip('._') or 'texture'
         name=stem+'.png';n=2
         while name.lower() in used:name=f'{stem}_{n}.png';n+=1
-        used.add(name.lower());path=os.path.join(texture_dir,name)
+        path=os.path.join(texture_dir,name)
         image.filepath_raw=path;image.file_format='PNG';image.save()
         if image.packed_file is not None:
             image.unpack(method='USE_ORIGINAL')
         image.filepath=path
-        written_textures.append(name)
+        if os.path.isfile(path):
+            with open(path,'rb') as f:
+                h=hashlib.sha256(f.read()).hexdigest()
+            if h in written_hashes:
+                try:os.remove(path)
+                except OSError:pass
+                image.filepath=os.path.join(texture_dir,written_hashes[h])
+                image.filepath_raw=image.filepath
+                continue
+            written_hashes[h]=name
+            used.add(name.lower())
+            written_textures.append(name)
+
     # Keep source images that are intentionally provenance-only in generic
     # PBR (for example Prototype's specular maps) even when Blender does not
     # instantiate an Image datablock for an unbound glTF texture.
     source_texture_dir=os.path.join(os.path.dirname(source),'textures')
     if os.path.isdir(source_texture_dir):
         for source_name in sorted(os.listdir(source_texture_dir)):
-            if not source_name.lower().endswith('.png') or source_name in written_textures:
+            if not source_name.lower().endswith('.png'):
                 continue
-            shutil.copy2(os.path.join(source_texture_dir,source_name),os.path.join(texture_dir,source_name))
+            src_path=os.path.join(source_texture_dir,source_name)
+            if not os.path.isfile(src_path):
+                continue
+            with open(src_path,'rb') as f:
+                h=hashlib.sha256(f.read()).hexdigest()
+            if h in written_hashes:
+                continue
+            dst_path=os.path.join(texture_dir,source_name)
+            if not os.path.exists(dst_path):
+                shutil.copy2(src_path,dst_path)
+            written_hashes[h]=source_name
             written_textures.append(source_name)
     bpy.context.scene.frame_set(0)
     bpy.context.view_layer.update()
@@ -79,8 +102,8 @@ def main():
         axis_forward='-Z',axis_up='Y',use_space_transform=True,bake_space_transform=False,
         add_leaf_bones=False,primary_bone_axis='Y',secondary_bone_axis='X',
         use_armature_deform_only=False,armature_nodetype='NULL',
-        bake_anim=True,bake_anim_use_all_bones=True,bake_anim_use_nla_strips=True,
-        bake_anim_use_all_actions=False,bake_anim_force_startend_keying=True,
+        bake_anim=has_armatures,bake_anim_use_all_bones=has_armatures,bake_anim_use_nla_strips=has_armatures,
+        bake_anim_use_all_actions=False,bake_anim_force_startend_keying=has_armatures,
         bake_anim_step=1.0,bake_anim_simplify_factor=0.0,
         path_mode='STRIP',embed_textures=False,use_custom_props=True,
         mesh_smooth_type='OFF',use_triangles=True,use_mesh_modifiers=True)

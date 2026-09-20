@@ -8,30 +8,158 @@ def safe(s):return re.sub(r'[^A-Za-z0-9._-]+','_',s).strip('._') or 'asset'
 def png_chunk(tag,p):
  c=tag+p;return struct.pack('>I',len(p))+c+struct.pack('>I',zlib.crc32(c)&0xffffffff)
 def dxt_png(fmt,w,h,data):
- rows=[bytearray(w*4) for _ in range(h)];p=0
- def rgb(c):return ((c>>11&31)*255//31,(c>>5&63)*255//63,(c&31)*255//31)
- for by in range(0,h,4):
-  for bx in range(0,w,4):
-   if fmt=='DXT5':a0,a1=data[p],data[p+1];ab=int.from_bytes(data[p+2:p+8],'little');c0,c1=struct.unpack_from('<HH',data,p+8);bits=struct.unpack_from('<I',data,p+12)[0];p+=16
-   elif fmt=='DXT3':ab=int.from_bytes(data[p:p+8],'little');c0,c1=struct.unpack_from('<HH',data,p+8);bits=struct.unpack_from('<I',data,p+12)[0];p+=16;a0=a1=0
-   elif fmt=='DXT1':c0,c1=struct.unpack_from('<HH',data,p);bits=struct.unpack_from('<I',data,p+4)[0];p+=8;ab=0;a0=a1=0
-   else:raise ValueError('unsupported '+fmt)
-   x0=rgb(c0);x1=rgb(c1)
-   if fmt=='DXT1' and c0<=c1:pal=[x0,x1,tuple((x0[i]+x1[i])//2 for i in range(3)),(0,0,0)]
-   else:pal=[x0,x1,tuple((2*x0[i]+x1[i])//3 for i in range(3)),tuple((x0[i]+2*x1[i])//3 for i in range(3))]
-   for y in range(4):
-    for x in range(4):
-     ci=(bits>>(2*(y*4+x)))&3
-     if fmt=='DXT5':
-      ai=(ab>>(3*(y*4+x)))&7
-      if a0>a1:alpha=[a0,a1,(6*a0+a1)//7,(5*a0+2*a1)//7,(4*a0+3*a1)//7,(3*a0+4*a1)//7,(2*a0+5*a1)//7,(a0+6*a1)//7][ai]
-      else:alpha=[a0,a1,(4*a0+a1)//5,(3*a0+2*a1)//5,(2*a0+3*a1)//5,(a0+4*a1)//5,0,255][ai]
-     elif fmt=='DXT3':alpha=((ab>>(4*(y*4+x)))&15)*17
-     else:alpha=0 if c0<=c1 and ci==3 else 255
-     xx,yy=bx+x,by+y
-     if xx<w and yy<h:rows[yy][xx*4:xx*4+4]=bytes((*pal[ci],alpha))
- raw=b''.join(b'\0'+r for r in rows)
- return b'\x89PNG\r\n\x1a\n'+png_chunk(b'IHDR',struct.pack('>IIBBBBB',w,h,8,6,0,0,0))+png_chunk(b'IDAT',zlib.compress(raw))+png_chunk(b'IEND',b'')
+    try:
+        import numpy as np
+        from PIL import Image
+        import io
+
+        bw, bh = max(1, (w + 3) // 4), max(1, (h + 3) // 4)
+        num_blocks = bw * bh
+        raw_blocks = np.frombuffer(data, dtype=np.uint8)
+
+        if fmt == 'DXT1':
+            blocks_data = raw_blocks.reshape((num_blocks, 8))
+            c0 = blocks_data[:, 0].astype(np.uint16) | (blocks_data[:, 1].astype(np.uint16) << 8)
+            c1 = blocks_data[:, 2].astype(np.uint16) | (blocks_data[:, 3].astype(np.uint16) << 8)
+            bits = (blocks_data[:, 4].astype(np.uint32) |
+                    (blocks_data[:, 5].astype(np.uint32) << 8) |
+                    (blocks_data[:, 6].astype(np.uint32) << 16) |
+                    (blocks_data[:, 7].astype(np.uint32) << 24))
+            alpha_blocks = None
+        elif fmt == 'DXT3':
+            blocks_data = raw_blocks.reshape((num_blocks, 16))
+            alpha_raw = blocks_data[:, 0:8]
+            a_low = (alpha_raw & 0x0F) * 17
+            a_high = ((alpha_raw >> 4) & 0x0F) * 17
+            alpha_blocks = np.empty((num_blocks, 16), dtype=np.uint8)
+            alpha_blocks[:, 0::2] = a_low
+            alpha_blocks[:, 1::2] = a_high
+
+            c0 = blocks_data[:, 8].astype(np.uint16) | (blocks_data[:, 9].astype(np.uint16) << 8)
+            c1 = blocks_data[:, 10].astype(np.uint16) | (blocks_data[:, 11].astype(np.uint16) << 8)
+            bits = (blocks_data[:, 12].astype(np.uint32) |
+                    (blocks_data[:, 13].astype(np.uint32) << 8) |
+                    (blocks_data[:, 14].astype(np.uint32) << 16) |
+                    (blocks_data[:, 15].astype(np.uint32) << 24))
+        elif fmt == 'DXT5':
+            blocks_data = raw_blocks.reshape((num_blocks, 16))
+            a0 = blocks_data[:, 0].astype(np.uint64)
+            a1 = blocks_data[:, 1].astype(np.uint64)
+            a_bytes = blocks_data[:, 2:8].astype(np.uint64)
+            ab = (a_bytes[:, 0] |
+                  (a_bytes[:, 1] << 8) |
+                  (a_bytes[:, 2] << 16) |
+                  (a_bytes[:, 3] << 24) |
+                  (a_bytes[:, 4] << 32) |
+                  (a_bytes[:, 5] << 40))
+
+            a_pal = np.zeros((num_blocks, 8), dtype=np.uint8)
+            a_pal[:, 0] = a0.astype(np.uint8)
+            a_pal[:, 1] = a1.astype(np.uint8)
+            a0_gt_a1 = a0 > a1
+
+            for i in range(1, 7):
+                a_pal[a0_gt_a1, i + 1] = (((7 - i) * a0[a0_gt_a1] + i * a1[a0_gt_a1]) // 7).astype(np.uint8)
+            for i in range(1, 5):
+                a_pal[~a0_gt_a1, i + 1] = (((5 - i) * a0[~a0_gt_a1] + i * a1[~a0_gt_a1]) // 5).astype(np.uint8)
+            a_pal[~a0_gt_a1, 6] = 0
+            a_pal[~a0_gt_a1, 7] = 255
+
+            a_shifts = np.arange(0, 48, 3, dtype=np.uint64).reshape((1, 16))
+            a_idx = ((ab[:, None] >> a_shifts) & 7).astype(np.intp)
+            alpha_blocks = np.take_along_axis(a_pal, a_idx, axis=1)
+
+            c0 = blocks_data[:, 8].astype(np.uint16) | (blocks_data[:, 9].astype(np.uint16) << 8)
+            c1 = blocks_data[:, 10].astype(np.uint16) | (blocks_data[:, 11].astype(np.uint16) << 8)
+            bits = (blocks_data[:, 12].astype(np.uint32) |
+                    (blocks_data[:, 13].astype(np.uint32) << 8) |
+                    (blocks_data[:, 14].astype(np.uint32) << 16) |
+                    (blocks_data[:, 15].astype(np.uint32) << 24))
+        else:
+            raise ValueError('unsupported ' + str(fmt))
+
+        r0 = (((c0 >> 11) & 31) * 255 // 31).astype(np.uint32)
+        g0 = (((c0 >> 5) & 63) * 255 // 63).astype(np.uint32)
+        b0 = ((c0 & 31) * 255 // 31).astype(np.uint32)
+
+        r1 = (((c1 >> 11) & 31) * 255 // 31).astype(np.uint32)
+        g1 = (((c1 >> 5) & 63) * 255 // 63).astype(np.uint32)
+        b1 = ((c1 & 31) * 255 // 31).astype(np.uint32)
+
+        pal = np.zeros((num_blocks, 4, 3), dtype=np.uint8)
+        pal[:, 0, 0] = r0; pal[:, 0, 1] = g0; pal[:, 0, 2] = b0
+        pal[:, 1, 0] = r1; pal[:, 1, 1] = g1; pal[:, 1, 2] = b1
+
+        if fmt == 'DXT1':
+            c0_gt_c1 = c0 > c1
+            not_c0_gt_c1 = ~c0_gt_c1
+            pal[c0_gt_c1, 2, 0] = (2 * r0[c0_gt_c1] + r1[c0_gt_c1]) // 3
+            pal[c0_gt_c1, 2, 1] = (2 * g0[c0_gt_c1] + g1[c0_gt_c1]) // 3
+            pal[c0_gt_c1, 2, 2] = (2 * b0[c0_gt_c1] + b1[c0_gt_c1]) // 3
+
+            pal[c0_gt_c1, 3, 0] = (r0[c0_gt_c1] + 2 * r1[c0_gt_c1]) // 3
+            pal[c0_gt_c1, 3, 1] = (g0[c0_gt_c1] + 2 * g1[c0_gt_c1]) // 3
+            pal[c0_gt_c1, 3, 2] = (b0[c0_gt_c1] + 2 * b1[c0_gt_c1]) // 3
+
+            pal[not_c0_gt_c1, 2, 0] = (r0[not_c0_gt_c1] + r1[not_c0_gt_c1]) // 2
+            pal[not_c0_gt_c1, 2, 1] = (g0[not_c0_gt_c1] + g1[not_c0_gt_c1]) // 2
+            pal[not_c0_gt_c1, 2, 2] = (b0[not_c0_gt_c1] + b1[not_c0_gt_c1]) // 2
+
+            pal[not_c0_gt_c1, 3, :] = 0
+        else:
+            pal[:, 2, 0] = (2 * r0 + r1) // 3
+            pal[:, 2, 1] = (2 * g0 + g1) // 3
+            pal[:, 2, 2] = (2 * b0 + b1) // 3
+
+            pal[:, 3, 0] = (r0 + 2 * r1) // 3
+            pal[:, 3, 1] = (g0 + 2 * g1) // 3
+            pal[:, 3, 2] = (b0 + 2 * b1) // 3
+
+        shifts = np.arange(0, 32, 2, dtype=np.uint32).reshape((1, 16))
+        idx = ((bits[:, None] >> shifts) & 3).astype(np.intp)
+        rgb_blocks = np.take_along_axis(pal, idx[:, :, None], axis=1)
+
+        rgba_blocks = np.empty((num_blocks, 16, 4), dtype=np.uint8)
+        rgba_blocks[:, :, 0:3] = rgb_blocks
+        if fmt == 'DXT1':
+            alpha = np.full((num_blocks, 16), 255, dtype=np.uint8)
+            alpha[not_c0_gt_c1[:, None] & (idx == 3)] = 0
+            rgba_blocks[:, :, 3] = alpha
+        else:
+            rgba_blocks[:, :, 3] = alpha_blocks
+
+        img_array = rgba_blocks.reshape((bh, bw, 4, 4, 4)).transpose((0, 2, 1, 3, 4)).reshape((bh * 4, bw * 4, 4))
+        if bh * 4 != h or bw * 4 != w:
+            img_array = img_array[:h, :w, :]
+        img = Image.fromarray(img_array, mode='RGBA')
+        buf = io.BytesIO()
+        img.save(buf, format='PNG', compress_level=1)
+        return buf.getvalue()
+    except Exception:
+        rows=[bytearray(w*4) for _ in range(h)];p=0
+        def rgb(c):return ((c>>11&31)*255//31,(c>>5&63)*255//63,(c&31)*255//31)
+        for by in range(0,h,4):
+            for bx in range(0,w,4):
+                if fmt=='DXT5':a0,a1=data[p],data[p+1];ab=int.from_bytes(data[p+2:p+8],'little');c0,c1=struct.unpack_from('<HH',data,p+8);bits=struct.unpack_from('<I',data,p+12)[0];p+=16
+                elif fmt=='DXT3':ab=int.from_bytes(data[p:p+8],'little');c0,c1=struct.unpack_from('<HH',data,p+8);bits=struct.unpack_from('<I',data,p+12)[0];p+=16;a0=a1=0
+                elif fmt=='DXT1':c0,c1=struct.unpack_from('<HH',data,p);bits=struct.unpack_from('<I',data,p+4)[0];p+=8;ab=0;a0=a1=0
+                else:raise ValueError('unsupported '+fmt)
+                x0=rgb(c0);x1=rgb(c1)
+                if fmt=='DXT1' and c0<=c1:pal=[x0,x1,tuple((x0[i]+x1[i])//2 for i in range(3)),(0,0,0)]
+                else:pal=[x0,x1,tuple((2*x0[i]+x1[i])//3 for i in range(3)),tuple((x0[i]+2*x1[i])//3 for i in range(3))]
+                for y in range(4):
+                    for x in range(4):
+                        ci=(bits>>(2*(y*4+x)))&3
+                        if fmt=='DXT5':
+                            ai=(ab>>(3*(y*4+x)))&7
+                            if a0>a1:alpha=[a0,a1,(6*a0+a1)//7,(5*a0+2*a1)//7,(4*a0+3*a1)//7,(3*a0+4*a1)//7,(2*a0+5*a1)//7,(a0+6*a1)//7][ai]
+                            else:alpha=[a0,a1,(4*a0+a1)//5,(3*a0+2*a1)//5,(2*a0+3*a1)//5,(a0+4*a1)//5,0,255][ai]
+                        elif fmt=='DXT3':alpha=((ab>>(4*(y*4+x)))&15)*17
+                        else:alpha=0 if c0<=c1 and ci==3 else 255
+                        xx,yy=bx+x,by+y
+                        if xx<w and yy<h:rows[yy][xx*4:xx*4+4]=bytes((*pal[ci],alpha))
+        raw=b''.join(b'\0'+r for r in rows)
+        return b'\x89PNG\r\n\x1a\n'+png_chunk(b'IHDR',struct.pack('>IIBBBBB',w,h,8,6,0,0,0))+png_chunk(b'IDAT',zlib.compress(raw))+png_chunk(b'IEND',b'')
 def mm(a,b):return [sum(a[r+k*4]*b[k+c*4] for k in range(4)) for c in range(4) for r in range(4)]
 def decompose_matrix(m):
  t=[m[12],m[13],m[14]];s=[math.sqrt(sum(m[r+c*4]**2 for r in range(3))) for c in range(3)]

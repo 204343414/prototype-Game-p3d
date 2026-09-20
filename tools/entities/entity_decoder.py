@@ -237,7 +237,7 @@ def _decode_local_texture(records: list[dict[str, Any]], children_map: dict[int,
         raise ValueError(f"TextureDDS name {dds_name!r} does not match Texture {name!r}")
     # compressed_texture verifies all of: count prefix, DDS magic/header,
     # TextureDDS/DDS agreement, each mip length, and absence of trailing bytes.
-    decoded = compressed_texture(image_payloads[0], (width, height, mip_count, algorithm), max_edge=1024)
+    decoded = compressed_texture(image_payloads[0], (width, height, mip_count, algorithm), max_edge=8192)
     return {
         "key": f"entity_tex_{name}",
         "name": name,

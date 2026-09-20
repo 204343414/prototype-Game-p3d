@@ -1844,6 +1844,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 detail = (converted.stderr or converted.stdout or "FBX 转换失败")[-4000:]
                 return self._send_error_json(detail, 500)
             package = os.path.join(output, f"{clean_name}-FBX.zip")
+            seen_hashes = set()
+            seen_names = set()
             with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_STORED) as archive:
                 archive.write(fbx, f"{clean_name}.fbx")
                 conversion_report = fbx + ".conversion.json"
@@ -1851,9 +1853,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     with open(conversion_report, "r", encoding="utf-8") as handle:
                         texture_names = json.load(handle).get("textures", [])
                     for texture_name in texture_names:
-                        texture_path = os.path.join(output, os.path.basename(texture_name))
+                        base_name = os.path.basename(texture_name)
+                        if base_name in seen_names:
+                            continue
+                        texture_path = os.path.join(output, base_name)
                         if os.path.isfile(texture_path):
-                            archive.write(texture_path, os.path.basename(texture_name))
+                            with open(texture_path, "rb") as tf:
+                                h = hashlib.sha256(tf.read()).hexdigest()
+                            if h in seen_hashes:
+                                continue
+                            seen_hashes.add(h)
+                            seen_names.add(base_name)
+                            archive.write(texture_path, base_name)
             return self._send_attachment(package, f"{clean_name}-FBX.zip", "application/zip")
         except subprocess.TimeoutExpired:
             return self._send_error_json("实体导出超过 30 分钟", 504)
@@ -1861,10 +1872,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
             EXPORT_LOCK.release()
 
     def _handle_export_loaded_cells(self, qs):
+        is_download = qs.get("download", ["0"])[0] in ("1", "true")
+        job_id = qs.get("job_id", [""])[0]
+        if is_download and job_id:
+            with EXPORT_JOBS_LOCK:
+                job = EXPORT_JOBS.get(job_id)
+            if not job or job.get("status") != "completed":
+                return self._send_error_json("导出任务未就绪或不存在", 404)
+            package = job.get("package")
+            if not package or not os.path.isfile(package):
+                return self._send_error_json("压缩包文件未找到", 404)
+            return self._send_attachment(package, "loaded-manhattan-cells-FBX.zip", "application/zip")
+
         raw_cells = qs.get("cells", [""])[0]
         archive = qs.get("path", [""])[0]
         shared = qs.get("shared_path", [""])[0]
         requested_output = qs.get("output_path", [""])[0]
+        is_async = qs.get("async", ["0"])[0] in ("1", "true")
+
         if not re.fullmatch(r"\d{1,3}(?:,\d{1,3})*", raw_cells):
             return self._send_error_json("cells 必须是逗号分隔的 0..259 编号", 400)
         cells = sorted(set(int(value) for value in raw_cells.split(",")))
@@ -1882,61 +1907,177 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send_error_json(f"找不到 Blender：{BLENDER_BIN}；请设置 PROTOTYPE_BLENDER", 503)
         if not EXPORT_LOCK.acquire(blocking=False):
             return self._send_error_json("另一个导出任务正在运行", 429)
-        try:
-            output = os.path.join(EXPORT_ROOT, "gltf", "web-loaded-cells")
-            shutil.rmtree(output, ignore_errors=True)
-            os.makedirs(output, exist_ok=True)
-            tool = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "tools", "entities", "export_loaded_cells_gltf.py"))
-            command = [sys.executable, tool, "--server", "http://127.0.0.1:8421", "--archive", archive,
-                       "--cells", ",".join(map(str, cells)), "--output", output, "--name", "loaded-manhattan-cells"]
-            if shared:
-                command.extend(["--shared", shared])
-            result = subprocess.run(command, capture_output=True, text=True, timeout=1800)
-            if result.returncode:
-                detail = (result.stderr or result.stdout or "导出器失败")[-2000:]
-                return self._send_error_json(detail, 500)
-            glb = os.path.join(output, "loaded-manhattan-cells.glb")
-            fbx = os.path.join(output, "loaded-manhattan-cells.fbx")
-            blender = BLENDER_BIN
-            converter = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "tools", "entities", "convert_glb_to_fbx.py"))
-            converted = subprocess.run([blender, "--background", "--python", converter, "--", glb, fbx],
-                                       capture_output=True, text=True, timeout=1800)
-            if converted.returncode or not os.path.isfile(fbx):
-                detail = (converted.stderr or converted.stdout or "FBX 转换失败")[-4000:]
-                return self._send_error_json(detail, 500)
-            package = os.path.join(output, "loaded-manhattan-cells-FBX.zip")
-            with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_STORED) as archive:
-                archive.write(fbx, "loaded-manhattan-cells.fbx")
+
+        job_id = uuid.uuid4().hex[:16]
+        output = os.path.join(EXPORT_ROOT, "gltf", "web-loaded-cells")
+        job = {
+            "id": job_id,
+            "type": "map",
+            "status": "running",
+            "total": len(cells),
+            "completed": 0,
+            "stage": "正在初始化导出...",
+            "progress": 0.0,
+            "current": None,
+            "output_dir": requested_output or None,
+            "download_url": None,
+            "fbx": None,
+            "textures": 0,
+            "package": None,
+            "error": None,
+            "results": [],
+            "errors": [],
+        }
+        with EXPORT_JOBS_LOCK:
+            EXPORT_JOBS[job_id] = job
+
+        def run_export():
+            try:
+                shutil.rmtree(output, ignore_errors=True)
+                os.makedirs(output, exist_ok=True)
+                tool = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "tools", "entities", "export_loaded_cells_gltf.py"))
+                command = [sys.executable, tool, "--server", "http://127.0.0.1:8421", "--archive", archive,
+                           "--cells", ",".join(map(str, cells)), "--output", output, "--name", "loaded-manhattan-cells"]
+                if shared:
+                    command.extend(["--shared", shared])
+
+                proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                last_lines = []
+                while True:
+                    line = proc.stdout.readline()
+                    if not line and proc.poll() is not None:
+                        break
+                    if not line:
+                        continue
+                    line_str = line.strip()
+                    last_lines.append(line_str)
+                    if len(last_lines) > 50:
+                        last_lines.pop(0)
+                    if line_str.startswith("PROGRESS:"):
+                        try:
+                            prog_data = json.loads(line_str[9:].strip())
+                            with EXPORT_JOBS_LOCK:
+                                job["completed"] = prog_data.get("completed", job["completed"])
+                                job["total"] = prog_data.get("total", job["total"])
+                                job["stage"] = prog_data.get("stage", job["stage"])
+                                job["progress"] = min(90.0, float(prog_data.get("percent", job["progress"])))
+                        except Exception:
+                            pass
+                ret = proc.wait(timeout=1800)
+                if ret != 0:
+                    detail = "\n".join(last_lines)[-2000:] or "导出器失败"
+                    raise RuntimeError(detail)
+
+                with EXPORT_JOBS_LOCK:
+                    job["stage"] = "正在调用 Blender 转换为 FBX..."
+                    job["progress"] = 92.0
+
+                glb = os.path.join(output, "loaded-manhattan-cells.glb")
+                fbx = os.path.join(output, "loaded-manhattan-cells.fbx")
+                blender = BLENDER_BIN
+                converter = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "tools", "entities", "convert_glb_to_fbx.py"))
+                converted = subprocess.run([blender, "--background", "--python", converter, "--", glb, fbx],
+                                           capture_output=True, text=True, timeout=1800)
+                if converted.returncode or not os.path.isfile(fbx):
+                    detail = (converted.stderr or converted.stdout or "FBX 转换失败")[-4000:]
+                    raise RuntimeError(detail)
+
+                with EXPORT_JOBS_LOCK:
+                    job["stage"] = "正在去重贴图并打包..."
+                    job["progress"] = 96.0
+
                 conversion_report = fbx + ".conversion.json"
+                texture_names = []
                 if os.path.isfile(conversion_report):
                     with open(conversion_report, "r", encoding="utf-8") as handle:
                         texture_names = json.load(handle).get("textures", [])
+
+                package = os.path.join(output, "loaded-manhattan-cells-FBX.zip")
+                seen_hashes = set()
+                seen_names = set()
+                written_count = 0
+                with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_STORED) as zip_h:
+                    zip_h.write(fbx, "loaded-manhattan-cells.fbx")
                     for texture_name in texture_names:
-                        texture_path = os.path.join(output, os.path.basename(texture_name))
+                        base_name = os.path.basename(texture_name)
+                        if base_name in seen_names:
+                            continue
+                        texture_path = os.path.join(output, base_name)
                         if os.path.isfile(texture_path):
-                            archive.write(texture_path, os.path.basename(texture_name))
-            if requested_output:
-                try:
+                            with open(texture_path, "rb") as tf:
+                                h = hashlib.sha256(tf.read()).hexdigest()
+                            if h in seen_hashes:
+                                continue
+                            seen_hashes.add(h)
+                            seen_names.add(base_name)
+                            zip_h.write(texture_path, base_name)
+                            written_count += 1
+
+                if requested_output:
                     destination = self._safe_export_dir(requested_output)
-                except PermissionError as exc:
-                    return self._send_error_json(str(exc), 400)
-                shutil.copy2(fbx, os.path.join(destination, "loaded-manhattan-cells.fbx"))
-                conversion_report = fbx + ".conversion.json"
-                texture_count = 0
-                if os.path.isfile(conversion_report):
-                    with open(conversion_report, "r", encoding="utf-8") as handle:
-                        texture_names = json.load(handle).get("textures", [])
+                    shutil.copy2(fbx, os.path.join(destination, "loaded-manhattan-cells.fbx"))
+                    copied_count = 0
+                    dest_seen_hashes = set()
+                    dest_seen_names = set()
                     for texture_name in texture_names:
-                        texture_path = os.path.join(output, os.path.basename(texture_name))
+                        base_name = os.path.basename(texture_name)
+                        if base_name in dest_seen_names:
+                            continue
+                        texture_path = os.path.join(output, base_name)
                         if os.path.isfile(texture_path):
-                            shutil.copy2(texture_path, os.path.join(destination, os.path.basename(texture_name))); texture_count += 1
-                return self._send_json({"status":"completed","output_dir":destination,"cells":cells,
-                                        "fbx":"loaded-manhattan-cells.fbx","textures":texture_count})
-            return self._send_attachment(package, "loaded-manhattan-cells-FBX.zip", "application/zip")
-        except subprocess.TimeoutExpired:
-            return self._send_error_json("地图导出超过 30 分钟", 504)
-        finally:
-            EXPORT_LOCK.release()
+                            with open(texture_path, "rb") as tf:
+                                h = hashlib.sha256(tf.read()).hexdigest()
+                            if h in dest_seen_hashes:
+                                continue
+                            dest_seen_hashes.add(h)
+                            dest_seen_names.add(base_name)
+                            shutil.copy2(texture_path, os.path.join(destination, base_name))
+                            copied_count += 1
+                    with EXPORT_JOBS_LOCK:
+                        job.update({
+                            "status": "completed",
+                            "stage": "导出完成",
+                            "progress": 100.0,
+                            "output_dir": destination,
+                            "fbx": "loaded-manhattan-cells.fbx",
+                            "textures": copied_count,
+                            "package": package,
+                        })
+                else:
+                    with EXPORT_JOBS_LOCK:
+                        job.update({
+                            "status": "completed",
+                            "stage": "导出完成，正在准备下载",
+                            "progress": 100.0,
+                            "download_url": f"/api/export_loaded_cells?download=1&job_id={job_id}",
+                            "fbx": "loaded-manhattan-cells.fbx",
+                            "textures": written_count,
+                            "package": package,
+                        })
+            except Exception as exc:
+                with EXPORT_JOBS_LOCK:
+                    job.update({
+                        "status": "failed",
+                        "stage": f"导出失败: {exc}",
+                        "error": str(exc),
+                    })
+            finally:
+                EXPORT_LOCK.release()
+
+        if is_async:
+            threading.Thread(target=run_export, daemon=True).start()
+            return self._send_json({"job_id": job_id, "status": "running"}, 202)
+        else:
+            run_export()
+            with EXPORT_JOBS_LOCK:
+                final_job = json.loads(json.dumps(job, ensure_ascii=False))
+            if final_job["status"] == "failed":
+                return self._send_error_json(final_job.get("error") or "导出失败", 500)
+            if requested_output:
+                return self._send_json({"status": "completed", "output_dir": final_job["output_dir"],
+                                        "cells": cells, "fbx": "loaded-manhattan-cells.fbx",
+                                        "textures": final_job["textures"]})
+            return self._send_attachment(final_job["package"], "loaded-manhattan-cells-FBX.zip", "application/zip")
 
     def _handle_static(self, url_path):
         if url_path == "/":
