@@ -1714,6 +1714,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
         job_id = qs.get("id", [""])[0]
         with EXPORT_JOBS_LOCK:
             job = EXPORT_JOBS.get(job_id)
+            if job is None and re.fullmatch(r"[0-9a-f]{8,32}", job_id or ""):
+                # 服务重启后内存任务表会丢，但已完成的 ZIP/manifest 按固定规则仍在磁盘上；
+                # 用磁盘痕迹重建一份只读快照，避免前端轮询旧任务报 404。
+                for filename, kind in ((f"entity-batch-{job_id}.zip", "entities"),):
+                    package = os.path.join(EXPORT_ROOT, "gltf", filename)
+                    if os.path.isfile(package):
+                        manifest_dir = os.path.join(EXPORT_ROOT, "gltf", f"entity-batch-{job_id}")
+                        manifest_path = os.path.join(manifest_dir, "batch-export-manifest.json")
+                        results, errors = [], []
+                        if os.path.isfile(manifest_path):
+                            try:
+                                with open(manifest_path, "r", encoding="utf-8") as mh:
+                                    manifest_doc = json.load(mh)
+                                results = manifest_doc.get("results", [])
+                                errors = manifest_doc.get("errors", [])
+                            except Exception:
+                                results, errors = [], []
+                        job = {
+                            "id": job_id,
+                            "type": kind,
+                            "status": "completed" if not errors else "completed_with_errors",
+                            "total": len(results) + len(errors),
+                            "completed": len(results) + len(errors),
+                            "current": None,
+                            "results": results,
+                            "errors": errors,
+                            "output_dir": manifest_dir,
+                            "package": package,
+                            "download_url": f"/api/export_entities_batch_download?job_id={job_id}",
+                            "recovered_from_disk": True,
+                        }
+                        break
             if job is None:
                 return self._send_error_json("导出任务不存在", 404)
             snapshot = json.loads(json.dumps(job, ensure_ascii=False))
