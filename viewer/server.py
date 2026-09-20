@@ -40,6 +40,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 import uuid
 import zipfile
@@ -260,6 +261,11 @@ try:
 except Exception:
     fig_timeline = None
     actor_state_runtime = None
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "audio"))
+    import radp_common
+except Exception:
+    radp_common = None
     AlexController = None
 
 ALEX_SIM_LOCK = threading.RLock()
@@ -494,6 +500,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_logs(qs)
         if parsed.path == "/api/export_entities_batch_download":
             return self._handle_export_entities_batch_download(qs)
+        if parsed.path == "/api/export_audio_batch_download":
+            return self._handle_export_audio_batch_download(qs)
         if parsed.path == "/api/export_directories":
             return self._handle_export_directories(qs)
         if parsed.path == "/api/health":
@@ -518,6 +526,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_alex_simulator_post()
         if parsed.path == "/api/export_entities_batch":
             return self._handle_export_entities_batch()
+        if parsed.path == "/api/export_audio_batch":
+            return self._handle_export_audio_batch()
         if parsed.path == "/api/export_directory":
             return self._handle_create_export_directory()
         return self._send_error_json(f"not found: {parsed.path}", 404)
@@ -1771,32 +1781,39 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if job is None and re.fullmatch(r"[0-9a-f]{8,32}", job_id or ""):
                 # 服务重启后内存任务表会丢，但已完成的 ZIP/manifest 按固定规则仍在磁盘上；
                 # 用磁盘痕迹重建一份只读快照，避免前端轮询旧任务报 404。
-                for filename, kind in ((f"entity-batch-{job_id}.zip", "entities"),):
+                for filename, kind, subdir in ((f"entity-batch-{job_id}.zip", "entities", "batch-export-manifest.json"),
+                                               (f"audio-export-{job_id}.zip", "audio", "manifest.json")):
                     package = os.path.join(EXPORT_ROOT, "gltf", filename)
                     if os.path.isfile(package):
-                        manifest_dir = os.path.join(EXPORT_ROOT, "gltf", f"entity-batch-{job_id}")
-                        manifest_path = os.path.join(manifest_dir, "batch-export-manifest.json")
-                        results, errors = [], []
+                        manifest_dir = os.path.join(EXPORT_ROOT, "gltf", filename[:-4])
+                        manifest_path = os.path.join(manifest_dir, subdir)
+                        results, errors, total_n = [], [], 0
                         if os.path.isfile(manifest_path):
                             try:
                                 with open(manifest_path, "r", encoding="utf-8") as mh:
                                     manifest_doc = json.load(mh)
-                                results = manifest_doc.get("results", [])
                                 errors = manifest_doc.get("errors", [])
+                                if "written" in manifest_doc and "results" not in manifest_doc:
+                                    # 音频任务的 manifest：只有 written/failed 计数
+                                    total_n = manifest_doc["written"] + manifest_doc.get("failed", 0)
+                                else:
+                                    results = manifest_doc.get("results", [])
+                                    total_n = len(results) + len(errors)
                             except Exception:
-                                results, errors = [], []
+                                results, errors, total_n = [], [], 0
                         job = {
                             "id": job_id,
                             "type": kind,
                             "status": "completed" if not errors else "completed_with_errors",
-                            "total": len(results) + len(errors),
-                            "completed": len(results) + len(errors),
+                            "total": total_n,
+                            "completed": total_n,
                             "current": None,
                             "results": results,
                             "errors": errors,
                             "output_dir": manifest_dir,
                             "package": package,
-                            "download_url": f"/api/export_entities_batch_download?job_id={job_id}",
+                            "download_url": (f"/api/export_audio_batch_download?job_id={job_id}" if kind == "audio"
+                                             else f"/api/export_entities_batch_download?job_id={job_id}"),
                             "recovered_from_disk": True,
                         }
                         break
@@ -1804,6 +1821,165 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send_error_json("导出任务不存在", 404)
             snapshot = json.loads(json.dumps(job, ensure_ascii=False))
         return self._send_json(snapshot)
+
+    # ---------------- 音频批量解包（RADP → WAV，含 1..32 声道） ----------------
+
+    def _handle_export_audio_batch(self):
+        """POST {archives: ["00audio.rcf", "01audio.rcf"], dialogue: true,
+        skip_existing: true} → 后台任务把两个 audio.rcf 里的全部 RADP AudioFile
+        解码为 WAV，产出 audio-export-<job_id>/ 目录 + ZIP。
+
+        音频量为 13.8k+ 对象；过程完全是本地 CPU 解码，没有 Blender 依赖。"""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 65536:
+                return self._send_error_json("音频批量导出请求为空或过大", 400)
+            payload = json.loads(self.rfile.read(length))
+            archives = payload.get("archives") or ["00audio.rcf", "01audio.rcf"]
+            if not isinstance(archives, list):
+                return self._send_error_json("archives 必须是数组", 400)
+            clean_archives = [a for a in archives if a in ("00audio.rcf", "01audio.rcf")]
+            if not clean_archives:
+                return self._send_error_json("没有可导出的音频 archive", 400)
+            if radp_common is None:
+                return self._send_error_json("radp_common 模块不可用", 503)
+        except (ValueError, json.JSONDecodeError):
+            return self._send_error_json("请求 JSON 无效", 400)
+        if not EXPORT_LOCK.acquire(blocking=False):
+            return self._send_error_json("已有导出任务运行中；请等待完成", 409)
+        job_id = uuid.uuid4().hex[:16]
+        output_dir = os.path.join(EXPORT_ROOT, "gltf", f"audio-export-{job_id}")
+        os.makedirs(output_dir, exist_ok=True)
+        job = {"id": job_id, "type": "audio", "status": "queued",
+               "archives": clean_archives, "dialogue": bool(payload.get("dialogue", True)),
+               "output_dir": output_dir, "total": 0, "completed": 0,
+               "current": None, "results": [], "errors": [],
+               "created": time.time(), "package": None, "download_url": None}
+        with EXPORT_JOBS_LOCK:
+            EXPORT_JOBS[job_id] = job
+
+        def worker():
+            try:
+                with EXPORT_JOBS_LOCK:
+                    job["status"] = "running"
+                log_line("export", f"音频任务 {job_id} 启动：archives={clean_archives}，对白={'含' if job['dialogue'] else '不含'}")
+                written = 0
+                failed = 0
+                for archive in clean_archives:
+                    rcf_path = os.path.join(self.root_dir, archive)
+                    if not os.path.isfile(rcf_path):
+                        with EXPORT_JOBS_LOCK:
+                            job["errors"].append({"archive": archive, "error": "archive not found"})
+                        log_line("export", f"音频任务 {job_id} ⚠ archive 不存在：{archive}")
+                        continue
+                    cem = rcf_extract.CementFile.load(rcf_path)
+                    entries = {e.name_hash: e for e in cem.entries}
+                    total_in_archive = len(cem.metadatas)
+                    with EXPORT_JOBS_LOCK:
+                        job["total"] += total_in_archive
+                    with open(rcf_path, "rb") as fh:
+                        for mi, meta in enumerate(cem.metadatas, 1):
+                            entry = entries.get(rcf_extract.hash_file_name(meta.name))
+                            if entry is None:
+                                with EXPORT_JOBS_LOCK:
+                                    job["completed"] += 1
+                                continue
+                            if not job["dialogue"] and meta.name.startswith("audio\\english"):
+                                with EXPORT_JOBS_LOCK:
+                                    job["completed"] += 1
+                                continue
+                            with EXPORT_JOBS_LOCK:
+                                job["current"] = f"{archive}: {meta.name}"
+                            fh.seek(entry.offset)
+                            data = fh.read(entry.size)
+                            objects = list(radp_common.parse_audiofiles(data))
+                            relparts = [radp_common.safe_name(x) for x in meta.name.replace('audio\\', '', 1).split('\\')]
+                            if relparts[-1].lower().endswith('.p3d'):
+                                relparts[-1] = relparts[-1][:-4]
+                            for obj in objects:
+                                if obj.get('error'):
+                                    with EXPORT_JOBS_LOCK:
+                                        job["errors"].append({"entry": meta.name, "name": obj['name'], "error": obj['error']})
+                                    failed += 1
+                                    continue
+                                rel = os.path.join(*relparts)
+                                if len(objects) > 1:
+                                    rel = os.path.join(rel, radp_common.safe_name(obj['name']) + '.wav')
+                                else:
+                                    rel = os.path.join(os.path.dirname(rel), os.path.basename(rel) + '__' + radp_common.safe_name(obj['name']) + '.wav')
+                                out_path = os.path.join(output_dir, rel)
+                                os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                                try:
+                                    pcm = radp_common.decode_frames(obj['payload'], obj['channels'])
+                                    wav = radp_common.wav_bytes(obj['rate'], obj['channels'], pcm)
+                                    with open(out_path, 'wb') as w:
+                                        w.write(wav)
+                                    written += 1
+                                    if written == 1 or written % 500 == 0:
+                                        log_line("export", f"音频任务 {job_id} [{job['completed']}/{job['total']}] 已写 {written} 条 WAV")
+                                except Exception as exc:
+                                    failed += 1
+                                    with EXPORT_JOBS_LOCK:
+                                        job["errors"].append({"entry": meta.name, "name": obj['name'], "error": f"{type(exc).__name__}: {exc}"})
+                                    if failed <= 5:
+                                        log_line("export", f"音频任务 {job_id} ❌ {meta.name}/{obj['name']}: {type(exc).__name__}: {exc}")
+                            with EXPORT_JOBS_LOCK:
+                                job["completed"] += 1
+                with EXPORT_JOBS_LOCK:
+                    job["status"] = "packaging"
+                    job["current"] = "打包 ZIP…"
+                log_line("export", f"音频任务 {job_id} 解包完成：{written} 成功 / {failed} 失败，开始打包 ZIP…")
+                package = os.path.join(os.path.dirname(output_dir), f"audio-export-{job_id}.zip")
+                with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+                    manifest_path = os.path.join(output_dir, "manifest.json")
+                    with open(manifest_path, "w", encoding="utf-8") as mh:
+                        json.dump({
+                            "job_id": job_id, "archives": clean_archives,
+                            "written": written, "failed": failed,
+                            "errors": job["errors"],
+                        }, mh, ensure_ascii=False, indent=2)
+                        archive.write(manifest_path, "manifest.json")
+                    for root_dir, _dirs, files in os.walk(output_dir):
+                        for file_name in files:
+                            if file_name == "manifest.json":
+                                continue
+                            full = os.path.join(root_dir, file_name)
+                            archive.write(full, os.path.relpath(full, output_dir))
+                with EXPORT_JOBS_LOCK:
+                    job["package"] = package
+                    job["download_url"] = f"/api/export_audio_batch_download?job_id={job_id}"
+                    job["status"] = "completed" if not job["errors"] else "completed_with_errors"
+                    job["current"] = None
+                log_line("export", f"音频任务 {job_id} {job['status']}：ZIP {package}（{os.path.getsize(package)//1048576} MB）")
+            except Exception as exc:
+                with EXPORT_JOBS_LOCK:
+                    job["status"] = "failed"
+                    job["current"] = None
+                    job["errors"].append({"error": f"{type(exc).__name__}: {exc}"})
+                log_line("export", f"音频任务 {job_id} 失败：{type(exc).__name__}: {exc}")
+            finally:
+                EXPORT_LOCK.release()
+        threading.Thread(target=worker, name=f"audio-export-{job_id}", daemon=True).start()
+        return self._send_json({"job_id": job_id, "status": "queued", "output_dir": output_dir}, 202)
+
+    def _handle_export_audio_batch_download(self, qs):
+        job_id = qs.get("job_id", [""])[0]
+        with EXPORT_JOBS_LOCK:
+            job = EXPORT_JOBS.get(job_id)
+        package = None
+        if job is not None:
+            if job.get("status") not in ("completed", "completed_with_errors"):
+                return self._send_error_json("音频导出任务尚未完成", 409)
+            package = job.get("package")
+        else:
+            if not re.fullmatch(r"[0-9a-f]{8,32}", job_id or ""):
+                return self._send_error_json("导出任务不存在", 404)
+            fallback = os.path.join(EXPORT_ROOT, "gltf", f"audio-export-{job_id}.zip")
+            if os.path.isfile(fallback):
+                package = fallback
+        if not package or not os.path.isfile(package):
+            return self._send_error_json("压缩包文件未找到", 404)
+        return self._send_attachment(package, "prototype-audio-export.zip", "application/zip")
 
     def _handle_export_entities_batch_download(self, qs):
         job_id = qs.get("job_id", [""])[0]

@@ -518,3 +518,20 @@ Blackwatch/NIS/gameplay 候选来源见角色地基文档；身份、通用缩�
 - `tools/audio/extract_all_audio.py` 可递归提取 archive entry 中的所有 AudioFile 对象并将 RADP 写为 WAV；支持 1..32 声道和可恢复运行。
 - 仓库不包含游戏本体、导出 FBX/PNG/WAV、Blender、RCF、DLL 或其他受版权保护字节。
 - 当前地图 FBX 仍仅覆盖严格验证的 Cell 城区主体和已解析材质；放置实体、特效、碰撞/导航等未解码记录不得声称完整。
+
+## 2026-09-21 — 音频批量解包补完（RADP → WAV 端到端）
+
+用户确认音频是半成品，本轮补完：
+
+- 新公共解码模块 `tools/audio/radp_common.py`：解析 p3d 中 RadioAudio File 对象、
+  RAD IMA ADPCM 帧解码、PCM16 WAV 封装，支持 1..32 声道（CLI 单声道解码器不脱离
+  extract_all_audio.py，只是作为兜底参照）。
+- 服务端 `/api/export_audio_batch`（POST {archives, dialogue}）：后台任务按条目流式
+  解压到 `EXPORT_ROOT/gltf/audio-export-<job>/`，最后打包 ZIP；状态机与实体批导出
+  一致（queued/running/packaging/completed），事件写 `log_line("export",…)`。
+- `/api/export_audio_batch_download?job_id=` 与实体批同链路的 ZIP 下载；
+  `/api/export_job` 磁盘恢复同时覆盖 audio-export（audio manifest 是 `manifest.json`
+  written/failed 结构，与实体批的 results/errors 结构分开处理）。
+- 网页『音效』面板新增『批量导出全部音频到文件夹…』：系统原生 folder picker →
+  POST → 轮询 `/api/export_job` → fetch download_url → 流式写入选中文件夹；
+  包装不支持时退回普通浏览器下载。

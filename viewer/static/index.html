@@ -368,6 +368,10 @@
       <div id="panel-audio" class="panel hidden">
         <h2>音频归档</h2>
         <div class="sub" id="audio-bank-summary">读取音效 bank 列表…</div>
+        <div class="map-fields" style="margin:8px 0 12px">
+          <button id="audio-export-batch-btn" type="button" title="把 00audio.rcf + 01audio.rcf 里的全部 RADP 音效（含 13.8k 条对白）解码为 WAV 写入你选的文件夹" style="background:#0d2e1f;border:1px solid #39b77a;color:#8fffc4;padding:9px 14px;border-radius:6px;font-weight:700;cursor:pointer;width:100%">🎵 批量导出全部音频到文件夹…</button>
+          <div id="audio-export-batch-status" style="font-size:11px;color:#70efb3;white-space:pre-wrap;line-height:1.5"></div>
+        </div>
         <div class="map-fields" style="margin:8px 0 12px"><a href="/api/export_asset?name=audio-summary-json" download><button type="button">下载全量音频汇总 JSON</button></a><a href="/api/export_asset?name=audio-summary-csv" download><button type="button">下载全量音频汇总 CSV</button></a><a href="/api/export_asset?name=audio-manifest" download><button type="button">下载 13,825 条音频清单</button></a></div>
         <div id="audio-bank-list" style="overflow-y:auto; max-height: calc(100vh - 160px);"></div>
       </div>
@@ -533,6 +537,90 @@ function setupDebugConsole() {
   kindSel.onchange = refresh;
 }
 setupDebugConsole();
+
+// ---- 音频批量解包：原生文件夹对话框 → /api/export_audio_batch → 打包 ZIP 写入选中文件夹 ----
+function setupAudioBatchExport() {
+  const btn = document.getElementById('audio-export-batch-btn');
+  const status = document.getElementById('audio-export-batch-status');
+  if (!btn || !status) return;
+  btn.onclick = async () => {
+    const supportsPicker = typeof window.showDirectoryPicker === 'function';
+    let dirHandle = null;
+    if (supportsPicker) {
+      status.textContent = '请在系统对话框中选择 WAV 输出文件夹…';
+      try {
+        dirHandle = await window.showDirectoryPicker({ mode: 'readwrite', id: 'prototype-audio-export' });
+      } catch (err) {
+        if (err && err.name === 'AbortError') { status.textContent = '已取消选择文件夹。'; }
+        else { status.textContent = '文件夹选择失败：' + (err.message || err); }
+        return;
+      }
+    }
+    btn.disabled = true;
+    const idleText = btn.textContent;
+    btn.textContent = '提交音频解包任务…';
+    try {
+      const response = await fetch('/api/export_audio_batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archives: ['00audio.rcf', '01audio.rcf'], dialogue: true }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      const jobId = result.job_id;
+      status.textContent = `任务 ${jobId.slice(0, 10)} 已创建，正在解码…`;
+      let job = null;
+      while (true) {
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        const jobResp = await fetch('/api/export_job?' + new URLSearchParams({ id: jobId }));
+        const j = await jobResp.json();
+        if (!jobResp.ok) throw new Error(j.error || `HTTP ${jobResp.status}`);
+        job = j;
+        status.textContent = `${j.status} · ${j.completed}/${j.total}${j.current ? ' · ' + j.current : ''} · 错误 ${j.errors.length}`;
+        if (!['queued', 'running', 'packaging'].includes(j.status)) break;
+      }
+      if (!job.download_url) throw new Error(job.errors?.map(e => (e.entry || e.name || '') + ': ' + e.error).slice(0, 3).join('; ') || '解包失败，未生成 ZIP。');
+      const download = await fetch(job.download_url);
+      if (!download.ok) throw new Error(`ZIP 下载失败 HTTP ${download.status}`);
+      const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+      const zipName = `prototype-audio-${stamp}.zip`;
+      const contentLength = Number(download.headers.get('Content-Length')) || 0;
+      if (dirHandle && download.body) {
+        const fh = await dirHandle.getFileHandle(zipName, { create: true });
+        const writable = await fh.createWritable();
+        const reader = download.body.getReader();
+        let received = 0, lastLog = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await writable.write(value);
+          received += value.byteLength;
+          if (received - lastLog > 16 * 1048576 || received >= contentLength) {
+            lastLog = received;
+            const pct = contentLength ? ` ${Math.round(received / contentLength * 100)}%` : '';
+            status.textContent = `正在写入所选文件夹… ${(received / 1048576).toFixed(1)} MB${contentLength ? ' / ' + (contentLength / 1048576).toFixed(1) + ' MB' + pct : ''}`;
+          }
+        }
+        await writable.close();
+        status.textContent = `✅ 已写入所选文件夹：${zipName}${job.errors.length ? `\n⚠ 其中 ${job.errors.length} 条对象失败（ZIP 内 manifest.json 有明细）` : ''}`;
+      } else {
+        const blob = await download.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url; link.download = zipName;
+        document.body.appendChild(link); link.click(); link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+        status.textContent = `✅ ZIP 已开始下载（浏览器不支持原生文件夹选择）：${zipName}`;
+      }
+    } catch (err) {
+      status.textContent = '音频批量导出失败：' + err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = idleText;
+    }
+  };
+}
+setupAudioBatchExport();
 
 
 // ---- 1. three.js 查看器基础环境搭建 ----
