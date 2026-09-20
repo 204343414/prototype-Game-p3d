@@ -471,6 +471,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_export_entity(qs)
         if parsed.path == "/api/export_job":
             return self._handle_export_job(qs)
+        if parsed.path == "/api/export_entities_batch_download":
+            return self._handle_export_entities_batch_download(qs)
         if parsed.path == "/api/export_directories":
             return self._handle_export_directories(qs)
         if parsed.path == "/api/health":
@@ -1716,6 +1718,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             snapshot = json.loads(json.dumps(job, ensure_ascii=False))
         return self._send_json(snapshot)
 
+    def _handle_export_entities_batch_download(self, qs):
+        job_id = qs.get("job_id", [""])[0]
+        with EXPORT_JOBS_LOCK:
+            job = EXPORT_JOBS.get(job_id)
+        if job is None:
+            return self._send_error_json("导出任务不存在", 404)
+        if job.get("status") not in ("completed", "completed_with_errors"):
+            return self._send_error_json("导出任务尚未完成", 409)
+        package = job.get("package")
+        if not package or not os.path.isfile(package):
+            return self._send_error_json("压缩包文件未找到", 404)
+        return self._send_attachment(package, "prototype-entities-batch.zip", "application/zip")
+
     def _handle_export_entities_batch(self):
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -1724,12 +1739,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             entries = payload.get("entries")
             requested_dir = payload.get("output_dir", "")
+            package_zip = payload.get("package", "") == "zip"
             overwrite = bool(payload.get("overwrite", False))
             if not isinstance(entries, list) or not 1 <= len(entries) <= 1000:
                 return self._send_error_json("entries 必须包含 1..1000 个实体", 400)
-            if not requested_dir:
+            if not requested_dir and not package_zip:
                 return self._send_error_json("批量导出必须指定 output_dir", 400)
-            output_dir = self._safe_export_dir(requested_dir)
+            job_id = uuid.uuid4().hex[:16]
+            if package_zip:
+                output_dir = os.path.join(EXPORT_ROOT, "gltf", f"entity-batch-{job_id}")
+            else:
+                output_dir = self._safe_export_dir(requested_dir)
             clean_entries = []
             for item in entries:
                 if not isinstance(item, dict):
@@ -1746,9 +1766,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send_error_json(f"找不到 Blender：{BLENDER_BIN}；请设置 PROTOTYPE_BLENDER", 503)
         if not EXPORT_LOCK.acquire(blocking=False):
             return self._send_error_json("另一个导出任务正在运行", 429)
-        job_id = uuid.uuid4().hex[:16]
         job = {"id": job_id, "type": "entities", "status": "queued", "output_dir": output_dir,
-               "total": len(clean_entries), "completed": 0, "current": None, "results": [], "errors": []}
+               "total": len(clean_entries), "completed": 0, "current": None, "results": [], "errors": [],
+               "package": None, "download_url": None}
         with EXPORT_JOBS_LOCK:
             EXPORT_JOBS[job_id] = job
         port = self.server.server_address[1]
@@ -1804,6 +1824,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     job["status"] = "completed" if not job["errors"] else "completed_with_errors"
                     job["current"] = None
                     with open(manifest, "w", encoding="utf-8") as handle: json.dump(job, handle, ensure_ascii=False, indent=2)
+                if package_zip and job["results"]:
+                    package = os.path.join(os.path.dirname(output_dir), f"entity-batch-{job_id}.zip")
+                    with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                        for root_dir, _dirs, files in os.walk(output_dir):
+                            for file_name in files:
+                                full = os.path.join(root_dir, file_name)
+                                archive.write(full, os.path.relpath(full, output_dir))
+                    with EXPORT_JOBS_LOCK:
+                        job["package"] = package
+                        job["download_url"] = f"/api/export_entities_batch_download?job_id={job_id}"
             except Exception as exc:
                 with EXPORT_JOBS_LOCK:
                     job["status"] = "failed"; job["current"] = None
@@ -1874,6 +1904,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _handle_export_loaded_cells(self, qs):
         is_download = qs.get("download", ["0"])[0] in ("1", "true")
         job_id = qs.get("job_id", [""])[0]
+        kind = qs.get("kind", [""])[0]
         if is_download and job_id:
             with EXPORT_JOBS_LOCK:
                 job = EXPORT_JOBS.get(job_id)
@@ -1882,6 +1913,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             package = job.get("package")
             if not package or not os.path.isfile(package):
                 return self._send_error_json("压缩包文件未找到", 404)
+            if kind == "manifest":
+                output_dir = os.path.dirname(package)
+                manifest_path = os.path.join(output_dir, "textures-manifest.json")
+                if not os.path.isfile(manifest_path):
+                    return self._send_error_json("贴图分辨率清单暂未生成（可能是旧任务）", 404)
+                return self._send_attachment(manifest_path, "textures-manifest.json", "application/json")
             return self._send_attachment(package, "loaded-manhattan-cells-FBX.zip", "application/zip")
 
         raw_cells = qs.get("cells", [""])[0]
@@ -1993,11 +2030,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         texture_names = json.load(handle).get("textures", [])
 
                 package = os.path.join(output, "loaded-manhattan-cells-FBX.zip")
+                texture_stats = None
+                manifest_path = os.path.join(output, "textures-manifest.json")
+                if os.path.isfile(manifest_path):
+                    try:
+                        with open(manifest_path, "r", encoding="utf-8") as mh:
+                            tex_doc = json.load(mh)
+                        texture_stats = {
+                            "count": tex_doc.get("textureCount", 0),
+                            "maxSize": tex_doc.get("maxTextureSize", "?"),
+                            "buckets": tex_doc.get("sizeBuckets", {}),
+                        }
+                    except Exception:
+                        texture_stats = None
                 seen_hashes = set()
                 seen_names = set()
                 written_count = 0
                 with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_STORED) as zip_h:
                     zip_h.write(fbx, "loaded-manhattan-cells.fbx")
+                    manifest_path = os.path.join(output, "textures-manifest.json")
+                    if os.path.isfile(manifest_path):
+                        zip_h.write(manifest_path, "textures-manifest.json")
                     for texture_name in texture_names:
                         base_name = os.path.basename(texture_name)
                         if base_name in seen_names:
@@ -2041,6 +2094,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             "output_dir": destination,
                             "fbx": "loaded-manhattan-cells.fbx",
                             "textures": copied_count,
+                            "texture_stats": texture_stats,
                             "package": package,
                         })
                 else:
@@ -2050,8 +2104,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             "stage": "导出完成，正在准备下载",
                             "progress": 100.0,
                             "download_url": f"/api/export_loaded_cells?download=1&job_id={job_id}",
+                            "manifest_url": f"/api/export_loaded_cells?download=1&kind=manifest&job_id={job_id}",
                             "fbx": "loaded-manhattan-cells.fbx",
                             "textures": written_count,
+                            "texture_stats": texture_stats,
                             "package": package,
                         })
             except Exception as exc:

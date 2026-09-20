@@ -1852,6 +1852,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     card.className = 'entity-card';
     card.dataset.id = item.id;
     card.dataset.cat = item.category;
+    card.dataset.entry = item.entry_path;
 
     const icon = CAT_ICONS[item.category] || '📦';
     const cachedSnap = THUMB_CACHE.get(item.id);
@@ -1873,15 +1874,18 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
 
     card.innerHTML = `
       ${thumbHtml}
+      <span class="sel-check">✓</span>
       <div class="card-title" title="${item.name}">${item.name}</div>
       <div class="card-meta">
         <span class="card-badge geom">${badgeText}</span>
       </div>
       <button class="entity-export-btn" type="button">导出 FBX 资源包（贴图＋源动画）</button>
     `;
+    if (selectionMode && selectedEntries.has(item.entry_path)) card.classList.add('selected');
 
     const exportButton = card.querySelector('.entity-export-btn');
     exportButton.onclick = event => {
+      if (selectionMode) { event.stopPropagation(); return; }
       event.stopPropagation();
       const oldText = exportButton.textContent;
       exportButton.disabled = true;
@@ -1894,7 +1898,11 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       setTimeout(() => { exportButton.disabled = false; exportButton.textContent = oldText; }, 1800000);
     };
 
-    card.onclick = () => {
+    card.onclick = (event) => {
+      if (selectionMode) {
+        handleSelectionClick(card, item, event);
+        return;
+      }
       focusMode = 'entity';
       document.querySelectorAll('.entity-card').forEach(c => c.classList.remove('active'));
       card.classList.add('active');
@@ -1902,6 +1910,167 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     };
 
     return card;
+  }
+
+  // ---- 仿系统文件管理器的多选逻辑 ----
+  // 单击: 单选（并设为范围锚点） · Shift+单击: 从锚点到当前卡片范围全选 · Ctrl+单击: 反选当前卡片
+  let selectionMode = false;
+  const selectedEntries = new Set();
+  let selectionAnchorEntry = null;
+
+  function visibleShelfCards() {
+    const scroll = document.getElementById('entity-shelf-scroll');
+    if (!scroll) return [];
+    return [...scroll.querySelectorAll('.entity-card[data-entry]')];
+  }
+
+  function handleSelectionClick(card, item, event) {
+    const entry = item.entry_path;
+    const meta = event.ctrlKey || event.metaKey;
+    if (event.shiftKey && selectionAnchorEntry !== null && !meta) {
+      const ordered = visibleShelfCards().map(c => c.dataset.entry);
+      const a = ordered.indexOf(selectionAnchorEntry);
+      const b = ordered.indexOf(entry);
+      if (a !== -1 && b !== -1) {
+        const [from, to] = [Math.min(a, b), Math.max(a, b)];
+        for (let i = from; i <= to; i++) selectedEntries.add(ordered[i]);
+      } else {
+        selectedEntries.add(entry);
+        selectionAnchorEntry = entry;
+      }
+    } else if (meta) {
+      if (selectedEntries.has(entry)) selectedEntries.delete(entry); else selectedEntries.add(entry);
+      selectionAnchorEntry = entry;
+    } else {
+      selectedEntries.clear();
+      selectedEntries.add(entry);
+      selectionAnchorEntry = entry;
+    }
+    paintSelection();
+  }
+
+  function paintSelection() {
+    for (const card of visibleShelfCards()) {
+      card.classList.toggle('selected', selectedEntries.has(card.dataset.entry));
+    }
+    const bar = document.getElementById('entity-selection-bar');
+    const countEl = bar?.querySelector('.sel-count');
+    const exportBtn = document.getElementById('entity-export-selected');
+    if (countEl) countEl.textContent = `已选 ${selectedEntries.size} 个实体`;
+    if (bar) bar.classList.toggle('hidden', !selectionMode);
+    if (exportBtn) exportBtn.disabled = selectedEntries.size === 0;
+  }
+
+  function setSelectionMode(on) {
+    selectionMode = on;
+    const view = document.getElementById('entity-shelf-view');
+    const toggle = document.getElementById('entity-multiselect-toggle');
+    if (view) view.classList.toggle('select-mode', on);
+    if (toggle) toggle.classList.toggle('active', on);
+    if (!on) {
+      selectedEntries.clear();
+      selectionAnchorEntry = null;
+      const status = document.getElementById('entity-selection-status');
+      if (status) status.textContent = '';
+    }
+    paintSelection();
+  }
+
+  function setupSelectionControls() {
+    const toggle = document.getElementById('entity-multiselect-toggle');
+    const exit = document.getElementById('entity-multiselect-exit');
+    const clearBtn = document.getElementById('entity-select-clear');
+    const allBtn = document.getElementById('entity-select-all-filtered');
+    const exportBtn = document.getElementById('entity-export-selected');
+    if (!toggle) return;
+    if (toggle) toggle.onclick = () => setSelectionMode(!selectionMode);
+    if (exit) exit.onclick = () => setSelectionMode(false);
+    if (clearBtn) clearBtn.onclick = () => { selectedEntries.clear(); paintSelection(); };
+    if (allBtn) allBtn.onclick = () => {
+      for (const item of currentFilteredEntries()) selectedEntries.add(item.entry);
+      paintSelection();
+    };
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && selectionMode) setSelectionMode(false);
+    });
+    if (exportBtn) exportBtn.onclick = exportSelectionToFolder;
+  }
+
+  // 浏览器原生文件夹选择器（File System Access API）→ 服务端 ZIP 打包 → 直接写入选中文件夹
+  async function exportSelectionToFolder() {
+    const bar = document.getElementById('entity-selection-bar');
+    const status = document.getElementById('entity-selection-status');
+    const exportBtn = document.getElementById('entity-export-selected');
+    const items = [...selectedEntries].map(entry => ({ entry, name: (entry.split('\\').pop() || 'entity').replace(/\.[^.]*$/, '') }));
+    if (!items.length) return;
+
+    const supportsPicker = typeof window.showDirectoryPicker === 'function';
+    let dirHandle = null;
+    if (supportsPicker) {
+      status.textContent = '请在浏览器原生对话框中选择导出文件夹…';
+      try {
+        dirHandle = await window.showDirectoryPicker({ mode: 'readwrite', id: 'prototype-entity-export' });
+      } catch (err) {
+        if (err && err.name === 'AbortError') { status.textContent = '已取消选择文件。'; } else { status.textContent = '文件夹选择失败：' + (err.message || err); }
+        return;
+      }
+    }
+
+    exportBtn.disabled = true;
+    const oldText = exportBtn.textContent;
+    exportBtn.textContent = '提交导出任务…';
+    try {
+      const response = await fetch('/api/export_entities_batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entries: items, package: 'zip', overwrite: true }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      const jobId = result.job_id;
+      status.textContent = '导出任务已创建…';
+
+      let job = null;
+      while (true) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const jobResp = await fetch('/api/export_job?' + new URLSearchParams({ id: jobId }));
+        const j = await jobResp.json();
+        if (!jobResp.ok) throw new Error(j.error || `HTTP ${jobResp.status}`);
+        job = j;
+        status.textContent = `${j.status} · ${j.completed}/${j.total}${j.current ? ' · ' + j.current : ''} · 成功 ${j.results.length} · 失败 ${j.errors.length}`;
+        if (!['queued', 'running'].includes(j.status)) break;
+      }
+      if (!job.download_url) throw new Error(job.errors?.map(e => e.name + ': ' + e.error).join('; ') || '导出失败，未生成 ZIP。');
+
+      const download = await fetch(job.download_url);
+      if (!download.ok) throw new Error(`ZIP 下载失败 HTTP ${download.status}`);
+      const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+      const zipName = `prototype-entities-${stamp}.zip`;
+
+      if (dirHandle) {
+        const fh = await dirHandle.getFileHandle(zipName, { create: true });
+        const writable = await fh.createWritable();
+        await download.body.pipeTo(writable);
+        status.textContent = `✅ 已写入所选文件夹：${zipName} · ${job.results.length} 成功 / ${job.errors.length} 失败`;
+      } else {
+        // 无 File System Access API（如 Firefox）：退回普通下载
+        const blob = await download.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url; link.download = zipName;
+        document.body.appendChild(link); link.click(); link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+        status.textContent = `✅ ZIP 已开始下载（浏览器不支持原生文件夹选择）：${zipName}`;
+      }
+      if (job.errors.length) status.textContent += `\n失败明细: ${job.errors.slice(0, 5).map(e => e.name).join('、')}${job.errors.length > 5 ? '…' : ''}`;
+      bar.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } catch (err) {
+      status.textContent = '批量导出失败：' + err.message;
+    } finally {
+      exportBtn.disabled = false;
+      exportBtn.textContent = oldText;
+      paintSelection();
+    }
   }
 
   function renderGrid() {
@@ -1938,6 +2107,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
 
     renderDrawerGrid();
+    if (typeof paintSelection === 'function') paintSelection();
   }
 
   function renderDrawerGrid() {
@@ -2133,6 +2303,9 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       status:'entity-export-dialog-status',
     });
   };
+
+  // 文件管理器式多选（Shift 范围 / Ctrl 反选）+ 浏览器原生文件夹导出
+  setupSelectionControls();
 
   async function loadFolder(path) {
     const status = document.getElementById('entity-folder-status');

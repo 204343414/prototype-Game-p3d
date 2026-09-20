@@ -200,6 +200,7 @@ def main():
     unique_textures = list(all_textures.values())
     total_tex = len(unique_textures)
 
+    tex_manifest_entries = []
     for tex_idx, t in enumerate(unique_textures):
         k = t['key']
         if k in tex_by_key:
@@ -222,9 +223,42 @@ def main():
         b.g['textures'].append({'source': len(b.g['images']) - 1, 'name': t.get('name') or k})
         tex_by_key[k] = len(b.g['textures']) - 1
 
+        tex_manifest_entries.append({
+            'file': fn,
+            'sourceName': t.get('name') or k,
+            'pngSize': f"{mip['width']}x{mip['height']}",
+            'width': mip['width'],
+            'height': mip['height'],
+            'originalDdsSize': f"{t.get('original_width', mip['width'])}x{t.get('original_height', mip['height'])}",
+            'ddsFormat': t['format'],
+            'mipLevelsKeptFromSource': len(t.get('mips', [])),
+            'sha256': k,
+        })
+
         if (tex_idx + 1) % 10 == 0 or (tex_idx + 1) == total_tex:
             pct = 62.0 + ((tex_idx + 1) / max(1, total_tex)) * 18.0
             report_progress(tex_idx + 1, total_tex, f"正在生成无损贴图 ({tex_idx+1}/{total_tex})...", pct)
+
+    # Texture resolution manifest: verifiable proof that no downscaling happened.
+    size_buckets = {}
+    for entry in tex_manifest_entries:
+        bucket = entry['pngSize']
+        size_buckets[bucket] = size_buckets.get(bucket, 0) + 1
+    size_buckets = dict(sorted(size_buckets.items(), key=lambda kv: (
+        -int(kv[0].split('x')[0]) * int(kv[0].split('x')[1]), -int(kv[0].split('x')[0])))
+    ) if size_buckets else {}
+    manifest_doc = {
+        'name': a.name,
+        'pipeline': 'RCF -> DDS (native full mip chain, max_edge=8192) -> DXT decode -> PNG (no resizing anywhere)',
+        'textureCount': len(tex_manifest_entries),
+        'maxTextureSize': (
+            f"{max(e['width'] for e in tex_manifest_entries)}x{max(e['height'] for e in tex_manifest_entries)}"
+            if tex_manifest_entries else 'none'
+        ),
+        'sizeBuckets': size_buckets,
+        'textures': tex_manifest_entries,
+    }
+    (out / 'textures-manifest.json').write_text(json.dumps(manifest_doc, ensure_ascii=False, indent=2))
 
     # Build glTF mesh nodes
     report_progress(total_cells, total_cells, "正在组装 glTF 场景与网格数据...", 82.0)

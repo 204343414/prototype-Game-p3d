@@ -473,6 +473,8 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
     if (exportPercent) exportPercent.textContent = '0%';
     if (exportStage) exportStage.textContent = `准备导出 ${loaded.size} 个已加载区块…`;
     if (exportStatus) exportStatus.textContent = '任务已启动，正在初始化…';
+    const oldManifestBtn = byId('map-export-manifest');
+    if (oldManifestBtn) oldManifestBtn.classList.add('hidden');
 
     try {
       const response = await fetch('/api/export_loaded_cells?' + query);
@@ -496,11 +498,32 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
           finished = true;
           if (exportProg) exportProg.value = 100;
           if (exportPercent) exportPercent.textContent = '100%';
+          let sizeNote = '';
+          const ts = job.texture_stats;
+          if (ts && ts.buckets) {
+            const top = Object.entries(ts.buckets).slice(0, 4)
+              .map(([size, count]) => `${size}×${count}`).join('  ');
+            sizeNote = ` · 最大贴图 ${ts.maxSize}（${top}${Object.keys(ts.buckets).length > 4 ? '…' : ''}）`;
+            const manifestBtn = byId('map-export-manifest');
+            if (manifestBtn && job.manifest_url) {
+              manifestBtn.classList.remove('hidden');
+              manifestBtn.onclick = () => {
+                const a = document.createElement('a');
+                a.href = job.manifest_url;
+                a.download = 'textures-manifest.json';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+              };
+            } else if (manifestBtn && outputPath) {
+              manifestBtn.classList.add('hidden');
+            }
+          }
           if (outputPath) {
-            if (exportStatus) exportStatus.textContent = `地图 FBX 已保存：${job.output_dir} · ${loaded.size} Cells · ${job.textures || 0} 张贴图（原版无损）`;
+            if (exportStatus) exportStatus.textContent = `地图 FBX 已保存：${job.output_dir} · ${loaded.size} Cells · ${job.textures || 0} 张贴图（原版无损）${sizeNote}`;
             status.textContent = `地图 FBX 已成功导出到服务器：${job.output_dir}`;
           } else {
-            if (exportStatus) exportStatus.textContent = `导出完成，包含 ${job.textures || 0} 张无损去重贴图；正在下载 ZIP…`;
+            if (exportStatus) exportStatus.textContent = `导出完成，包含 ${job.textures || 0} 张无损去重贴图${sizeNote}；正在下载 ZIP…`;
             status.textContent = `地图 FBX 压缩包已生成，正在下载…`;
             const downloadUrl = job.download_url || `/api/export_loaded_cells?download=1&job_id=${jobId}`;
             const link = document.createElement('a');
