@@ -27,6 +27,7 @@ from functools import lru_cache
 import http.server
 import gzip
 import hashlib
+import concurrent.futures
 import json
 import mimetypes
 import os
@@ -1722,11 +1723,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         job_id = qs.get("job_id", [""])[0]
         with EXPORT_JOBS_LOCK:
             job = EXPORT_JOBS.get(job_id)
-        if job is None:
-            return self._send_error_json("导出任务不存在", 404)
-        if job.get("status") not in ("completed", "completed_with_errors"):
-            return self._send_error_json("导出任务尚未完成", 409)
-        package = job.get("package")
+        package = None
+        if job is not None:
+            if job.get("status") not in ("completed", "completed_with_errors"):
+                return self._send_error_json("导出任务尚未完成", 409)
+            package = job.get("package")
+        else:
+            # 服务重启后内存任务表会丢，但已完成的 ZIP 仍按固定规则存放在 EXPORT_ROOT
+            if not re.fullmatch(r"[0-9a-f]{8,32}", job_id or ""):
+                return self._send_error_json("导出任务不存在", 404)
+            fallback = os.path.join(EXPORT_ROOT, "gltf", f"entity-batch-{job_id}.zip")
+            if os.path.isfile(fallback):
+                package = fallback
         if not package or not os.path.isfile(package):
             return self._send_error_json("压缩包文件未找到", 404)
         return self._send_attachment(package, "prototype-entities-batch.zip", "application/zip")
@@ -1773,52 +1781,69 @@ class Handler(http.server.BaseHTTPRequestHandler):
             EXPORT_JOBS[job_id] = job
         port = self.server.server_address[1]
         repo = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
+        max_workers = max(2, min(4, (os.cpu_count() or 2) - 1))
+        staging_root = os.path.join(EXPORT_ROOT, ".batch-staging", job_id)
+
+        class ItemSkipped(Exception):
+            pass
+
+        def export_one(index, item):
+            name, entry = item["name"], item["entry"]
+            with EXPORT_JOBS_LOCK: job["current"] = name
+            digest = hashlib.sha256(entry.encode("utf-8")).hexdigest()[:10]
+            target = os.path.join(output_dir, f"{name}-{digest}")
+            try:
+                if os.path.exists(target) and not overwrite:
+                    raise ItemSkipped("目标已存在；未启用覆盖")
+                stage = os.path.join(staging_root, digest)
+                shutil.rmtree(stage, ignore_errors=True); os.makedirs(stage, exist_ok=True)
+                exporter = os.path.join(repo, "tools", "entities", "export_entity_gltf.py")
+                converter = os.path.join(repo, "tools", "entities", "convert_glb_to_fbx.py")
+                blender = BLENDER_BIN
+                gltf_run = subprocess.run([sys.executable, exporter, "--server", f"http://127.0.0.1:{port}",
+                                           "--entry", entry, "--output", stage, "--name", name],
+                                          capture_output=True, text=True, timeout=1800)
+                if gltf_run.returncode:
+                    raise RuntimeError((gltf_run.stderr or gltf_run.stdout)[-2000:])
+                glb, fbx = os.path.join(stage, name + ".glb"), os.path.join(stage, name + ".fbx")
+                fbx_run = subprocess.run([blender, "--background", "--python", converter, "--", glb, fbx],
+                                         capture_output=True, text=True, timeout=1800)
+                if fbx_run.returncode or not os.path.isfile(fbx):
+                    raise RuntimeError((fbx_run.stderr or fbx_run.stdout)[-4000:])
+                shutil.rmtree(target, ignore_errors=True); os.makedirs(target, exist_ok=True)
+                shutil.copy2(fbx, os.path.join(target, name + ".fbx"))
+                conversion = json.load(open(fbx + ".conversion.json", encoding="utf-8"))
+                for texture_name in conversion.get("textures", []):
+                    source_texture = os.path.join(stage, os.path.basename(texture_name))
+                    if os.path.isfile(source_texture): shutil.copy2(source_texture, os.path.join(target, os.path.basename(texture_name)))
+                return {"name": name, "entry": entry, "path": target,
+                        "fbx_bytes": os.path.getsize(fbx), "source_actions": max(0, len(conversion.get("actions", [])) - 1),
+                        "textures": len(conversion.get("textures", []))}, None
+            except ItemSkipped:
+                raise
+            except Exception as item_exc:
+                return None, {"name": item.get("name"), "entry": item.get("entry"),
+                              "error": f"{type(item_exc).__name__}: {item_exc}"}
         def worker():
-            staging_root = os.path.join(EXPORT_ROOT, ".batch-staging", job_id)
             try:
                 with EXPORT_JOBS_LOCK: job["status"] = "running"
-                for index, item in enumerate(clean_entries):
-                    try:
-                        name, entry = item["name"], item["entry"]
-                        with EXPORT_JOBS_LOCK: job["current"] = name
-                        digest = hashlib.sha256(entry.encode("utf-8")).hexdigest()[:10]
-                        target = os.path.join(output_dir, f"{name}-{digest}")
-                        if os.path.exists(target) and not overwrite:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+                    futures = {pool.submit(export_one, i, item): i for i, item in enumerate(clean_entries)}
+                    done_count = 0
+                    for fut in concurrent.futures.as_completed(futures):
+                        index = futures[fut]
+                        done_count += 1
+                        try:
+                            result, error = fut.result()
                             with EXPORT_JOBS_LOCK:
-                                job["errors"].append({"name": name, "entry": entry, "error": "目标已存在；未启用覆盖"})
-                                job["completed"] = index + 1
-                            continue
-                        stage = os.path.join(staging_root, digest)
-                        shutil.rmtree(stage, ignore_errors=True); os.makedirs(stage, exist_ok=True)
-                        exporter = os.path.join(repo, "tools", "entities", "export_entity_gltf.py")
-                        converter = os.path.join(repo, "tools", "entities", "convert_glb_to_fbx.py")
-                        blender = BLENDER_BIN
-                        gltf_run = subprocess.run([sys.executable, exporter, "--server", f"http://127.0.0.1:{port}",
-                                                   "--entry", entry, "--output", stage, "--name", name],
-                                                  capture_output=True, text=True, timeout=1800)
-                        if gltf_run.returncode:
-                            raise RuntimeError((gltf_run.stderr or gltf_run.stdout)[-2000:])
-                        glb, fbx = os.path.join(stage, name + ".glb"), os.path.join(stage, name + ".fbx")
-                        fbx_run = subprocess.run([blender, "--background", "--python", converter, "--", glb, fbx],
-                                                 capture_output=True, text=True, timeout=1800)
-                        if fbx_run.returncode or not os.path.isfile(fbx):
-                            raise RuntimeError((fbx_run.stderr or fbx_run.stdout)[-4000:])
-                        shutil.rmtree(target, ignore_errors=True); os.makedirs(target, exist_ok=True)
-                        shutil.copy2(fbx, os.path.join(target, name + ".fbx"))
-                        conversion = json.load(open(fbx + ".conversion.json", encoding="utf-8"))
-                        for texture_name in conversion.get("textures", []):
-                            source_texture = os.path.join(stage, os.path.basename(texture_name))
-                            if os.path.isfile(source_texture): shutil.copy2(source_texture, os.path.join(target, os.path.basename(texture_name)))
-                        with EXPORT_JOBS_LOCK:
-                            job["results"].append({"name": name, "entry": entry, "path": target,
-                                                   "fbx_bytes": os.path.getsize(fbx), "source_actions": max(0, len(conversion.get("actions", [])) - 1),
-                                                   "textures": len(conversion.get("textures", []))})
-                            job["completed"] = index + 1
-                    except Exception as item_exc:
-                        with EXPORT_JOBS_LOCK:
-                            job["errors"].append({"name": item.get("name"), "entry": item.get("entry"),
-                                                   "error": f"{type(item_exc).__name__}: {item_exc}"})
-                            job["completed"] = index + 1
+                                if result: job["results"].append(result)
+                                if error: job["errors"].append(error)
+                                job["completed"] = done_count
+                        except ItemSkipped:
+                            with EXPORT_JOBS_LOCK:
+                                item = clean_entries[index]
+                                job["errors"].append({"name": item.get("name"), "entry": item.get("entry"), "error": "目标已存在；未启用覆盖"})
+                                job["completed"] = done_count
                 manifest = os.path.join(output_dir, "batch-export-manifest.json")
                 with EXPORT_JOBS_LOCK:
                     job["status"] = "completed" if not job["errors"] else "completed_with_errors"
@@ -1826,7 +1851,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     with open(manifest, "w", encoding="utf-8") as handle: json.dump(job, handle, ensure_ascii=False, indent=2)
                 if package_zip and job["results"]:
                     package = os.path.join(os.path.dirname(output_dir), f"entity-batch-{job_id}.zip")
-                    with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                    with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_STORED) as archive:
                         for root_dir, _dirs, files in os.walk(output_dir):
                             for file_name in files:
                                 full = os.path.join(root_dir, file_name)

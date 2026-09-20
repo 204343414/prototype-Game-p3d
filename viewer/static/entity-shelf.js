@@ -2046,11 +2046,32 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       if (!download.ok) throw new Error(`ZIP 下载失败 HTTP ${download.status}`);
       const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
       const zipName = `prototype-entities-${stamp}.zip`;
+      const contentLength = Number(download.headers.get('Content-Length')) || 0;
 
-      if (dirHandle) {
+      if (dirHandle && download.body) {
         const fh = await dirHandle.getFileHandle(zipName, { create: true });
         const writable = await fh.createWritable();
-        await download.body.pipeTo(writable);
+        const reader = download.body.getReader();
+        let received = 0, lastLog = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await writable.write(value);
+          received += value.byteLength;
+          if (received - lastLog > 8 * 1048576 || received >= contentLength) {
+            lastLog = received;
+            const pct = contentLength ? ` ${Math.round(received / contentLength * 100)}%` : '';
+            status.textContent = `正在写入所选文件夹… ${(received / 1048576).toFixed(1)} MB${contentLength ? ' / ' + (contentLength / 1048576).toFixed(1) + ' MB' + pct : ''}`;
+          }
+        }
+        await writable.close();
+        status.textContent = `✅ 已写入所选文件夹：${zipName} · ${job.results.length} 成功 / ${job.errors.length} 失败`;
+      } else if (dirHandle) {
+        const blob = await download.blob();
+        const fh = await dirHandle.getFileHandle(zipName, { create: true });
+        const writable = await fh.createWritable();
+        await writable.write(blob);
+        await writable.close();
         status.textContent = `✅ 已写入所选文件夹：${zipName} · ${job.results.length} 成功 / ${job.errors.length} 失败`;
       } else {
         // 无 File System Access API（如 Firefox）：退回普通下载
