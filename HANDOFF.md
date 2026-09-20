@@ -535,3 +535,17 @@ Blackwatch/NIS/gameplay 候选来源见角色地基文档；身份、通用缩�
 - 网页『音效』面板新增『批量导出全部音频到文件夹…』：系统原生 folder picker →
   POST → 轮询 `/api/export_job` → fetch download_url → 流式写入选中文件夹；
   包装不支持时退回普通浏览器下载。
+
+## 2026-09-21 — 音频库界面重排（分类/对白索引/试听下载/整包）
+
+- bank 按前缀规则分为 8 类（主角/武装/音乐/环境/载具/近战/过场/系统/其他），
+  左侧按类分节，顶部 sticky 搜索；每行含 MB 大小与「⬇整包」链。
+- bank 详情页面：事件组（Patch）和独立音源带时长/声道显示，可直接试听
+  `/api/audio_file`（多声道支持，不再受旧 mono 解码限制）并 ⬇ 下载 WAV。
+- 对白索引（13,465 条）：后台线程扫描 00audio.rcf 建说话者索引
+  `编号_<group>_<序号>` BNF 反推，写 EXPORT_ROOT/gltf/audio-dialogue-index.json
+  缓存；`/api/audio_dialogue`（q/group/offset/limit 参数），
+  `/api/audio_dialogue_entry?entry=…` 单条解码（download 参数可下载）。
+  实际反推 216 个 "说话者×章节" 分组（nypda=1009 条、alex=93 条等）。
+- `/api/export_audio_bank?bank=…` 整包 ZIP（zipfile 内存组包，小 LRU 缓存
+  bank 对象索引）。

@@ -705,9 +705,41 @@ if (expandFullBtn) {
   };
 }
 
-// ---- 音效库浏览器（数据源：/api/audio_banks, /api/audio_bank；播放走 /api/audio_event 的真实 RADP 解码）----
+// ---- 音效库浏览器 v2：分类分组 bank + 对白索引（反推说话者）+ 试听/下载/整包 ----
 let audioBanksLoaded = false;
 const audioObjectUrls = new Map();
+let audioBankSearch = '';
+const audioBankData = { banks: [], dialogue: 0 };
+
+// bank 命名 → 人类友好分类（按前缀规则，不是穷举）
+const AUDIO_BANK_CATEGORIES = [
+  { id: 'alex',      name: '🎭 主角 Alex Mercer',    match: n => n === 'alex' },
+  { id: 'morphs',    name: '⚔ Alex 武装形态',         match: n => /^alex_(blades|claws|hammerfist|whipfist|musclemass|armour|shield)$/.test(n) },
+  { id: 'music',     name: '🎵 各章原声',             match: n => /^e\d+_music$/.test(n) },
+  { id: 'ambience',  name: '🌆 环境氛围',             match: n => n === 'ambience' },
+  { id: 'vehicles',  name: '🚗 载具',                 match: n => /apc|marine|vehicle/.test(n) },
+  { id: 'combat',    name: '👊 近战格斗',             match: n => n === 'brawler' },
+  { id: 'cutscenes', name: '🎬 过场 SFX',             match: n => /^e\d+m\d+_sfx$/.test(n) },
+  { id: 'system',    name: '⚙️ 系统与引导',           match: n => n === 'boot_strap' },
+  { id: 'other',     name: '📦 其他',                 match: () => true },
+];
+// 对白说话者前缀 → 可读说明（由实际命名反推，未覆盖的显示原始代码）
+const SPEAKER_LABELS = {
+  bwoff: '黑色守望军官', bwtrb: '黑色守望士兵', bwmisc: '黑色守望杂项', bwsol: '黑色守望士兵',
+  p_m: '路人(男)', p_f: '路人(女)', uwm: '都市白领男性', uwf: '都市白领女性', ubm: '市民',
+  alex: 'Alex Mercer', dana: 'Dana Mercer', rag: 'Ragland', mcc: 'McMullen', rand: 'Randall',
+  kater: 'Kater', carg: 'Cargill', cross: 'Cross 上尉', greene: 'Elizabeth Greene',
+  tsko: 'Tso', milt: '军方广播', radio: '无线电', marines: '海军陆战队', synd: '合成音',
+  misc: '未归类',
+};
+
+function speakerLabel(g) {
+  if (SPEAKER_LABELS[g]) return SPEAKER_LABELS[g];
+  for (const k in SPEAKER_LABELS) if (g.startsWith(k) && k !== 'misc') return SPEAKER_LABELS[k] + '（' + g + '）';
+  return g;
+}
+
+function fmtSec(s) { return s == null ? '' : s.toFixed(2) + 's'; }
 
 async function loadAudioBanks() {
   if (audioBanksLoaded) return;
@@ -717,32 +749,92 @@ async function loadAudioBanks() {
   try {
     const res = await fetch('/api/audio_banks');
     const data = await res.json();
-    sumEl.textContent = `${data.banks.length} 个音效 bank；另有 ${data.dialogue_entries_not_expanded} 条英语对白文件（未展开成列表）`;
-    listEl.innerHTML = '';
-    for (const b of data.banks) {
-      const short = b.bank.replace(/^audio\\/, '');
+    audioBankData.banks = data.banks;
+    audioBankData.dialogue = data.dialogue_entries_not_expanded;
+    sumEl.textContent = `${data.banks.length} 个音效 bank + ${data.dialogue_entries_not_expanded} 条英语对白（分类分节显示，点 bank 进详情）`;
+
+    // 顶部搜索框
+    const searchWrap = document.createElement('div');
+    searchWrap.style.cssText = 'position:sticky; top:0; z-index:2; background:inherit; padding:6px 4px 8px;';
+    searchWrap.innerHTML = `<input id="audio-bank-search" type="search" placeholder="按名称过滤 bank（如 alex, music, apc）…"
+      style="width:100%; box-sizing:border-box; background:#0d1524; border:1px solid #33475f; color:#e7f1ff; padding:7px 10px; border-radius:6px; font-size:12px;" />`;
+    searchWrap.querySelector('input').oninput = (e) => {
+      audioBankSearch = e.target.value.trim().toLowerCase();
+      renderAudioBankList();
+    };
+    listEl.appendChild(searchWrap);
+  } catch (err) {
+    sumEl.textContent = '音效 bank 列表读取失败：' + err;
+    return;
+  }
+  renderAudioBankList();
+}
+
+function renderAudioBankList() {
+  const listEl = document.getElementById('audio-bank-list');
+  listEl.querySelectorAll('div.flexible-section').forEach(d => d.remove());
+
+  // 分类分节
+  const groups = new Map(AUDIO_BANK_CATEGORIES.map(c => [c.id, { meta: c, banks: [] }]));
+  for (const b of audioBankData.banks) {
+    const short = b.bank.replace(/^audio\\/, '').replace(/\.p3d$/, '');
+    if (audioBankSearch && !short.toLowerCase().includes(audioBankSearch)) continue;
+    for (const cat of AUDIO_BANK_CATEGORIES) {
+      if (cat.match(short)) { groups.get(cat.id).banks.push(b); break; }
+    }
+  }
+  for (const { meta, banks } of groups.values()) {
+    if (!banks.length) continue;
+    const sec = document.createElement('div');
+    sec.className = 'flexible-section';
+    sec.innerHTML = `<div style="padding:8px 8px 4px; color:#7fd4ff; font-size:12px; font-weight:700; border-bottom:1px solid #1c2b40;">${meta.name} <span style="color:#64748b; font-weight:400; font-size:10px;">${banks.length}</span></div>`;
+    for (const b of banks) {
+      const short = b.bank.replace(/^audio\\/, '').replace(/\.p3d$/, '');
       const row = document.createElement('div');
-      row.style.cssText = 'padding:7px 10px; margin:3px 0; background:#151a24; border-radius:6px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;';
-      row.innerHTML = `<span>🔊 ${short}</span><span style="color:#6b7280; font-size:11px;">${(b.bytes/1048576).toFixed(1)}MB</span>`;
+      row.className = 'audio-bank-row';
+      row.style.cssText = 'padding:7px 10px; margin:2px 4px; background:#151a24; border-radius:6px; cursor:pointer; display:flex; align-items:center; gap:8px;';
+      row.innerHTML = `<span style="flex:1;">🔊 ${short}</span>
+        <a href="/api/export_audio_bank?bank=${encodeURIComponent(b.bank)}" download title="下载 bank 整包 WAV（ZIP）" style="text-decoration:none; font-size:11px; color:#7fd4ff;" onclick="event.stopPropagation()">⬇整包</a>
+        <span style="color:#6b7280; font-size:11px;">${(b.bytes/1048576).toFixed(1)}MB</span>`;
       row.onclick = () => {
-        listEl.querySelectorAll('div').forEach(d => d.style.background = '#151a24');
+        listEl.querySelectorAll('.audio-bank-row').forEach(d => d.style.background = '#151a24');
         row.style.background = '#2b394e';
         void loadAudioBank(b.bank);
       };
-      listEl.appendChild(row);
+      sec.appendChild(row);
     }
-  } catch (err) {
-    sumEl.textContent = '音效 bank 列表读取失败：' + err;
+    listEl.appendChild(sec);
   }
+  // 对白索引大节
+  const dlgSec = document.createElement('div');
+  dlgSec.className = 'flexible-section';
+  dlgSec.innerHTML = `<div style="padding:10px 8px 4px; color:#fbbf24; font-size:12px; font-weight:700; border-bottom:1px solid #1c2b40;">💬 英语对白</div>`;
+  const dlgRow = document.createElement('div');
+  dlgRow.className = 'audio-bank-row';
+  dlgRow.style.cssText = 'padding:9px 10px; margin:4px; background:#1c1608; border:1px solid #6d5710; border-radius:6px; cursor:pointer; display:flex; justify-content:space-between;';
+  dlgRow.innerHTML = `<span>🗣 对白索引（反推说话者分组）</span><span style="color:#a78bfa; font-size:11px;">${audioBankData.dialogue} 条</span>`;
+  dlgRow.onclick = () => {
+    listEl.querySelectorAll('.audio-bank-row').forEach(d => { d.style.background = '#151a24'; d.style.border = 'none'; });
+    dlgRow.style.background = '#2b2208';
+    void loadDialogueBrowser();
+  };
+  dlgSec.appendChild(dlgRow);
+  listEl.appendChild(dlgSec);
 }
 
-function playBankAudio(name, btn) {
-  let urlP = audioObjectUrls.get(name);
+function playBankAudio(name, btn, opts = {}) {
+  const cacheKey = (opts.bank ? `B:${opts.bank}:` : opts.entry ? `E:${opts.entry}` : '') + name;
+  let urlP = audioObjectUrls.get(cacheKey);
   if (!urlP) {
-    urlP = fetch(`/api/audio_event?event=${encodeURIComponent(name)}`)
+    const api = opts.entry
+      ? `/api/audio_dialogue_entry?entry=${encodeURIComponent(opts.entry)}`
+      : (opts.bank
+        ? `/api/audio_file?bank=${encodeURIComponent(opts.bank)}&name=${encodeURIComponent(name)}`
+        : `/api/audio_event?event=${encodeURIComponent(name)}`);
+    urlP = fetch(api)
       .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.blob(); })
       .then(b => URL.createObjectURL(b));
-    audioObjectUrls.set(name, urlP);
+    audioObjectUrls.set(cacheKey, urlP);
   }
   btn.textContent = '⏳';
   urlP.then(url => {
@@ -750,7 +842,7 @@ function playBankAudio(name, btn) {
     a.onended = () => { btn.textContent = '▶'; };
     void a.play();
     btn.textContent = '🔊';
-  }).catch(() => { audioObjectUrls.delete(name); btn.textContent = '✕'; });
+  }).catch(() => { audioObjectUrls.delete(cacheKey); btn.textContent = '✕'; });
 }
 
 async function loadAudioBank(bank) {
@@ -759,18 +851,22 @@ async function loadAudioBank(bank) {
   try {
     const res = await fetch(`/api/audio_bank?bank=${encodeURIComponent(bank)}`);
     const data = await res.json();
+    const short = bank.replace(/^audio\\/, '').replace(/\.p3d$/, '');
     const rows = [];
-    rows.push(`<h3 style="color:#7fd4ff; margin:6px 0 2px;">${bank}</h3>`);
-    rows.push(`<div style="color:#6b7280; font-size:11px; margin-bottom:12px;">${data.patches.length} 个事件组（Patch）· ${data.loose_files.length} 个独立音源 · 时长来自 RADP 头</div>`);
+    rows.push(`<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+      <h3 style="color:#7fd4ff; margin:6px 0 2px;">${short}</h3>
+      <a href="/api/export_audio_bank?bank=${encodeURIComponent(bank)}" download style="color:#a7f3d0; font-size:12px; text-decoration:none; border:1px solid #2d6a4f; padding:4px 10px; border-radius:5px; background:#0e2a1c;">⬇ 下载整包 WAV</a>
+      <span style="color:#6b7280; font-size:11px;">${data.patches.length} 事件组 · ${data.loose_files.length} 独立音源 · 时长来自 RADP 头 · 播放/下载走完整多声道解码</span></div>`);
     const fileRow = (f, indent) => {
       const playable = f.codec === 'radp';
-      const dur = f.duration != null ? `${f.duration}s` : (playable ? '' : '非RADP/未解码');
-      return `<div style="display:flex; align-items:center; gap:8px; padding:3px 6px 3px ${indent}px;">
-        ${playable ? `<button class="audio-play" data-name="${f.name}" style="background:#1a2230; border:1px solid #2d3848; color:#a78bfa; border-radius:4px; cursor:pointer; width:28px;">▶</button>` : '<span style="width:28px; text-align:center; color:#374151;">—</span>'}
-        <span style="flex:1;">${f.name}</span><span style="color:#6b7280; font-size:11px;">${dur}</span></div>`;
+      const dl = playable ? `<a href="/api/audio_file?bank=${encodeURIComponent(bank)}&name=${encodeURIComponent(f.name)}&download=1" download title="下载 WAV"
+        style="color:#7fd4ff; font-size:11px; text-decoration:none;">⬇</a>` : '';
+      return `<div style="display:flex; align-items:center; gap:8px; padding:3px 6px 3px ${indent}px; border-bottom:1px solid #10151f;">
+        ${playable ? `<button class="audio-play-file" data-name="${f.name}" style="background:#1a2230; border:1px solid #2d3848; color:#a78bfa; border-radius:4px; cursor:pointer; width:28px;">▶</button>` : '<span style="width:28px; text-align:center; color:#374151;">—</span>'}
+        <span style="flex:1;">${f.name}</span><span style="color:#6b7280; font-size:11px; min-width:60px; text-align:right;">${fmtSec(f.duration)}</span>${dl}</div>`;
     };
     if (data.patches.length) {
-      rows.push('<h4 style="color:#a78bfa; margin:10px 0 4px;">🎯 事件组（游戏按事件名随机选组内素材）</h4>');
+      rows.push('<h4 style="color:#a78bfa; margin:12px 0 4px;">🎯 事件组（游戏中按事件名随机选组内素材；第一个 ▶ 播整组）</h4>');
       for (const p of data.patches) {
         rows.push(`<div style="background:#131924; border-radius:6px; padding:6px 8px; margin:4px 0;">
           <div style="display:flex; align-items:center; gap:8px;">
@@ -784,11 +880,117 @@ async function loadAudioBank(bank) {
       for (const f of data.loose_files) rows.push(fileRow(f, 6));
     }
     el.innerHTML = rows.join('');
+    el.querySelectorAll('.audio-play-file').forEach(btn => {
+      btn.onclick = () => playBankAudio(btn.dataset.name, btn, { bank });
+    });
     el.querySelectorAll('.audio-play').forEach(btn => {
       btn.onclick = () => playBankAudio(btn.dataset.name, btn);
     });
   } catch (err) {
     el.innerHTML = '<div style="color:#f87171; padding:30px;">bank 解析失败：' + err + '</div>';
+  }
+}
+
+// ---- 对白索引浏览（按说话者分组 + 搜索 + 分页 + 试听/下载） ----
+const dialogueBrowser = { group: '', q: '', offset: 0, limit: 80, timer: null };
+
+async function loadDialogueBrowser() {
+  const el = document.getElementById('audio-content');
+  el.innerHTML = '<div style="color:#fbbf24; padding:30px; text-align:center;">正在建立对白索引（首次需扫描 13.4k 个条目，约一分钟；之后秒开）…</div>';
+  try {
+    let data = null;
+    for (let tries = 0; tries < 90; tries++) {
+      const res = await fetch('/api/audio_dialogue?' + new URLSearchParams({ limit: '1' }));
+      data = await res.json();
+      if (!data.building) break;
+      el.innerHTML = `<div style="color:#fbbf24; padding:30px; text-align:center;">扫描中… ${data.progress || ''}（条目多时一次性开销，请耐心）</div>`;
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    if (data.building) throw new Error('索引构建超时，请稍后再点一次。');
+    renderDialogueBrowser(data);
+  } catch (err) {
+    el.innerHTML = '<div style="color:#f87171; padding:30px;">对白索引失败：' + (err && err.message ? err.message : err) + '</div>';
+  }
+}
+
+async function fetchDialogue() {
+  const params = new URLSearchParams({
+    offset: String(dialogueBrowser.offset),
+    limit: String(dialogueBrowser.limit),
+  });
+  if (dialogueBrowser.group) params.set('group', dialogueBrowser.group);
+  if (dialogueBrowser.q) params.set('q', dialogueBrowser.q);
+  const res = await fetch('/api/audio_dialogue?' + params);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (data.building) throw new Error('索引还在构建，请稍候再试。');
+  return data;
+}
+
+async function renderDialogueBrowser(staticData) {
+  const el = document.getElementById('audio-content');
+  const groups = Object.entries(staticData.groups || {}).sort((a, b) => b[1] - a[1]);
+  el.innerHTML = `
+    <h3 style="color:#fbbf24; margin:6px 0 2px;">🗣 英语对白索引 <span style="color:#64748b; font-size:12px; font-weight:400;">${staticData.total} 条 · 按文件名 BNF（编号_说话者_序号）反推分组</span></h3>
+    <div style="display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; align-items:center;">
+      <select id="dlg-group" style="background:#0d1524; border:1px solid #33475f; color:#dcecff; padding:6px 9px; border-radius:6px; font-size:12px;">
+        <option value="">全部说话者（${staticData.total}）</option>
+        ${groups.map(([g, n]) => `<option value="${g}" ${dialogueBrowser.group === g ? 'selected' : ''}>${speakerLabel(g)} · ${g}（${n}）</option>`).join('')}
+      </select>
+      <input id="dlg-search" type="search" placeholder="搜索文件名（如 dana, bwoff, e04m04）…" value="${dialogueBrowser.q.replace(/"/g, '&quot;')}"
+        style="flex:1; min-width:200px; background:#0d1524; border:1px solid #33475f; color:#e7f1ff; padding:6px 10px; border-radius:6px; font-size:12px;" />
+      <span id="dlg-pager" style="font-size:11px; color:#8ea5bd;"></span>
+    </div>
+    <div id="dlg-rows" style="background:#0b1017; border-radius:6px; padding:4px;"></div>
+    <div id="dlg-pager-btns" style="margin:8px 0; display:flex; gap:8px;"></div>`;
+  document.getElementById('dlg-group').onchange = (e) => {
+    dialogueBrowser.group = e.target.value;
+    dialogueBrowser.offset = 0;
+    void refreshDialogueRows();
+  };
+  document.getElementById('dlg-search').oninput = (e) => {
+    dialogueBrowser.q = e.target.value.trim();
+    dialogueBrowser.offset = 0;
+    if (dialogueBrowser.timer) clearTimeout(dialogueBrowser.timer);
+    dialogueBrowser.timer = setTimeout(() => void refreshDialogueRows(), 350);
+  };
+  await refreshDialogueRows();
+}
+
+async function refreshDialogueRows() {
+  const rowsEl = document.getElementById('dlg-rows');
+  const pager = document.getElementById('dlg-pager');
+  const btns = document.getElementById('dlg-pager-btns');
+  rowsEl.innerHTML = '<div style="color:#6b7280; padding:14px; text-align:center;">加载…</div>';
+  try {
+    const data = await fetchDialogue();
+    const rows = data.rows;
+    if (!rows.length) {
+      rowsEl.innerHTML = '<div style="color:#64748b; padding:14px; text-align:center;">当前条件没有对话记录。</div>';
+    } else {
+      rowsEl.innerHTML = rows.map(r => `
+        <div style="display:flex; align-items:center; gap:8px; padding:4px 6px; border-bottom:1px solid #10151f; font-size:12px;">
+          <button class="dlg-play" data-entry="${r.e.replace(/"/g, '&quot;')}" data-name="${r.n.replace(/"/g, '&quot;')}" style="background:#1a2230; border:1px solid #2d3848; color:#a78bfa; border-radius:4px; cursor:pointer; width:26px;">▶</button>
+          <span style="flex:1; color:#dcecff;">${r.n}</span>
+          <span style="color:#64748b; font-size:10px;">${speakerLabel(r.g)}</span>
+          <span style="color:#6b7280; font-size:10px; min-width:52px; text-align:right;">${r.d}s · ${r.ch}ch</span>
+          <a href="/api/audio_dialogue_entry?entry=${encodeURIComponent(r.e)}&download=1" download title="下载 WAV" style="color:#7fd4ff; text-decoration:none; font-size:11px;">⬇</a>
+        </div>`).join('');
+      rowsEl.querySelectorAll('.dlg-play').forEach(btn => {
+        btn.onclick = () => playBankAudio(btn.dataset.name, btn, { entry: btn.dataset.entry });
+      });
+    }
+    const pages = Math.ceil(data.filtered / dialogueBrowser.limit);
+    const page = Math.floor(dialogueBrowser.offset / dialogueBrowser.limit) + 1;
+    pager.textContent = `${data.filtered} 条匹配 · 第 ${page}/${pages || 1} 页（每页 ${dialogueBrowser.limit}）`;
+    btns.innerHTML = `
+      <button id="dlg-prev" ${dialogueBrowser.offset === 0 ? 'disabled' : ''} style="background:#1a2740;border:1px solid #33475f;color:#cfe0f7;border-radius:5px;padding:4px 10px;font-size:11px;cursor:pointer;">← 上一页</button>
+      <button id="dlg-next" ${dialogueBrowser.offset + dialogueBrowser.limit >= data.filtered ? 'disabled' : ''} style="background:#1a2740;border:1px solid #33475f;color:#cfe0f7;border-radius:5px;padding:4px 10px;font-size:11px;cursor:pointer;">下一页 →</button>`;
+    const prev = document.getElementById('dlg-prev'), next = document.getElementById('dlg-next');
+    if (prev) prev.onclick = () => { dialogueBrowser.offset = Math.max(0, dialogueBrowser.offset - dialogueBrowser.limit); void refreshDialogueRows(); };
+    if (next) next.onclick = () => { dialogueBrowser.offset += dialogueBrowser.limit; void refreshDialogueRows(); };
+  } catch (err) {
+    rowsEl.innerHTML = '<div style="color:#f87171; padding:14px;">' + (err && err.message ? err.message : err) + '</div>';
   }
 }
 

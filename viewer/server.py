@@ -253,6 +253,109 @@ def _shared_texture_index(path, mtime_ns, size):
 
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+# bank AudioFile 对象索引的小 LRU（单 bank 可大到几 MB，至多缓存 6 个）
+_BANK_OBJECTS_CACHE = {}
+
+# 对白索引构建状态：building/ready/error + 后台线程；rows/groups 填充后可整体读。
+_DIALOGUE_INDEX = {"building": False, "ready": False, "error": None, "progress": ""}
+_DIALOGUE_INDEX_LOCK = threading.Lock()
+_DIALOGUE_ROWS = []
+_DIALOGUE_GROUPS = {}
+_DIALOGUE_CACHE_DOC = None
+
+
+def _load_dialogue_index(handler):
+    """对白索引懒加载。首次调用启动后台构建线程并返回 {building:True}；
+    EXPORT_ROOT 里存 audio-dialogue-index.json，服务重启直接命中缓存。"""
+    global _DIALOGUE_ROWS, _DIALOGUE_GROUPS, _DIALOGUE_CACHE_DOC
+    with _DIALOGUE_INDEX_LOCK:
+        if _DIALOGUE_CACHE_DOC is not None:
+            return _DIALOGUE_CACHE_DOC
+        if _DIALOGUE_INDEX["ready"]:
+            _DIALOGUE_CACHE_DOC = {"building": False, "ready": True, "rows": _DIALOGUE_ROWS,
+                                   "groups": _DIALOGUE_GROUPS, "total": len(_DIALOGUE_ROWS)}
+            return _DIALOGUE_CACHE_DOC
+        if _DIALOGUE_INDEX["building"]:
+            return dict(_DIALOGUE_INDEX)
+        if _DIALOGUE_INDEX["error"]:
+            return dict(_DIALOGUE_INDEX)
+        cache_path = os.path.join(EXPORT_ROOT, "gltf", "audio-dialogue-index.json")
+        if os.path.isfile(cache_path):
+            try:
+                with open(cache_path, "r", encoding="utf-8") as fh:
+                    doc = json.load(fh)
+                _DIALOGUE_ROWS = doc.get("rows", [])
+                _DIALOGUE_GROUPS = doc.get("groups", {})
+                _DIALOGUE_INDEX["ready"] = True
+                _DIALOGUE_CACHE_DOC = {"building": False, "ready": True, "rows": _DIALOGUE_ROWS,
+                                       "groups": _DIALOGUE_GROUPS, "total": len(_DIALOGUE_ROWS)}
+                log_line("export", f"对白索引缓存命中：{len(_DIALOGUE_ROWS)} 条")
+                return dict(_DIALOGUE_CACHE_DOC)
+            except Exception:
+                pass
+        _DIALOGUE_INDEX["building"] = True
+        _DIALOGUE_INDEX["error"] = None
+        _DIALOGUE_INDEX["progress"] = ""
+
+    def build():
+        global _DIALOGUE_ROWS, _DIALOGUE_GROUPS, _DIALOGUE_CACHE_DOC
+        try:
+            log_line("export", "对白索引开始扫描 00audio.rcf …")
+            rcf_path = os.path.join(handler.root_dir, "00audio.rcf")
+            cem = rcf_extract.CementFile.load(rcf_path)
+            entries = {e.name_hash: e for e in cem.entries}
+            rows = []
+            groups = {}
+            with open(rcf_path, "rb") as fh:
+                total_m = len(cem.metadatas)
+                for mi, meta in enumerate(cem.metadatas, 1):
+                    if mi % 500 == 0:
+                        with _DIALOGUE_INDEX_LOCK:
+                            _DIALOGUE_INDEX["progress"] = f"{mi}/{total_m}"
+                    if not meta.name.startswith("audio\\english"):
+                        continue
+                    entry = entries.get(rcf_extract.hash_file_name(meta.name))
+                    if entry is None:
+                        continue
+                    fh.seek(entry.offset)
+                    data = fh.read(entry.size)
+                    for obj in radp_common.parse_audiofiles(data):
+                        if obj.get("error"):
+                            continue
+                        nam = obj["name"]
+                        # 说话者组反推：NNNNN_<group>_<NNN> 结构（如 17619_bwoff_268），
+                        # 没命中结构（变量名/纯数字）的落 "misc"。
+                        m = re.match(r"^\d+_([a-z0-9_]+?)_\d+$", nam.lower())
+                        grp = m.group(1) if m else "misc"
+                        rows.append({
+                            "n": nam, "e": meta.name, "g": grp,
+                            "d": round(radp_common.duration_seconds(len(obj["payload"]), obj["channels"], obj["rate"]), 2),
+                            "ch": obj["channels"], "r": obj["rate"],
+                        })
+                        groups[grp] = groups.get(grp, 0) + 1
+            rows.sort(key=lambda r: (r["g"], r["n"]))
+            _DIALOGUE_ROWS = rows
+            _DIALOGUE_GROUPS = groups
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            with open(cache_path, "w", encoding="utf-8") as fh:
+                json.dump({"rows": rows, "groups": groups}, fh, ensure_ascii=False)
+            with _DIALOGUE_INDEX_LOCK:
+                _DIALOGUE_INDEX["building"] = False
+                _DIALOGUE_INDEX["ready"] = True
+                _DIALOGUE_CACHE_DOC = {"building": False, "ready": True, "rows": rows,
+                                       "groups": groups, "total": len(rows)}
+            log_line("export", f"对白索引构建完成：{len(rows)} 条，{len(groups)} 个说话者分组")
+        except Exception as exc:
+            with _DIALOGUE_INDEX_LOCK:
+                _DIALOGUE_INDEX["building"] = False
+                _DIALOGUE_INDEX["error"] = f"{type(exc).__name__}: {exc}"
+            log_line("export", f"对白索引构建失败：{type(exc).__name__}: {exc}")
+
+    threading.Thread(target=build, name="dialogue-index", daemon=True).start()
+    return dict(_DIALOGUE_INDEX)
+
+
 try:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "entities"))
     import fig_timeline
@@ -474,6 +577,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_audio_banks(qs)
         if parsed.path == "/api/audio_bank":
             return self._handle_audio_bank(qs)
+        if parsed.path == "/api/audio_file":
+            return self._handle_audio_file(qs)
+        if parsed.path == "/api/audio_dialogue":
+            return self._handle_audio_dialogue(qs)
+        if parsed.path == "/api/audio_dialogue_entry":
+            return self._handle_audio_dialogue_entry(qs)
+        if parsed.path == "/api/export_audio_bank":
+            return self._handle_export_audio_bank(qs)
         if parsed.path == "/api/input_moves":
             return self._handle_input_moves(qs)
         if parsed.path == "/api/condition_vocab":
@@ -1479,6 +1590,148 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send_json(fig_timeline.list_bank_contents(self.root_dir, bank))
         except Exception as exc:
             return self._send_error_json(f"audio_bank: {exc}", 500)
+
+    # ---------------- 音频库细节（bank 内对象 / 对白索引 / 单条目解码） ----------------
+
+    def _bank_audio_objects(self, bank_name):
+        """bank 中全部 AudioFile 对象的 {name: obj} 索引。bank 字节图已经在
+        fig_timeline._bank_data 里缓存，这层面再对解析结果按名建索引做 LRU。"""
+        cache = _BANK_OBJECTS_CACHE
+        if bank_name in cache:
+            return cache[bank_name]
+        data = fig_timeline._bank_data(self.root_dir, bank_name)
+        objects = {}
+        for obj in radp_common.parse_audiofiles(data):
+            if obj.get("error"):
+                continue
+            objects[obj["name"]] = obj
+        if len(cache) > 6:
+            cache.pop(next(iter(cache)))
+        cache[bank_name] = objects
+        return objects
+
+    def _serve_wav(self, wav, source_name, download=False):
+        filename = radp_common.safe_name(source_name) + ".wav"
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Length", str(len(wav)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        if download:
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("X-Audio-Source", filename)
+        self.end_headers()
+        self.wfile.write(wav)
+
+    def _handle_audio_file(self, qs):
+        """按 bank + AudioFile 名解码：完整多声道，attachment=下载、否=在线播放。"""
+        if fig_timeline is None or radp_common is None:
+            return self._send_error_json("audio module unavailable", 503)
+        bank = qs.get("bank", [None])[0]
+        name = qs.get("name", [None])[0]
+        if not bank or not name:
+            return self._send_error_json("missing bank / name parameter", 400)
+        try:
+            obj = self._bank_audio_objects(bank).get(name)
+            if obj is None:
+                return self._send_error_json(f"AudioFile not found in {bank}: {name}", 404)
+            pcm = radp_common.decode_frames(obj["payload"], obj["channels"])
+            wav = radp_common.wav_bytes(obj["rate"], obj["channels"], pcm)
+        except Exception as exc:
+            return self._send_error_json(f"audio_file: {exc}", 500)
+        return self._serve_wav(wav, name, bool(qs.get("download", [None])[0]))
+
+    def _handle_audio_dialogue(self, qs):
+        """对白索引：扫描 00audio.rcf 里全部 audio\\english 条目并把 AudioFile
+        名反推说话者分组。第一次调用后台建索引（EXPORT_ROOT 缓存 JSON），
+        之后瞬间返回。参数：offset/limit，q=名称子串，group=说话者分组。"""
+        if radp_common is None:
+            return self._send_error_json("radp_common module unavailable", 503)
+        idx = _load_dialogue_index(self)
+        if idx.get("building"):
+            return self._send_json({"building": True, "progress": idx.get("progress", "")})
+        if idx.get("error"):
+            return self._send_error_json(f"audio_dialogue index: {idx['error']}", 500)
+        q = (qs.get("q", [""])[0] or "").strip().lower()
+        group = (qs.get("group", [""])[0] or "").strip()
+        try:
+            offset = max(0, int(qs.get("offset", ["0"])[0]))
+            limit = min(500, max(1, int(qs.get("limit", ["100"])[0])))
+        except ValueError:
+            offset, limit = 0, 100
+        rows = idx["rows"]
+        if group:
+            rows = [r for r in rows if r["g"] == group]
+        if q:
+            rows = [r for r in rows if q in r["n"].lower() or q in r["e"].lower()]
+        return self._send_json({
+            "building": False,
+            "total": idx["total"],
+            "filtered": len(rows),
+            "offset": offset,
+            "limit": limit,
+            "groups": idx["groups"],
+            "rows": rows[offset:offset + limit],
+        })
+
+    def _handle_audio_dialogue_entry(self, qs):
+        """按 archive entry 名解码一条对白 WAV（附件可下载或在线播放）。"""
+        if radp_common is None:
+            return self._send_error_json("radp_common module unavailable", 503)
+        entry_name = qs.get("entry", [None])[0]
+        if not entry_name or ".." in entry_name:
+            return self._send_error_json("missing/invalid entry parameter", 400)
+        try:
+            rcf_path = os.path.join(self.root_dir, "00audio.rcf")
+            cem = rcf_extract.CementFile.load(rcf_path)
+            nh = rcf_extract.hash_file_name(entry_name)
+            es = [e for e in cem.entries if e.name_hash == nh]
+            if len(es) != 1:
+                return self._send_error_json(f"entry not found: {entry_name}", 404)
+            with open(rcf_path, "rb") as fh:
+                fh.seek(es[0].offset)
+                data = fh.read(es[0].size)
+            audio = [o for o in radp_common.parse_audiofiles(data) if not o.get("error")]
+            if not audio:
+                return self._send_error_json(f"no RADP object in {entry_name}", 404)
+            obj = audio[0]
+            pcm = radp_common.decode_frames(obj["payload"], obj["channels"])
+            wav = radp_common.wav_bytes(obj["rate"], obj["channels"], pcm)
+        except Exception as exc:
+            return self._send_error_json(f"audio_dialogue_entry: {exc}", 500)
+        return self._serve_wav(wav, obj["name"], bool(qs.get("download", [None])[0]))
+
+    def _handle_export_audio_bank(self, qs):
+        """把一个 bank 的全部 AudioFile 解码成 ZIP（attachment 下载）。"""
+        if fig_timeline is None or radp_common is None:
+            return self._send_error_json("audio module unavailable", 503)
+        bank = qs.get("bank", [None])[0]
+        if not bank:
+            return self._send_error_json("missing bank parameter", 400)
+        try:
+            objects = self._bank_audio_objects(bank)
+            if not objects:
+                return self._send_error_json(f"bank has no decodable AudioFile: {bank}", 404)
+        except Exception as exc:
+            return self._send_error_json(f"export_audio_bank: {exc}", 500)
+        tmp_dir = os.path.join(EXPORT_ROOT, "gltf", ".bank-export-tmp")
+        os.makedirs(tmp_dir, exist_ok=True)
+        short = radp_common.safe_name(bank.replace("audio\\", "").replace(".p3d", "") or bank)
+        package = os.path.join(tmp_dir, f"bank-{short}.zip")
+        try:
+            with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_STORED) as archive:
+                written, failed = 0, 0
+                for name, obj in sorted(objects.items()):
+                    try:
+                        pcm = radp_common.decode_frames(obj["payload"], obj["channels"])
+                        wav = radp_common.wav_bytes(obj["rate"], obj["channels"], pcm)
+                        archive.writestr(radp_common.safe_name(name) + ".wav", wav)
+                        written += 1
+                    except Exception:
+                        failed += 1
+            log_line("export", f"bank 打包 {bank}: {written} OK / {failed} 失败 → {package}")
+        except Exception as exc:
+            return self._send_error_json(f"zip failed: {exc}", 500)
+        return self._send_attachment(package, f"prototype-{short}.zip", "application/zip")
 
     def _handle_input_moves(self, qs):
         """Input-condition move list of one FIG block (mouse simulation)."""
