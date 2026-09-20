@@ -26,16 +26,19 @@
 
   /* 实体全屏展厅 (Shelf View) */
   #entity-shelf-view { position: absolute; inset: 0; display: flex; flex-direction: column; background: #0b0f17; z-index: 30; }
+  /* Alex 状态树模拟器是与实体、地图、音效并列的独立工作区。 */
+  #alex-simulator-view { position:absolute; inset:0; z-index:35; background:#080b0c; }
+  #alex-simulator-frame { width:100%; height:100%; border:0; display:block; background:#080b0c; }
   .shelf-header { padding: 12px 20px; background: #121824; border-bottom: 1px solid #1f2937; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
   .shelf-header .title-group { display: flex; align-items: center; gap: 10px; }
   .shelf-header .title-group h2 { margin: 0; font-size: 15px; color: #7fd4ff; white-space: nowrap; }
-  
+
   .category-tabs { display: flex; gap: 6px; }
   .cat-tab { background: #1a2230; border: 1px solid #2d3848; color: #9ca3af; padding: 7px 12px; border-radius: 6px; font-size: 12px; text-align: center; cursor: pointer; transition: all 0.15s; white-space: nowrap; user-select: none; }
   .cat-tab * { pointer-events: none; }
   .cat-tab:hover { background: #253345; color: #e6e6e6; }
   .cat-tab.active { background: #2b394e; color: #7fd4ff; border-color: #7fd4ff; font-weight: 600; box-shadow: 0 0 10px rgba(127,212,255,0.2); }
-  
+
   .shelf-search { flex: 1; min-width: 180px; max-width: 320px; }
   .shelf-search input { width: 100%; box-sizing: border-box; background: #161d2b; border: 1px solid #2c313c; color: #e6e6e6; padding: 8px 12px; border-radius: 6px; font-size: 12px; }
 
@@ -69,6 +72,9 @@
 
   .card-title { font-size: 12px; font-weight: 600; color: #e6e6e6; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
   .card-meta { display: flex; gap: 4px; flex-wrap: wrap; font-size: 10px; color: #8a93a3; pointer-events: none; }
+  .entity-export-btn { width: 100%; padding: 6px 8px; border: 1px solid #2f8b62; border-radius: 5px; background: #10271f; color: #70efb3; font-size: 10px; font-weight: 700; cursor: pointer; }
+  .entity-export-btn:hover { background: #1a4a37; border-color: #70efb3; }
+  .entity-export-btn:disabled { opacity: .55; cursor: wait; }
   .card-badge { background: #1a2433; padding: 2px 5px; border-radius: 4px; border: 1px solid #2c3a4e; }
   .card-badge.anim { color: #a78bfa; border-color: #6d28d9; }
   .card-badge.skel { color: #fb923c; border-color: #c2410c; }
@@ -87,7 +93,7 @@
   .inspector-header .controls { display: flex; gap: 4px; }
   .inspector-btn { background: #1a2230; border: 1px solid #2d3848; color: #9ca3af; padding: 2px 6px; border-radius: 3px; cursor: pointer; font-size: 10px; }
   .inspector-btn:hover { background: #253345; color: #e6e6e6; }
-  
+
   .inspector-body { flex: 1; overflow-y: auto; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; }
   .mesh-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: #131924; border-radius: 4px; border: 1px solid #1c2638; }
   .mesh-row:hover { background: #192231; }
@@ -173,6 +179,7 @@
     <div class="title">🎮 Prototype 资源查看器</div>
     <div class="tabs">
       <button class="tab active" data-view="characters">实体展厅</button>
+      <button class="tab" data-view="alex">Alex 模拟器</button>
       <button class="tab" data-view="map">曼哈顿地图</button>
       <button class="tab" data-view="audio">音效</button>
       <button class="tab" data-view="tools">GLB 浏览器</button>
@@ -181,6 +188,11 @@
   </div>
 
   <div id="main">
+    <!-- 独立 Alex 状态树控制模拟器 -->
+    <div id="alex-simulator-view" class="hidden">
+      <iframe id="alex-simulator-frame" src="./alex-simulator.html" title="Alex 状态树控制模拟器"></iframe>
+    </div>
+
     <!-- 实体全屏展厅层 (当处于实体分类模式时展示) -->
     <div id="entity-shelf-view">
       <div class="shelf-header">
@@ -287,6 +299,10 @@
           <progress id="map-progress" value="0" max="260" aria-label="整城加载进度" style="width:100%"></progress>
           <div id="map-progress-text" class="sub">尚未开始 · 驻留预算 512 MiB</div>
           <button id="map-report" type="button">导出加载报告</button>
+          <label for="map-export-path">服务器导出路径（留空则下载 ZIP）</label>
+          <input id="map-export-path" type="text" placeholder="例如 MapFBX（相对于 PROTOTYPE_EXPORT_ROOT）" />
+          <button id="map-export-fbx" type="button" disabled>导出当前已加载 Cells（FBX＋贴图）</button>
+          <div class="sub">填写路径时保存到服务器；留空时下载 ZIP。仅导出当前已验证的城区主体与贴图。</div>
           <input id="map-search" type="search" placeholder="筛选编号，例如 2、18…" />
           <label><input id="map-append" type="checkbox" /> 保留已加载区块</label>
         </div>
@@ -297,7 +313,9 @@
       <!-- 音效面板 -->
       <div id="panel-audio" class="panel hidden">
         <h2>音频归档</h2>
-        <div class="sub">两个 audio archive 已复核，解码待实现</div>
+        <div class="sub" id="audio-bank-summary">读取音效 bank 列表…</div>
+        <div class="map-fields" style="margin:8px 0 12px"><a href="/api/export_asset?name=audio-summary-json" download><button type="button">下载全量音频汇总 JSON</button></a><a href="/api/export_asset?name=audio-summary-csv" download><button type="button">下载全量音频汇总 CSV</button></a><a href="/api/export_asset?name=audio-manifest" download><button type="button">下载 13,825 条音频清单</button></a></div>
+        <div id="audio-bank-list" style="overflow-y:auto; max-height: calc(100vh - 160px);"></div>
       </div>
 
       <!-- GLB 工具面板 -->
@@ -357,6 +375,13 @@
         <div class="drawer-search-box">
           <input id="entity-drawer-search" type="search" placeholder="筛选实体名称…" />
         </div>
+        <div style="padding:8px 10px;display:grid;gap:6px;border-bottom:1px solid #263244;background:#101722">
+          <label style="font-size:10px;color:#94a3b8">服务器导出路径（相对于 PROTOTYPE_EXPORT_ROOT，或填写其内部绝对路径）</label>
+          <input id="entity-export-path" type="text" value="FBXBatch" style="width:100%;background:#0b1119;border:1px solid #334155;color:#dbeafe;padding:6px" />
+          <label style="font-size:10px;color:#94a3b8"><input id="entity-export-overwrite" type="checkbox" /> 覆盖已存在的同名实体目录</label>
+          <button id="entity-batch-export" type="button" class="entity-export-btn">批量导出当前筛选结果</button>
+          <div id="entity-batch-status" style="font-size:10px;color:#70efb3;line-height:1.4"></div>
+        </div>
         <div id="entity-drawer-status" style="padding: 4px 10px; font-size: 10px; color: #7fd4ff; background: #0c1017;"></div>
         <div id="entity-drawer-grid" class="drawer-grid"></div>
       </div>
@@ -371,9 +396,10 @@
         <button id="map-mark-report" type="button">导出标记</button>
       </div>
       <div id="map-summary" class="hidden" role="status">从左侧读取 cells.rcf，然后选择一个基础 Cell。</div>
-      <div id="placeholder-audio" class="placeholder hidden">
-        <div class="icon">🔊</div>
-        <div class="text">音频播放器开发中</div>
+      <div id="placeholder-audio" class="placeholder hidden" style="align-items:stretch; justify-content:flex-start; overflow-y:auto; padding:18px 26px;">
+        <div id="audio-content" style="width:100%; max-width:980px; margin:0 auto; font-size:13px; color:#cbd5e1;">
+          <div style="color:#6b7280; padding:40px 0; text-align:center;">← 在左侧选择一个音效 bank</div>
+        </div>
       </div>
     </div>
   </div>
@@ -391,8 +417,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { createMapWorkbench } from "./map-view.js?v=20260917_04";
-import { createEntityShelf } from "./entity-shelf.js?v=20260917_04";
+import { createMapWorkbench } from "./map-view.js?v=20260920_map-path4";
+import { createEntityShelf } from "./entity-shelf.js?v=20260920_entity-batch7";
 
 console.log("[Prototype Viewer] Starting frontend runtime...");
 
@@ -478,10 +504,98 @@ if (expandFullBtn) {
   };
 }
 
+// ---- 音效库浏览器（数据源：/api/audio_banks, /api/audio_bank；播放走 /api/audio_event 的真实 RADP 解码）----
+let audioBanksLoaded = false;
+const audioObjectUrls = new Map();
+
+async function loadAudioBanks() {
+  if (audioBanksLoaded) return;
+  audioBanksLoaded = true;
+  const listEl = document.getElementById('audio-bank-list');
+  const sumEl = document.getElementById('audio-bank-summary');
+  try {
+    const res = await fetch('/api/audio_banks');
+    const data = await res.json();
+    sumEl.textContent = `${data.banks.length} 个音效 bank；另有 ${data.dialogue_entries_not_expanded} 条英语对白文件（未展开成列表）`;
+    listEl.innerHTML = '';
+    for (const b of data.banks) {
+      const short = b.bank.replace(/^audio\\/, '');
+      const row = document.createElement('div');
+      row.style.cssText = 'padding:7px 10px; margin:3px 0; background:#151a24; border-radius:6px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;';
+      row.innerHTML = `<span>🔊 ${short}</span><span style="color:#6b7280; font-size:11px;">${(b.bytes/1048576).toFixed(1)}MB</span>`;
+      row.onclick = () => {
+        listEl.querySelectorAll('div').forEach(d => d.style.background = '#151a24');
+        row.style.background = '#2b394e';
+        void loadAudioBank(b.bank);
+      };
+      listEl.appendChild(row);
+    }
+  } catch (err) {
+    sumEl.textContent = '音效 bank 列表读取失败：' + err;
+  }
+}
+
+function playBankAudio(name, btn) {
+  let urlP = audioObjectUrls.get(name);
+  if (!urlP) {
+    urlP = fetch(`/api/audio_event?event=${encodeURIComponent(name)}`)
+      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.blob(); })
+      .then(b => URL.createObjectURL(b));
+    audioObjectUrls.set(name, urlP);
+  }
+  btn.textContent = '⏳';
+  urlP.then(url => {
+    const a = new Audio(url);
+    a.onended = () => { btn.textContent = '▶'; };
+    void a.play();
+    btn.textContent = '🔊';
+  }).catch(() => { audioObjectUrls.delete(name); btn.textContent = '✕'; });
+}
+
+async function loadAudioBank(bank) {
+  const el = document.getElementById('audio-content');
+  el.innerHTML = '<div style="color:#6b7280; padding:30px; text-align:center;">解析 bank…</div>';
+  try {
+    const res = await fetch(`/api/audio_bank?bank=${encodeURIComponent(bank)}`);
+    const data = await res.json();
+    const rows = [];
+    rows.push(`<h3 style="color:#7fd4ff; margin:6px 0 2px;">${bank}</h3>`);
+    rows.push(`<div style="color:#6b7280; font-size:11px; margin-bottom:12px;">${data.patches.length} 个事件组（Patch）· ${data.loose_files.length} 个独立音源 · 时长来自 RADP 头</div>`);
+    const fileRow = (f, indent) => {
+      const playable = f.codec === 'radp';
+      const dur = f.duration != null ? `${f.duration}s` : (playable ? '' : '非RADP/未解码');
+      return `<div style="display:flex; align-items:center; gap:8px; padding:3px 6px 3px ${indent}px;">
+        ${playable ? `<button class="audio-play" data-name="${f.name}" style="background:#1a2230; border:1px solid #2d3848; color:#a78bfa; border-radius:4px; cursor:pointer; width:28px;">▶</button>` : '<span style="width:28px; text-align:center; color:#374151;">—</span>'}
+        <span style="flex:1;">${f.name}</span><span style="color:#6b7280; font-size:11px;">${dur}</span></div>`;
+    };
+    if (data.patches.length) {
+      rows.push('<h4 style="color:#a78bfa; margin:10px 0 4px;">🎯 事件组（游戏按事件名随机选组内素材）</h4>');
+      for (const p of data.patches) {
+        rows.push(`<div style="background:#131924; border-radius:6px; padding:6px 8px; margin:4px 0;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <button class="audio-play" data-name="${p.event}" style="background:#2e1065; border:1px solid #8b5cf6; color:#e6e6e6; border-radius:4px; cursor:pointer; width:28px;">▶</button>
+            <b>${p.event}</b><span style="color:#6b7280; font-size:11px;">${p.files.length} 个素材</span></div>
+          ${p.files.map(f => fileRow(f, 36)).join('')}</div>`);
+      }
+    }
+    if (data.loose_files.length) {
+      rows.push('<h4 style="color:#a78bfa; margin:14px 0 4px;">🎵 独立音源（未挂入任何事件组）</h4>');
+      for (const f of data.loose_files) rows.push(fileRow(f, 6));
+    }
+    el.innerHTML = rows.join('');
+    el.querySelectorAll('.audio-play').forEach(btn => {
+      btn.onclick = () => playBankAudio(btn.dataset.name, btn);
+    });
+  } catch (err) {
+    el.innerHTML = '<div style="color:#f87171; padding:30px;">bank 解析失败：' + err + '</div>';
+  }
+}
+
 // ---- 4. 顶栏主视图切换逻辑 ----
 let currentView = "characters";
 const tabs = document.querySelectorAll("#topnav .tab");
 const sidebar = document.getElementById("sidebar");
+const alexSimulatorView = document.getElementById("alex-simulator-view");
 const panels = {
   map: document.getElementById("panel-map"),
   audio: document.getElementById("panel-audio"),
@@ -497,6 +611,7 @@ function switchView(view) {
   if (entityShelf) entityShelf.setVisible(view === "characters");
   if (currentModel) currentModel.visible = (view === "tools");
   grid.visible = (view === "characters" || view === "tools");
+  if (alexSimulatorView) alexSimulatorView.classList.toggle("hidden", view !== "alex");
 
   tabs.forEach(t => t.classList.toggle("active", t.dataset.view === view));
 
@@ -505,6 +620,12 @@ function switchView(view) {
   if (view === "characters") {
     sidebar.classList.add("hidden");
     fullShelfView.classList.remove("hidden");
+    drawerToggle.classList.add("hidden");
+    drawer.classList.add("collapsed");
+    if (meshInspector) meshInspector.classList.add("hidden");
+  } else if (view === "alex") {
+    sidebar.classList.add("hidden");
+    fullShelfView.classList.add("hidden");
     drawerToggle.classList.add("hidden");
     drawer.classList.add("collapsed");
     if (meshInspector) meshInspector.classList.add("hidden");
@@ -522,11 +643,12 @@ function switchView(view) {
   // 隐藏/显示相应占位符与提示
   Object.values(placeholders).forEach(p => { if (p) p.classList.add("hidden"); });
   const hintEl = document.getElementById("hint");
-  if (view === "map") {
+  if (view === "map" || view === "alex") {
     if (hintEl) hintEl.classList.add("hidden");
   } else if (view === "audio") {
     if (placeholders.audio) placeholders.audio.classList.remove("hidden");
     if (hintEl) hintEl.classList.add("hidden");
+    void loadAudioBanks();
   } else {
     if (hintEl) hintEl.classList.remove("hidden");
   }
@@ -675,14 +797,14 @@ fetch('/api/health').then(r => r.json()).then(health => {
   if (connEl) connEl.textContent = `${location.host} (在线)`;
   const artPath = health.root.replace(/\/$/, '') + '/art.rcf';
   const cellsPath = health.root.replace(/\/$/, '') + '/cells.rcf';
-  
+
   const mapArch = document.getElementById('map-archive');
   if (mapArch) mapArch.value = cellsPath;
   const mapShared = document.getElementById('map-shared');
   if (mapShared) mapShared.value = artPath;
-  
+
   entityShelf.loadCatalog(artPath);
-}).catch((e) => { 
+}).catch((e) => {
   console.warn("Health check error:", e);
   const connEl = document.querySelector('.connection');
   if (connEl) connEl.textContent = '后端未连接';

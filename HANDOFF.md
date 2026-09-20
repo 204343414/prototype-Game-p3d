@@ -506,3 +506,15 @@ Blackwatch/NIS/gameplay 候选来源见角色地基文档；身份、通用缩�
   或 `click_shot_and_grab.py` 实际截图看一眼**，不要只凭代码逻辑推理
   "应该是对的"就呈现给用户——这是既有工作的重要效率教训，多次因为跳过这一
   步而来回拉锯。
+
+## 2026-09-20 — FBX/音频/模拟器公开同步
+
+- 实体解码器现支持颜色/法线/镜面贴图、Skeleton/Skin、TRAN/ROT/SCALE 动画通道、旧格式 Matrix/Weight 正确配对和 `UV_List(count, channel, Vector2[])`。
+- 实体和已加载 Manhattan Cells 可导出真正的二进制 FBX 7.4；转换依赖用户本机 Blender 4.5 LTS，不在仓库分发 Blender。
+- 每个有骨架的导出新增独立 `000_A_POSE_BIND` 默认 Take；源动画关键帧保持不变，通过独立 NLA Take 导出。不要把 Armature 切到 REST 后烘焙，否则所有 Take 会静止。
+- Unity 贴图以 FBX 同目录 PNG 交付，不依赖 Embedded Media。单项下载为 FBX 资源 ZIP；批量路径输出为每实体独立目录。
+- 实体抽屉支持按当前类别/搜索过滤批量导出、覆盖策略、后台任务状态及安全输出路径。地图可下载 ZIP或保存到安全输出路径。
+- 输出路径只允许位于 `PROTOTYPE_EXPORT_ROOT`；Blender 由 `PROTOTYPE_BLENDER` 指定。详见 `docs/fbx-export.md`。
+- `tools/audio/extract_all_audio.py` 可递归提取 archive entry 中的所有 AudioFile 对象并将 RADP 写为 WAV；支持 1..32 声道和可恢复运行。
+- 仓库不包含游戏本体、导出 FBX/PNG/WAV、Blender、RCF、DLL 或其他受版权保护字节。
+- 当前地图 FBX 仍仅覆盖严格验证的 Cell 城区主体和已解析材质；放置实体、特效、碰撞/导航等未解码记录不得声称完整。

@@ -26,16 +26,20 @@ import argparse
 from functools import lru_cache
 import http.server
 import gzip
+import hashlib
 import json
 import mimetypes
 import os
 import re
+import shutil
 import socketserver
 import struct
 import subprocess
 import sys
 import threading
 import urllib.parse
+import uuid
+import zipfile
 import zlib
 
 # Reuse the already-verified generic Pure3D chunk walker instead of
@@ -74,16 +78,84 @@ try:
     import export_static_geometry_diagnostic as cell_geometry  # noqa: E402
     from cell_materials import attach_local_materials, build_texture_index  # noqa: E402
     from entity_catalog import build_entity_catalog  # noqa: E402
-    from entity_decoder import decode_entity_meshes  # noqa: E402
+    from entity_decoder import decode_entity_meshes, extract_entity_skeletons  # noqa: E402
 except ImportError:
     probe_static_geometry = None
     cell_geometry = None
     build_entity_catalog = None
     decode_entity_meshes = None
+    extract_entity_skeletons = None
 
+
+# These package-to-package donors are not a name heuristic: each entry below
+# was traced through real Composite_Drawable_2 -> Skin -> skeleton_name bytes.
+# A donor is used only to provide a missing *exact* skeleton name; it never
+# replaces a locally declared skeleton and no archive-wide guessing is done.
+ENTITY_SKELETON_DONORS = {
+    # P3D-resident skin names were matched exactly to Skeleton_2 headers in
+    # the listed donor entry.  Add a new row only after the same raw-byte
+    # audit; filenames and joint counts are never considered a match.
+    r"\art\packages\powers\alex_armour\alex_armour.p3d.rz": (
+        r"\art\alex\alex.p3d.rz",
+    ),
+    r"\art\packages\missions\soldier\soldier.p3d.rz": (
+        r"\art\startup.p3d.rz",
+    ),
+    r"\art\packages\missions\supersoldier\supersoldier.p3d.rz": (
+        r"\art\startup.p3d.rz",
+    ),
+    r"\art\packages\missions\supersoldiere10m4\supersoldiere10m4.p3d.rz": (
+        r"\art\startup.p3d.rz",
+    ),
+    r"\art\packages\missions\leaderhunter\leaderhunter.p3d.rz": (
+        r"\art\startup.p3d.rz",
+    ),
+    # Follow-up closure audit: exact Skin headers below name a skeleton which
+    # this package does not declare.  Each donor name was located byte-for-byte
+    # in startup/alex before adding the row; no filename or joint-count match.
+    r"\art\packages\powers\soldier_disguise\soldier_disguise.p3d.rz": (
+        r"\art\startup.p3d.rz",
+    ),
+    r"\art\packages\powers\alex_shield\alex_shield.p3d.rz": (
+        r"\art\alex\alex.p3d.rz",
+    ),
+    r"\art\packages\pedestrians\shared.p3d.rz": (
+        r"\art\startup.p3d.rz",
+    ),
+    r"\art\packages\missions\brawler\brawler.p3d.rz": (
+        r"\art\startup.p3d.rz",
+    ),
+    r"\art\packages\missions\mission1\mission1.p3d.rz": (
+        r"\art\startup.p3d.rz",
+    ),
+    r"\art\packages\missions\permanentcharacterspackage\permanentcharacterspackage.p3d.rz": (
+        r"\art\startup.p3d.rz",
+    ),
+}
+
+
+def _canonical_entry_name(name):
+    return name.replace("/", "\\").lower()
+
+
+@lru_cache(maxsize=8)
+def _explicit_entity_skeleton_donors(archive_path, archive_mtime_ns, archive_size, entry_name):
+    """Load only the explicitly audited cross-package skeleton declarations."""
+    del archive_mtime_ns, archive_size  # cache invalidation inputs, not payload fields
+    donor_entries = ENTITY_SKELETON_DONORS.get(_canonical_entry_name(entry_name), ())
+    skeletons = []
+    for donor_entry in donor_entries:
+        donor_data = _read_preview_entry(archive_path, donor_entry)
+        skeletons.extend(extract_entity_skeletons(donor_data, source_entry=donor_entry))
+    return skeletons
 
 
 CELL_PREVIEW_LOCK = threading.Lock()
+EXPORT_LOCK = threading.Lock()
+EXPORT_JOBS_LOCK = threading.Lock()
+EXPORT_JOBS: dict[str, dict] = {}
+EXPORT_ROOT = os.path.realpath(os.environ.get("PROTOTYPE_EXPORT_ROOT", "/mnt/hdd/PrototypeExports"))
+BLENDER_BIN = os.environ.get("PROTOTYPE_BLENDER", shutil.which("blender") or os.path.join(EXPORT_ROOT, "tools", "blender-4.5.3-linux-x64", "blender"))
 MAX_CELL_BYTES = 64 * 1024 * 1024
 
 class PreviewBudgetError(ValueError):
@@ -165,6 +237,19 @@ def _shared_texture_index(path, mtime_ns, size):
 
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "entities"))
+    import fig_timeline
+    import actor_state_runtime
+    from alex_controller_runtime import AlexController
+except Exception:
+    fig_timeline = None
+    actor_state_runtime = None
+    AlexController = None
+
+ALEX_SIM_LOCK = threading.RLock()
+ALEX_SIMULATORS = {}
+
 # The git repo this server itself lives in -- used by /api/self_update to
 # `git pull` and by /api/health to report the currently-running commit, so
 # a remote collaborator can push a fix and confirm it's actually live
@@ -356,12 +441,45 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_entities(qs)
         if parsed.path == "/api/entity_mesh":
             return self._handle_entity_mesh(qs)
+        if parsed.path == "/api/move_timeline":
+            return self._handle_move_timeline(qs)
+        if parsed.path == "/api/audio_event":
+            return self._handle_audio_event(qs)
+        if parsed.path == "/api/fx_texture":
+            return self._handle_fx_texture(qs)
+        if parsed.path == "/api/audio_banks":
+            return self._handle_audio_banks(qs)
+        if parsed.path == "/api/audio_bank":
+            return self._handle_audio_bank(qs)
+        if parsed.path == "/api/input_moves":
+            return self._handle_input_moves(qs)
+        if parsed.path == "/api/condition_vocab":
+            return self._handle_condition_vocab(qs)
+        if parsed.path == "/api/move_graph":
+            return self._handle_move_graph(qs)
+        if parsed.path == "/api/player_actor_manifest":
+            return self._handle_player_actor_manifest(qs)
+        if parsed.path == "/api/state_owner_ir":
+            return self._handle_state_owner_ir(qs)
+        if parsed.path == "/api/alex_simulator":
+            return self._handle_alex_simulator_get(qs)
+        if parsed.path == "/api/export_asset":
+            return self._handle_export_asset(qs)
+        if parsed.path == "/api/export_loaded_cells":
+            return self._handle_export_loaded_cells(qs)
+        if parsed.path == "/api/export_entity":
+            return self._handle_export_entity(qs)
+        if parsed.path == "/api/export_job":
+            return self._handle_export_job(qs)
         if parsed.path == "/api/health":
             return self._send_json({
                 "ok": True,
                 "root": self.root_dir,
                 "git_commit": _git_commit(),
                 "pid": os.getpid(),
+                "export_root": EXPORT_ROOT,
+                "blender": BLENDER_BIN,
+                "blender_available": os.path.isfile(BLENDER_BIN),
             })
 
         # static file serving (frontend)
@@ -371,7 +489,55 @@ class Handler(http.server.BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/api/self_update":
             return self._handle_self_update()
+        if parsed.path == "/api/alex_simulator":
+            return self._handle_alex_simulator_post()
+        if parsed.path == "/api/export_entities_batch":
+            return self._handle_export_entities_batch()
         return self._send_error_json(f"not found: {parsed.path}", 404)
+
+    def _alex_simulator(self, session="default", reset=False):
+        if AlexController is None:
+            raise RuntimeError("Alex simulator runtime unavailable")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,48}", session):
+            raise ValueError("invalid session")
+        with ALEX_SIM_LOCK:
+            if reset or session not in ALEX_SIMULATORS:
+                manifest = os.path.join(REPO_DIR, "audit", "player-actor-manifest-alex.json")
+                ALEX_SIMULATORS[session] = AlexController(self.root_dir, manifest)
+            return ALEX_SIMULATORS[session]
+
+    def _handle_alex_simulator_get(self, qs):
+        try:
+            session = qs.get("session", ["default"])[0]
+            sim = self._alex_simulator(session)
+            with ALEX_SIM_LOCK:
+                return self._send_json(sim.snapshot())
+        except (ValueError, RuntimeError, KeyError, OSError) as exc:
+            return self._send_error_json(str(exc), 422)
+
+    def _handle_alex_simulator_post(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length < 0 or length > 65536:
+                return self._send_error_json("request body too large", 413)
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            session = str(payload.get("session", "default"))
+            action = payload.get("action", "snapshot")
+            with ALEX_SIM_LOCK:
+                sim = self._alex_simulator(session, action == "reset")
+                if action == "switch_power": sim.switch_power(str(payload["name"]))
+                elif action == "attack_down": sim.attack_down(str(payload.get("button", "Attack")))
+                elif action == "attack_up": sim.attack_up(str(payload.get("button", "Attack")))
+                elif action == "action_e": sim.action_e(bool(payload.get("down", True)))
+                elif action == "jump_down": sim.jump_down()
+                elif action == "jump_up": sim.jump_up()
+                elif action == "move": sim.set_move_keys(set(payload.get("keys", [])))
+                elif action == "world_context": sim.set_world_context(**dict(payload.get("context", {})))
+                elif action == "tick": sim.tick(max(0.0, min(float(payload.get("dt", 0)), 0.25)))
+                elif action not in ("snapshot", "reset"): raise ValueError("unknown action")
+                return self._send_json(sim.snapshot())
+        except (ValueError, RuntimeError, KeyError, TypeError, OSError, json.JSONDecodeError) as exc:
+            return self._send_error_json(str(exc), 422)
 
     # Special exit code used to signal "please relaunch me" to a wrapping
     # shell loop (run_viewer.sh), as opposed to a real exit (Ctrl+C, crash,
@@ -1162,6 +1328,181 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "chunks": chunks,
         })
 
+    def _handle_move_timeline(self, qs):
+        """FIG move timeline for one animation name (byte-verified grammar).
+
+        Returns every FIG tracks-group that references the animation, with its
+        raw stage frame window and the raw event times (sound/spawn/execute/
+        hit/cameraShake/motionState). Nothing is interpolated or invented;
+        see tools/entities/fig_timeline.py for the field provenance.
+        """
+        if fig_timeline is None:
+            return self._send_error_json("fig_timeline module unavailable", 503)
+        anim = qs.get("anim", [None])[0]
+        if not anim:
+            return self._send_error_json("missing anim parameter", 400)
+        try:
+            data = fig_timeline.build_timeline(self.root_dir, anim)
+            return self._send_json(data)
+        except Exception as exc:
+            return self._send_error_json(f"move_timeline: {exc}", 500)
+
+    def _handle_audio_event(self, qs):
+        """Decode one audio event (FIG sound reference = Patch name, or a raw
+        AudioFile name) from the Alex audio banks to a mono PCM16 WAV.
+
+        RADP codec layout matches vgmstream decode_rad_ima_mono; the Patch ->
+        files edge uses the exact u32(5)+files\x00+count list already audited.
+        variant selects among the Patch file list (default 0).
+        """
+        if fig_timeline is None:
+            return self._send_error_json("fig_timeline module unavailable", 503)
+        event = qs.get("event", [None])[0]
+        if not event:
+            return self._send_error_json("missing event parameter", 400)
+        try:
+            variant = int(qs.get("variant", ["0"])[0])
+        except ValueError:
+            variant = 0
+        bank_hint = qs.get("bank", [None])[0]
+        try:
+            if bank_hint:
+                fig_timeline._bank_data(self.root_dir, bank_hint)
+            got = fig_timeline.decode_audio_event(self.root_dir, event, variant)
+        except Exception as exc:
+            return self._send_error_json(f"audio_event: {exc}", 500)
+        if got is None:
+            return self._send_error_json(f"audio event not found: {event}", 404)
+        rate, pcm, source = got
+        import io
+        import wave as _wave
+        buf = io.BytesIO()
+        with _wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(pcm)
+        body = buf.getvalue()
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Audio-Source", source)
+        self.send_header("Cache-Control", "max-age=3600")
+        self.end_headers()
+        self.wfile.write(body)
+        return None
+
+    def _handle_fx_texture(self, qs):
+        """Serve a motion-trail definition texture as PNG.
+
+        name = trail definition object (e.g. motionTrail007). The chain
+        0x11015 shader -> texture name -> 0x19000 embedded DDS lives in
+        startup_effects.p3d and is decoded (DXT1/DXT5, top mip) server-side.
+        Response headers carry the blend template and texture provenance.
+        """
+        if fig_timeline is None:
+            return self._send_error_json("fig_timeline module unavailable", 503)
+        name = qs.get("name", [None])[0]
+        if not name:
+            return self._send_error_json("missing name parameter", 400)
+        try:
+            got = fig_timeline.get_fx_texture_png(self.root_dir, name)
+        except Exception as exc:
+            return self._send_error_json(f"fx_texture: {exc}", 500)
+        if got is None:
+            return self._send_error_json(f"trail definition not found: {name}", 404)
+        png, meta = got
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(png)))
+        self.send_header("X-Fx-Template", str(meta.get("template")))
+        self.send_header("X-Fx-Texture", str(meta.get("texture")))
+        self.send_header("Cache-Control", "max-age=3600")
+        self.end_headers()
+        self.wfile.write(png)
+        return None
+
+    def _handle_audio_banks(self, qs):
+        """List top-level sfx banks in 00audio.rcf (dialogue summarised)."""
+        if fig_timeline is None:
+            return self._send_error_json("fig_timeline module unavailable", 503)
+        try:
+            return self._send_json(fig_timeline.list_audio_banks(self.root_dir))
+        except Exception as exc:
+            return self._send_error_json(f"audio_banks: {exc}", 500)
+
+    def _handle_audio_bank(self, qs):
+        """Patch groups + loose AudioFiles of one bank, with RADP durations."""
+        if fig_timeline is None:
+            return self._send_error_json("fig_timeline module unavailable", 503)
+        bank = qs.get("bank", [None])[0]
+        if not bank:
+            return self._send_error_json("missing bank parameter", 400)
+        try:
+            return self._send_json(fig_timeline.list_bank_contents(self.root_dir, bank))
+        except Exception as exc:
+            return self._send_error_json(f"audio_bank: {exc}", 500)
+
+    def _handle_input_moves(self, qs):
+        """Input-condition move list of one FIG block (mouse simulation)."""
+        if fig_timeline is None:
+            return self._send_error_json("fig_timeline module unavailable", 503)
+        block = qs.get("block", [None])[0]
+        if not block:
+            return self._send_error_json("missing block parameter", 400)
+        try:
+            return self._send_json(fig_timeline.build_input_moves(self.root_dir, block))
+        except Exception as exc:
+            return self._send_error_json(f"input_moves: {exc}", 500)
+
+    def _handle_condition_vocab(self, qs):
+        """Full census of FIG condition kinds per block (foundation audit)."""
+        if fig_timeline is None:
+            return self._send_error_json("fig_timeline module unavailable", 503)
+        try:
+            return self._send_json(fig_timeline.condition_vocab(self.root_dir))
+        except Exception as exc:
+            return self._send_error_json(f"condition_vocab: {exc}", 500)
+
+    def _handle_state_owner_ir(self, qs):
+        """Ownership-first FIG subtree for simulator archaeology; not executable."""
+        if actor_state_runtime is None:
+            return self._send_error_json("actor_state_runtime module unavailable", 503)
+        block = qs.get("block", [None])[0]
+        owner = qs.get("owner", [None])[0]
+        if not block or owner is None:
+            return self._send_error_json("missing block/owner parameter", 400)
+        try:
+            return self._send_json(actor_state_runtime.build_owner_ir(self.root_dir, block, int(owner)))
+        except Exception as exc:
+            return self._send_error_json(f"state_owner_ir: {exc}", 500)
+
+    def _handle_player_actor_manifest(self, qs):
+        """Canonical state-first actor manifest for tooling/Unity handoff."""
+        actor = qs.get("actor", ["alex"])[0].lower()
+        if actor != "alex":
+            return self._send_error_json("only the audited alex manifest exists", 404)
+        path = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "audit", "player-actor-manifest-alex.json"))
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                return self._send_json(json.load(handle))
+        except Exception as exc:
+            return self._send_error_json(f"player_actor_manifest: {exc}", 500)
+
+    def _handle_move_graph(self, qs):
+        """Stage graph (frame windows + conditions + events) of one move bank."""
+        if fig_timeline is None:
+            return self._send_error_json("fig_timeline module unavailable", 503)
+        block = qs.get("block", [None])[0]
+        bank = qs.get("bank", [None])[0]
+        if not block or bank is None:
+            return self._send_error_json("missing block/bank parameter", 400)
+        try:
+            data = fig_timeline.build_move_graph(self.root_dir, block, int(bank))
+            return self._send_json(data)
+        except Exception as exc:
+            return self._send_error_json(f"move_graph: {exc}", 500)
+
     def _handle_entities(self, qs):
         """Return the 4-category shelf of all entities in art.rcf."""
         if build_entity_catalog is None:
@@ -1178,7 +1519,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _handle_entity_mesh(self, qs):
         """Return 3D geometry, UVs, textures and skeleton for a specific entity."""
-        if decode_entity_meshes is None:
+        if decode_entity_meshes is None or extract_entity_skeletons is None:
             return self._send_error_json("entity_decoder module unavailable", 503)
         art_path = qs.get("path", [None])[0] or os.path.join(self.root_dir, "art.rcf")
         entry = qs.get("entry", [None])[0]
@@ -1187,8 +1528,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send_error_json("missing ?entry=", 400)
         try:
             target = os.path.realpath(self._safe_resolve(art_path))
+            stat = os.stat(target)
             data = _read_preview_entry(target, entry)
-            result = decode_entity_meshes(data, shape_filter=shape)
+            external_skeletons = _explicit_entity_skeleton_donors(
+                target, stat.st_mtime_ns, stat.st_size, entry)
+            result = decode_entity_meshes(
+                data, shape_filter=shape, external_skeletons=external_skeletons)
             return self._send_json(result)
         except Exception as exc:
             return self._send_error_json(f"Entity mesh: {exc}", 500)
@@ -1269,6 +1614,277 @@ class Handler(http.server.BaseHTTPRequestHandler):
         finally:
             CELL_PREVIEW_LOCK.release()
 
+    def _send_attachment(self, path, download_name, content_type="application/octet-stream"):
+        if not os.path.isfile(path):
+            return self._send_error_json("导出文件尚未生成", 404)
+        size = os.path.getsize(path)
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(size))
+        self.send_header("Content-Disposition", f'attachment; filename="{download_name}"')
+        self.send_header("Cache-Control", "private, no-store")
+        self.end_headers()
+        with open(path, "rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+
+    def _handle_export_asset(self, qs):
+        name = qs.get("name", [""])[0]
+        base = EXPORT_ROOT
+        assets = {
+            "alex-fbx": (f"{base}/gltf/alex/alex-FBX.zip", "prototype-alex-FBX.zip", "application/zip"),
+            "alex-report": (f"{base}/gltf/alex/export-report.json", "prototype-alex-export-report.json", "application/json"),
+            "audio-summary-json": (f"{base}/audio_wav/summary.json", "prototype-audio-summary.json", "application/json"),
+            "audio-summary-csv": (f"{base}/audio_wav/summary.csv", "prototype-audio-summary.csv", "text/csv"),
+            "audio-manifest": (f"{base}/audio_wav/manifest.jsonl", "prototype-audio-manifest.jsonl", "application/x-ndjson"),
+        }
+        item = assets.get(name)
+        if item is None:
+            return self._send_error_json("未知导出资源", 404)
+        return self._send_attachment(*item)
+
+    def _safe_export_dir(self, requested):
+        root = EXPORT_ROOT
+        candidate = os.path.realpath(requested if os.path.isabs(requested) else os.path.join(root, requested))
+        if os.path.commonpath([root, candidate]) != root:
+            raise PermissionError(f"导出路径必须位于 {EXPORT_ROOT} 内")
+        os.makedirs(candidate, exist_ok=True)
+        return candidate
+
+    def _handle_export_job(self, qs):
+        job_id = qs.get("id", [""])[0]
+        with EXPORT_JOBS_LOCK:
+            job = EXPORT_JOBS.get(job_id)
+            if job is None:
+                return self._send_error_json("导出任务不存在", 404)
+            snapshot = json.loads(json.dumps(job, ensure_ascii=False))
+        return self._send_json(snapshot)
+
+    def _handle_export_entities_batch(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 1024 * 1024:
+                return self._send_error_json("批量导出请求为空或过大", 400)
+            payload = json.loads(self.rfile.read(length))
+            entries = payload.get("entries")
+            requested_dir = payload.get("output_dir", "")
+            overwrite = bool(payload.get("overwrite", False))
+            if not isinstance(entries, list) or not 1 <= len(entries) <= 1000:
+                return self._send_error_json("entries 必须包含 1..1000 个实体", 400)
+            if not requested_dir:
+                return self._send_error_json("批量导出必须指定 output_dir", 400)
+            output_dir = self._safe_export_dir(requested_dir)
+            clean_entries = []
+            for item in entries:
+                if not isinstance(item, dict):
+                    raise ValueError("实体记录必须是对象")
+                entry = item.get("entry", "")
+                name = item.get("name", "")
+                if not entry.startswith("\\") or len(entry) > 512:
+                    raise ValueError(f"非法实体 entry: {entry!r}")
+                clean_name = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")[:80] or hashlib.sha256(entry.encode()).hexdigest()[:12]
+                clean_entries.append({"entry": entry, "name": clean_name})
+        except (ValueError, TypeError, json.JSONDecodeError, PermissionError) as exc:
+            return self._send_error_json(str(exc), 400)
+        if not os.path.isfile(BLENDER_BIN):
+            return self._send_error_json(f"找不到 Blender：{BLENDER_BIN}；请设置 PROTOTYPE_BLENDER", 503)
+        if not EXPORT_LOCK.acquire(blocking=False):
+            return self._send_error_json("另一个导出任务正在运行", 429)
+        job_id = uuid.uuid4().hex[:16]
+        job = {"id": job_id, "type": "entities", "status": "queued", "output_dir": output_dir,
+               "total": len(clean_entries), "completed": 0, "current": None, "results": [], "errors": []}
+        with EXPORT_JOBS_LOCK:
+            EXPORT_JOBS[job_id] = job
+        port = self.server.server_address[1]
+        repo = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
+        def worker():
+            staging_root = os.path.join(EXPORT_ROOT, ".batch-staging", job_id)
+            try:
+                with EXPORT_JOBS_LOCK: job["status"] = "running"
+                for index, item in enumerate(clean_entries):
+                    try:
+                        name, entry = item["name"], item["entry"]
+                        with EXPORT_JOBS_LOCK: job["current"] = name
+                        digest = hashlib.sha256(entry.encode("utf-8")).hexdigest()[:10]
+                        target = os.path.join(output_dir, f"{name}-{digest}")
+                        if os.path.exists(target) and not overwrite:
+                            with EXPORT_JOBS_LOCK:
+                                job["errors"].append({"name": name, "entry": entry, "error": "目标已存在；未启用覆盖"})
+                                job["completed"] = index + 1
+                            continue
+                        stage = os.path.join(staging_root, digest)
+                        shutil.rmtree(stage, ignore_errors=True); os.makedirs(stage, exist_ok=True)
+                        exporter = os.path.join(repo, "tools", "entities", "export_entity_gltf.py")
+                        converter = os.path.join(repo, "tools", "entities", "convert_glb_to_fbx.py")
+                        blender = BLENDER_BIN
+                        gltf_run = subprocess.run([sys.executable, exporter, "--server", f"http://127.0.0.1:{port}",
+                                                   "--entry", entry, "--output", stage, "--name", name],
+                                                  capture_output=True, text=True, timeout=1800)
+                        if gltf_run.returncode:
+                            raise RuntimeError((gltf_run.stderr or gltf_run.stdout)[-2000:])
+                        glb, fbx = os.path.join(stage, name + ".glb"), os.path.join(stage, name + ".fbx")
+                        fbx_run = subprocess.run([blender, "--background", "--python", converter, "--", glb, fbx],
+                                                 capture_output=True, text=True, timeout=1800)
+                        if fbx_run.returncode or not os.path.isfile(fbx):
+                            raise RuntimeError((fbx_run.stderr or fbx_run.stdout)[-4000:])
+                        shutil.rmtree(target, ignore_errors=True); os.makedirs(target, exist_ok=True)
+                        shutil.copy2(fbx, os.path.join(target, name + ".fbx"))
+                        conversion = json.load(open(fbx + ".conversion.json", encoding="utf-8"))
+                        for texture_name in conversion.get("textures", []):
+                            source_texture = os.path.join(stage, os.path.basename(texture_name))
+                            if os.path.isfile(source_texture): shutil.copy2(source_texture, os.path.join(target, os.path.basename(texture_name)))
+                        with EXPORT_JOBS_LOCK:
+                            job["results"].append({"name": name, "entry": entry, "path": target,
+                                                   "fbx_bytes": os.path.getsize(fbx), "source_actions": max(0, len(conversion.get("actions", [])) - 1),
+                                                   "textures": len(conversion.get("textures", []))})
+                            job["completed"] = index + 1
+                    except Exception as item_exc:
+                        with EXPORT_JOBS_LOCK:
+                            job["errors"].append({"name": item.get("name"), "entry": item.get("entry"),
+                                                   "error": f"{type(item_exc).__name__}: {item_exc}"})
+                            job["completed"] = index + 1
+                manifest = os.path.join(output_dir, "batch-export-manifest.json")
+                with EXPORT_JOBS_LOCK:
+                    job["status"] = "completed" if not job["errors"] else "completed_with_errors"
+                    job["current"] = None
+                    with open(manifest, "w", encoding="utf-8") as handle: json.dump(job, handle, ensure_ascii=False, indent=2)
+            except Exception as exc:
+                with EXPORT_JOBS_LOCK:
+                    job["status"] = "failed"; job["current"] = None
+                    job["errors"].append({"error": f"{type(exc).__name__}: {exc}"})
+            finally:
+                shutil.rmtree(staging_root, ignore_errors=True)
+                EXPORT_LOCK.release()
+        threading.Thread(target=worker, name=f"fbx-export-{job_id}", daemon=True).start()
+        return self._send_json({"job_id": job_id, "status": "queued", "output_dir": output_dir}, 202)
+
+    def _handle_export_entity(self, qs):
+        entry = qs.get("entry", [""])[0]
+        requested_name = qs.get("name", [""])[0]
+        if not entry or len(entry) > 512 or not entry.startswith("\\"):
+            return self._send_error_json("缺少或非法的实体 entry", 400)
+        if not os.path.isfile(BLENDER_BIN):
+            return self._send_error_json(f"找不到 Blender：{BLENDER_BIN}；请设置 PROTOTYPE_BLENDER", 503)
+        if not EXPORT_LOCK.acquire(blocking=False):
+            return self._send_error_json("另一个导出任务正在运行", 429)
+        try:
+            digest = hashlib.sha256(entry.encode("utf-8")).hexdigest()[:16]
+            clean_name = re.sub(r"[^A-Za-z0-9._-]+", "_", requested_name).strip("._")[:80] or "prototype-entity"
+            output = os.path.join(EXPORT_ROOT, "gltf", "entities", digest)
+            glb = os.path.join(output, f"{clean_name}.glb")
+            tool = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "tools", "entities", "export_entity_gltf.py"))
+            command = [sys.executable, tool, "--server", "http://127.0.0.1:8421", "--entry", entry,
+                       "--output", output, "--name", clean_name]
+            result = subprocess.run(command, capture_output=True, text=True, timeout=1800)
+            if result.returncode:
+                detail = (result.stderr or result.stdout or "实体导出器失败")[-2000:]
+                return self._send_error_json(detail, 500)
+            fbx = os.path.join(output, f"{clean_name}.fbx")
+            blender = BLENDER_BIN
+            converter = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "tools", "entities", "convert_glb_to_fbx.py"))
+            converted = subprocess.run([blender, "--background", "--python", converter, "--", glb, fbx],
+                                       capture_output=True, text=True, timeout=1800)
+            if converted.returncode or not os.path.isfile(fbx):
+                detail = (converted.stderr or converted.stdout or "FBX 转换失败")[-4000:]
+                return self._send_error_json(detail, 500)
+            package = os.path.join(output, f"{clean_name}-FBX.zip")
+            with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_STORED) as archive:
+                archive.write(fbx, f"{clean_name}.fbx")
+                conversion_report = fbx + ".conversion.json"
+                if os.path.isfile(conversion_report):
+                    with open(conversion_report, "r", encoding="utf-8") as handle:
+                        texture_names = json.load(handle).get("textures", [])
+                    for texture_name in texture_names:
+                        texture_path = os.path.join(output, os.path.basename(texture_name))
+                        if os.path.isfile(texture_path):
+                            archive.write(texture_path, os.path.basename(texture_name))
+            return self._send_attachment(package, f"{clean_name}-FBX.zip", "application/zip")
+        except subprocess.TimeoutExpired:
+            return self._send_error_json("实体导出超过 30 分钟", 504)
+        finally:
+            EXPORT_LOCK.release()
+
+    def _handle_export_loaded_cells(self, qs):
+        raw_cells = qs.get("cells", [""])[0]
+        archive = qs.get("path", [""])[0]
+        shared = qs.get("shared_path", [""])[0]
+        requested_output = qs.get("output_path", [""])[0]
+        if not re.fullmatch(r"\d{1,3}(?:,\d{1,3})*", raw_cells):
+            return self._send_error_json("cells 必须是逗号分隔的 0..259 编号", 400)
+        cells = sorted(set(int(value) for value in raw_cells.split(",")))
+        if not cells or any(value > 259 for value in cells):
+            return self._send_error_json("Cell 编号超出 0..259", 400)
+        try:
+            archive = self._safe_resolve(archive)
+            if shared:
+                shared = self._safe_resolve(shared)
+        except PermissionError as exc:
+            return self._send_error_json(str(exc), 403)
+        if not os.path.isfile(archive) or (shared and not os.path.isfile(shared)):
+            return self._send_error_json("归档路径不存在", 404)
+        if not os.path.isfile(BLENDER_BIN):
+            return self._send_error_json(f"找不到 Blender：{BLENDER_BIN}；请设置 PROTOTYPE_BLENDER", 503)
+        if not EXPORT_LOCK.acquire(blocking=False):
+            return self._send_error_json("另一个导出任务正在运行", 429)
+        try:
+            output = os.path.join(EXPORT_ROOT, "gltf", "web-loaded-cells")
+            shutil.rmtree(output, ignore_errors=True)
+            os.makedirs(output, exist_ok=True)
+            tool = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "tools", "entities", "export_loaded_cells_gltf.py"))
+            command = [sys.executable, tool, "--server", "http://127.0.0.1:8421", "--archive", archive,
+                       "--cells", ",".join(map(str, cells)), "--output", output, "--name", "loaded-manhattan-cells"]
+            if shared:
+                command.extend(["--shared", shared])
+            result = subprocess.run(command, capture_output=True, text=True, timeout=1800)
+            if result.returncode:
+                detail = (result.stderr or result.stdout or "导出器失败")[-2000:]
+                return self._send_error_json(detail, 500)
+            glb = os.path.join(output, "loaded-manhattan-cells.glb")
+            fbx = os.path.join(output, "loaded-manhattan-cells.fbx")
+            blender = BLENDER_BIN
+            converter = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "tools", "entities", "convert_glb_to_fbx.py"))
+            converted = subprocess.run([blender, "--background", "--python", converter, "--", glb, fbx],
+                                       capture_output=True, text=True, timeout=1800)
+            if converted.returncode or not os.path.isfile(fbx):
+                detail = (converted.stderr or converted.stdout or "FBX 转换失败")[-4000:]
+                return self._send_error_json(detail, 500)
+            package = os.path.join(output, "loaded-manhattan-cells-FBX.zip")
+            with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_STORED) as archive:
+                archive.write(fbx, "loaded-manhattan-cells.fbx")
+                conversion_report = fbx + ".conversion.json"
+                if os.path.isfile(conversion_report):
+                    with open(conversion_report, "r", encoding="utf-8") as handle:
+                        texture_names = json.load(handle).get("textures", [])
+                    for texture_name in texture_names:
+                        texture_path = os.path.join(output, os.path.basename(texture_name))
+                        if os.path.isfile(texture_path):
+                            archive.write(texture_path, os.path.basename(texture_name))
+            if requested_output:
+                try:
+                    destination = self._safe_export_dir(requested_output)
+                except PermissionError as exc:
+                    return self._send_error_json(str(exc), 400)
+                shutil.copy2(fbx, os.path.join(destination, "loaded-manhattan-cells.fbx"))
+                conversion_report = fbx + ".conversion.json"
+                texture_count = 0
+                if os.path.isfile(conversion_report):
+                    with open(conversion_report, "r", encoding="utf-8") as handle:
+                        texture_names = json.load(handle).get("textures", [])
+                    for texture_name in texture_names:
+                        texture_path = os.path.join(output, os.path.basename(texture_name))
+                        if os.path.isfile(texture_path):
+                            shutil.copy2(texture_path, os.path.join(destination, os.path.basename(texture_name))); texture_count += 1
+                return self._send_json({"status":"completed","output_dir":destination,"cells":cells,
+                                        "fbx":"loaded-manhattan-cells.fbx","textures":texture_count})
+            return self._send_attachment(package, "loaded-manhattan-cells-FBX.zip", "application/zip")
+        except subprocess.TimeoutExpired:
+            return self._send_error_json("地图导出超过 30 分钟", 504)
+        finally:
+            EXPORT_LOCK.release()
+
     def _handle_static(self, url_path):
         if url_path == "/":
             url_path = "/index.html"
@@ -1286,6 +1902,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(size))
+        # HTML entry points must never be served from browser cache, or the
+        # ?v= version bump on module URLs cannot take effect after deploys.
+        # Versioned static assets stay cacheable.
+        if target.endswith(".html"):
+            self.send_header("Cache-Control", "no-cache, must-revalidate")
         self.end_headers()
         with open(target, "rb") as f:
             self.wfile.write(f.read())

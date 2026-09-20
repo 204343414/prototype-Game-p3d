@@ -95,6 +95,7 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
     byId('map-progress-text').textContent = `${states.size}/${entries.length} 已处理 · ${loaded.size} 已加载 · ${empty} 无主体 · ${errors} 失败`;
     byId('map-frame').disabled = !loaded.size;
     byId('map-clear').disabled = busy || !states.size;
+    byId('map-export-fbx').disabled = busy || !loaded.size;
     byId('map-all').disabled = busy || !entries.length;
     byId('map-stop').disabled = !busy;
   }
@@ -146,7 +147,7 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
   function setBusy(value) {
     busy = value;
     archive.disabled = value;
-    for (const id of ['map-list-load', 'map-append', 'map-materials', 'map-shared']) byId(id).disabled = value;
+    for (const id of ['map-list-load', 'map-append', 'map-materials', 'map-shared', 'map-export-fbx']) byId(id).disabled = value;
     renderList();
     updateSummary();
   }
@@ -452,6 +453,22 @@ export function createMapWorkbench({ scene, camera, controls, renderer }) {
     const link = document.createElement('a');
     link.href = url; link.download = 'manhattan-load-report.json'; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  byId('map-export-fbx').onclick = async () => {
+    if (!loaded.size || !source) return;
+    const cells = [...loaded.keys()].sort((a, b) => a - b).join(',');
+    const outputPath = byId('map-export-path').value.trim();
+    const query = new URLSearchParams({ cells, path: source, shared_path: sessionShared || '', output_path: outputPath });
+    status.textContent = `正在服务器生成 ${loaded.size} 个已加载 Cell 的 FBX；请勿重复点击。`;
+    if (!outputPath) {
+      const link = document.createElement('a');link.href='/api/export_loaded_cells?'+query;link.download='loaded-manhattan-cells-FBX.zip';
+      document.body.appendChild(link);link.click();link.remove();return;
+    }
+    try {
+      const response=await fetch('/api/export_loaded_cells?'+query);const result=await response.json();
+      if(!response.ok)throw new Error(result.error||`HTTP ${response.status}`);
+      status.textContent=`地图 FBX 已保存：${result.output_dir} · ${result.cells.length} Cells · ${result.textures} 张贴图`;
+    } catch(error) { status.textContent='地图 FBX 导出失败：'+error.message; }
   };
   updateSummary();
   return {

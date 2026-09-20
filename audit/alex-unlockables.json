@@ -1,0 +1,889 @@
+{
+  "schema": "prototype-alex-unlockable-profile/v1",
+  "profile": "all-decoded-alex-gates-enabled",
+  "claim_boundary": "Simulator coverage profile, not a claim about a particular save-game unlock state.",
+  "hashes": [
+    "0x00533d14f562aa0c",
+    "0x00533d14f562aa0e",
+    "0x00533d14f562aa0f",
+    "0x0094bee45f574a91",
+    "0x0117038b2e73b544",
+    "0x016b11808e8571bb",
+    "0x0ea6bf9575346bfe",
+    "0x14b27bb09bcfb74a",
+    "0x27de903261f98dad",
+    "0x2d0b5dc6156d3e10",
+    "0x38cdac4972b510fe",
+    "0x3a1c297f2cc51480",
+    "0x3f53f5084d8d17f7",
+    "0x40051ebb9e2e5d69",
+    "0x40a5fbb0d2f7a818",
+    "0x422c9dbd4c43bf1e",
+    "0x45d2df1a987b2137",
+    "0x478bafedf573e926",
+    "0x47ce68f5a83a3e16",
+    "0x48746d28f782d967",
+    "0x48fff153c90f5ab4",
+    "0x4efe2eb410128ed3",
+    "0x5006c5e02b6b312c",
+    "0x5089dbe857695af2",
+    "0x546937c26b1bdc38",
+    "0x558108cc05d65143",
+    "0x5c6012ba484c2a0e",
+    "0x5d7ebd26033a6817",
+    "0x5e17483fa1fad950",
+    "0x64c649ecf1e84074",
+    "0x6bbf885b611f0a0b",
+    "0x6be31e4c56c96b00",
+    "0x73aeb2119d5a42a1",
+    "0x7599d1bcf4a0d865",
+    "0x79d1f829ab314431",
+    "0x7fdb97b44e6701b5",
+    "0x82704ba58f010e7e",
+    "0x83ef603cfdb1502c",
+    "0x97b73c96125456c9",
+    "0x9f546d9a59bc951e",
+    "0xa5ebdcc8908c8b60",
+    "0xa89665f29651e907",
+    "0xaaec7a441ee4dc12",
+    "0xb0c3bf254ef23864",
+    "0xb15bea56d326f766",
+    "0xb1d3e5e81df64c92",
+    "0xb3eac2adb6a7cfcf",
+    "0xb72ea89bf48e8dc9",
+    "0xc79149d24025bd72",
+    "0xcdb8f99476349d58",
+    "0xcdb8f99476349d59",
+    "0xcdb8f99476349d5b",
+    "0xcf81c8621e663432",
+    "0xd13ce8453ca8b28e",
+    "0xd4dc0fba8874508d",
+    "0xd6b9630ffb82dcee",
+    "0xd7bfd60e5927df9d",
+    "0xd8a0c1bef27df8fc",
+    "0xd8a4c4bdb18fd96d",
+    "0xdc072cf6817344e5",
+    "0xdd09a4cd0e17168f",
+    "0xde09f6e8c4bd9af7",
+    "0xdf971637eee7fb40",
+    "0xe51a0fefbfcae7f2",
+    "0xed687fad780c9ec3",
+    "0xf337033021fa400b",
+    "0xf3da50059c6960f8",
+    "0xfbc88be40bd37606",
+    "0xfc252df806c792fa",
+    "0xfca3b0bef4ce92d6"
+  ],
+  "occurrences": {
+    "0x48746d28f782d967": [
+      {
+        "block": "prototype",
+        "owner_offset": 2188,
+        "condition_offset": 2228
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 113372,
+        "condition_offset": 113456
+      }
+    ],
+    "0x0ea6bf9575346bfe": [
+      {
+        "block": "prototype",
+        "owner_offset": 7364,
+        "condition_offset": 7464
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 16952,
+        "condition_offset": 17052
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 249204,
+        "condition_offset": 249244
+      },
+      {
+        "block": "prototype_whipfist",
+        "owner_offset": 53160,
+        "condition_offset": 53204
+      },
+      {
+        "block": "prototype_whipfist",
+        "owner_offset": 53860,
+        "condition_offset": 53904
+      },
+      {
+        "block": "prototype_consume",
+        "owner_offset": 56,
+        "condition_offset": 156
+      },
+      {
+        "block": "prototype_consume",
+        "owner_offset": 201520,
+        "condition_offset": 201560
+      }
+    ],
+    "0x9f546d9a59bc951e": [
+      {
+        "block": "prototype",
+        "owner_offset": 42760,
+        "condition_offset": 42804
+      }
+    ],
+    "0xf3da50059c6960f8": [
+      {
+        "block": "prototype",
+        "owner_offset": 50604,
+        "condition_offset": 51136
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 58804,
+        "condition_offset": 59212
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 77040,
+        "condition_offset": 77388
+      },
+      {
+        "block": "prototype_air",
+        "owner_offset": 23484,
+        "condition_offset": 23832
+      },
+      {
+        "block": "prototype_air",
+        "owner_offset": 28616,
+        "condition_offset": 29148
+      },
+      {
+        "block": "prototype_air",
+        "owner_offset": 33116,
+        "condition_offset": 33648
+      },
+      {
+        "block": "prototype_sprint",
+        "owner_offset": 21664,
+        "condition_offset": 22192
+      },
+      {
+        "block": "prototype_sprint",
+        "owner_offset": 27696,
+        "condition_offset": 28224
+      },
+      {
+        "block": "prototype_sprint",
+        "owner_offset": 30336,
+        "condition_offset": 30684
+      }
+    ],
+    "0x7fdb97b44e6701b5": [
+      {
+        "block": "prototype",
+        "owner_offset": 50604,
+        "condition_offset": 51184
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 58804,
+        "condition_offset": 59260
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 60788,
+        "condition_offset": 60832
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 61472,
+        "condition_offset": 61516
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 62160,
+        "condition_offset": 62204
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 62848,
+        "condition_offset": 62892
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 63536,
+        "condition_offset": 63580
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 64228,
+        "condition_offset": 64272
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 64872,
+        "condition_offset": 64916
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 77040,
+        "condition_offset": 77436
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 78916,
+        "condition_offset": 78960
+      },
+      {
+        "block": "prototype_air",
+        "owner_offset": 23484,
+        "condition_offset": 23880
+      },
+      {
+        "block": "prototype_air",
+        "owner_offset": 26052,
+        "condition_offset": 26096
+      },
+      {
+        "block": "prototype_air",
+        "owner_offset": 28616,
+        "condition_offset": 29196
+      },
+      {
+        "block": "prototype_air",
+        "owner_offset": 33116,
+        "condition_offset": 33696
+      },
+      {
+        "block": "prototype_sprint",
+        "owner_offset": 21664,
+        "condition_offset": 22240
+      },
+      {
+        "block": "prototype_sprint",
+        "owner_offset": 27696,
+        "condition_offset": 28272
+      },
+      {
+        "block": "prototype_sprint",
+        "owner_offset": 30336,
+        "condition_offset": 30732
+      },
+      {
+        "block": "prototype_sprint",
+        "owner_offset": 32128,
+        "condition_offset": 32172
+      }
+    ],
+    "0xa89665f29651e907": [
+      {
+        "block": "prototype",
+        "owner_offset": 60556,
+        "condition_offset": 60744
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 61248,
+        "condition_offset": 61428
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 61932,
+        "condition_offset": 62116
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 62620,
+        "condition_offset": 62804
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 63308,
+        "condition_offset": 63492
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 63996,
+        "condition_offset": 64184
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 64688,
+        "condition_offset": 64828
+      }
+    ],
+    "0xf337033021fa400b": [
+      {
+        "block": "prototype",
+        "owner_offset": 104744,
+        "condition_offset": 104788
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 105612,
+        "condition_offset": 105652
+      },
+      {
+        "block": "prototype_air",
+        "owner_offset": 139836,
+        "condition_offset": 140008
+      },
+      {
+        "block": "prototype_wall",
+        "owner_offset": 11044,
+        "condition_offset": 11084
+      }
+    ],
+    "0x40051ebb9e2e5d69": [
+      {
+        "block": "prototype",
+        "owner_offset": 202792,
+        "condition_offset": 202892
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 261068,
+        "condition_offset": 261136
+      }
+    ],
+    "0x4efe2eb410128ed3": [
+      {
+        "block": "prototype",
+        "owner_offset": 204464,
+        "condition_offset": 204504
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 263904,
+        "condition_offset": 263944
+      }
+    ],
+    "0x6be31e4c56c96b00": [
+      {
+        "block": "prototype",
+        "owner_offset": 207912,
+        "condition_offset": 207956
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 264644,
+        "condition_offset": 264688
+      }
+    ],
+    "0x73aeb2119d5a42a1": [
+      {
+        "block": "prototype",
+        "owner_offset": 209516,
+        "condition_offset": 209556
+      },
+      {
+        "block": "prototype",
+        "owner_offset": 266888,
+        "condition_offset": 266928
+      }
+    ],
+    "0x558108cc05d65143": [
+      {
+        "block": "prototype",
+        "owner_offset": 210696,
+        "condition_offset": 210736
+      }
+    ],
+    "0xde09f6e8c4bd9af7": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 568,
+        "condition_offset": 668
+      },
+      {
+        "block": "prototype_air",
+        "owner_offset": 14160,
+        "condition_offset": 14260
+      }
+    ],
+    "0xd8a0c1bef27df8fc": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 39716,
+        "condition_offset": 39816
+      }
+    ],
+    "0xd7bfd60e5927df9d": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 50884,
+        "condition_offset": 50928
+      }
+    ],
+    "0xb72ea89bf48e8dc9": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 55124,
+        "condition_offset": 55348
+      }
+    ],
+    "0x64c649ecf1e84074": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 61260,
+        "condition_offset": 61300
+      },
+      {
+        "block": "prototype_air",
+        "owner_offset": 69004,
+        "condition_offset": 69104
+      }
+    ],
+    "0x422c9dbd4c43bf1e": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 63804,
+        "condition_offset": 63940
+      }
+    ],
+    "0xb15bea56d326f766": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 82644,
+        "condition_offset": 82744
+      }
+    ],
+    "0x3a1c297f2cc51480": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 95504,
+        "condition_offset": 95608
+      }
+    ],
+    "0xa5ebdcc8908c8b60": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 100292,
+        "condition_offset": 100392
+      }
+    ],
+    "0xb1d3e5e81df64c92": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 100556,
+        "condition_offset": 100684
+      }
+    ],
+    "0x5089dbe857695af2": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 102720,
+        "condition_offset": 102828
+      }
+    ],
+    "0x546937c26b1bdc38": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 102720,
+        "condition_offset": 102956
+      }
+    ],
+    "0x7599d1bcf4a0d865": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 110100,
+        "condition_offset": 110972
+      }
+    ],
+    "0xcf81c8621e663432": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 116696,
+        "condition_offset": 116796
+      }
+    ],
+    "0xfca3b0bef4ce92d6": [
+      {
+        "block": "prototype_air",
+        "owner_offset": 144608,
+        "condition_offset": 144768
+      }
+    ],
+    "0x79d1f829ab314431": [
+      {
+        "block": "prototype_bare",
+        "owner_offset": 1616,
+        "condition_offset": 1748
+      },
+      {
+        "block": "prototype_bare",
+        "owner_offset": 5764,
+        "condition_offset": 6056
+      }
+    ],
+    "0x27de903261f98dad": [
+      {
+        "block": "prototype_bare",
+        "owner_offset": 35520,
+        "condition_offset": 35560
+      }
+    ],
+    "0x5006c5e02b6b312c": [
+      {
+        "block": "prototype_bare",
+        "owner_offset": 49100,
+        "condition_offset": 49140
+      }
+    ],
+    "0xd13ce8453ca8b28e": [
+      {
+        "block": "prototype_bare",
+        "owner_offset": 79748,
+        "condition_offset": 79788
+      }
+    ],
+    "0x0094bee45f574a91": [
+      {
+        "block": "prototype_blades",
+        "owner_offset": 104,
+        "condition_offset": 176
+      }
+    ],
+    "0x478bafedf573e926": [
+      {
+        "block": "prototype_blades",
+        "owner_offset": 6096,
+        "condition_offset": 6196
+      }
+    ],
+    "0xed687fad780c9ec3": [
+      {
+        "block": "prototype_blades",
+        "owner_offset": 33628,
+        "condition_offset": 33728
+      }
+    ],
+    "0x0117038b2e73b544": [
+      {
+        "block": "prototype_claws",
+        "owner_offset": 104,
+        "condition_offset": 144
+      }
+    ],
+    "0xd8a4c4bdb18fd96d": [
+      {
+        "block": "prototype_claws",
+        "owner_offset": 5020,
+        "condition_offset": 5120
+      }
+    ],
+    "0xe51a0fefbfcae7f2": [
+      {
+        "block": "prototype_claws",
+        "owner_offset": 11704,
+        "condition_offset": 11748
+      }
+    ],
+    "0x5e17483fa1fad950": [
+      {
+        "block": "prototype_claws",
+        "owner_offset": 12128,
+        "condition_offset": 12172
+      }
+    ],
+    "0xc79149d24025bd72": [
+      {
+        "block": "prototype_whipfist",
+        "owner_offset": 2976,
+        "condition_offset": 3080
+      },
+      {
+        "block": "prototype_whipfist",
+        "owner_offset": 42620,
+        "condition_offset": 42720
+      }
+    ],
+    "0x2d0b5dc6156d3e10": [
+      {
+        "block": "prototype_whipfist",
+        "owner_offset": 31152,
+        "condition_offset": 31252
+      }
+    ],
+    "0xaaec7a441ee4dc12": [
+      {
+        "block": "prototype_whipfist",
+        "owner_offset": 50464,
+        "condition_offset": 50592
+      },
+      {
+        "block": "prototype_whipfist",
+        "owner_offset": 50464,
+        "condition_offset": 50756
+      },
+      {
+        "block": "prototype_consume",
+        "owner_offset": 198160,
+        "condition_offset": 198204
+      },
+      {
+        "block": "prototype_consume",
+        "owner_offset": 198440,
+        "condition_offset": 198484
+      },
+      {
+        "block": "prototype_consume",
+        "owner_offset": 200656,
+        "condition_offset": 200700
+      },
+      {
+        "block": "prototype_consume",
+        "owner_offset": 200924,
+        "condition_offset": 200968
+      }
+    ],
+    "0x5c6012ba484c2a0e": [
+      {
+        "block": "prototype_whipfist",
+        "owner_offset": 51388,
+        "condition_offset": 51516
+      },
+      {
+        "block": "prototype_whipfist",
+        "owner_offset": 51388,
+        "condition_offset": 51736
+      },
+      {
+        "block": "prototype_consume",
+        "owner_offset": 197544,
+        "condition_offset": 197588
+      },
+      {
+        "block": "prototype_consume",
+        "owner_offset": 197824,
+        "condition_offset": 197868
+      },
+      {
+        "block": "prototype_consume",
+        "owner_offset": 200064,
+        "condition_offset": 200108
+      },
+      {
+        "block": "prototype_consume",
+        "owner_offset": 200332,
+        "condition_offset": 200376
+      }
+    ],
+    "0xb3eac2adb6a7cfcf": [
+      {
+        "block": "prototype_hammerfist",
+        "owner_offset": 232,
+        "condition_offset": 272
+      }
+    ],
+    "0x97b73c96125456c9": [
+      {
+        "block": "prototype_hammerfist",
+        "owner_offset": 14096,
+        "condition_offset": 14196
+      }
+    ],
+    "0x14b27bb09bcfb74a": [
+      {
+        "block": "prototype_hammerfist",
+        "owner_offset": 47424,
+        "condition_offset": 47524
+      }
+    ],
+    "0x38cdac4972b510fe": [
+      {
+        "block": "prototype_devastator",
+        "owner_offset": 376,
+        "condition_offset": 420
+      }
+    ],
+    "0xdf971637eee7fb40": [
+      {
+        "block": "prototype_devastator",
+        "owner_offset": 2404,
+        "condition_offset": 2508
+      }
+    ],
+    "0xdc072cf6817344e5": [
+      {
+        "block": "prototype_devastator",
+        "owner_offset": 16420,
+        "condition_offset": 16464
+      }
+    ],
+    "0x47ce68f5a83a3e16": [
+      {
+        "block": "prototype_devastator",
+        "owner_offset": 18280,
+        "condition_offset": 18384
+      }
+    ],
+    "0x82704ba58f010e7e": [
+      {
+        "block": "prototype_devastator",
+        "owner_offset": 32412,
+        "condition_offset": 32456
+      }
+    ],
+    "0xdd09a4cd0e17168f": [
+      {
+        "block": "prototype_devastator",
+        "owner_offset": 34468,
+        "condition_offset": 34572
+      }
+    ],
+    "0x83ef603cfdb1502c": [
+      {
+        "block": "prototype_devastator",
+        "owner_offset": 50496,
+        "condition_offset": 50540
+      }
+    ],
+    "0x40a5fbb0d2f7a818": [
+      {
+        "block": "prototype_devastator",
+        "owner_offset": 51964,
+        "condition_offset": 52068
+      }
+    ],
+    "0xd4dc0fba8874508d": [
+      {
+        "block": "prototype_devastator",
+        "owner_offset": 71916,
+        "condition_offset": 71960
+      }
+    ],
+    "0xd6b9630ffb82dcee": [
+      {
+        "block": "prototype_devastator",
+        "owner_offset": 73368,
+        "condition_offset": 73472
+      },
+      {
+        "block": "prototype_devastator",
+        "owner_offset": 74728,
+        "condition_offset": 74912
+      }
+    ],
+    "0xfbc88be40bd37606": [
+      {
+        "block": "prototype_devastator",
+        "owner_offset": 75228,
+        "condition_offset": 75272
+      }
+    ],
+    "0x45d2df1a987b2137": [
+      {
+        "block": "prototype_devastator",
+        "owner_offset": 76596,
+        "condition_offset": 76700
+      }
+    ],
+    "0x00533d14f562aa0e": [
+      {
+        "block": "prototype_firearm",
+        "owner_offset": 15288,
+        "condition_offset": 15332
+      }
+    ],
+    "0x00533d14f562aa0f": [
+      {
+        "block": "prototype_firearm",
+        "owner_offset": 15496,
+        "condition_offset": 15540
+      }
+    ],
+    "0x00533d14f562aa0c": [
+      {
+        "block": "prototype_firearm",
+        "owner_offset": 15704,
+        "condition_offset": 15748
+      }
+    ],
+    "0xcdb8f99476349d59": [
+      {
+        "block": "prototype_firearm",
+        "owner_offset": 16192,
+        "condition_offset": 16236
+      }
+    ],
+    "0xcdb8f99476349d58": [
+      {
+        "block": "prototype_firearm",
+        "owner_offset": 16400,
+        "condition_offset": 16444
+      }
+    ],
+    "0xcdb8f99476349d5b": [
+      {
+        "block": "prototype_firearm",
+        "owner_offset": 16608,
+        "condition_offset": 16652
+      }
+    ],
+    "0x48fff153c90f5ab4": [
+      {
+        "block": "prototype_jump",
+        "owner_offset": 4624,
+        "condition_offset": 4708
+      }
+    ],
+    "0xb0c3bf254ef23864": [
+      {
+        "block": "prototype_jump",
+        "owner_offset": 14620,
+        "condition_offset": 14768
+      }
+    ],
+    "0x6bbf885b611f0a0b": [
+      {
+        "block": "prototype_wall",
+        "owner_offset": 18040,
+        "condition_offset": 18084
+      },
+      {
+        "block": "prototype_sprint",
+        "owner_offset": 79844,
+        "condition_offset": 79888
+      },
+      {
+        "block": "prototype_sprint",
+        "owner_offset": 94640,
+        "condition_offset": 94680
+      }
+    ],
+    "0xfc252df806c792fa": [
+      {
+        "block": "prototype_wall",
+        "owner_offset": 48012,
+        "condition_offset": 48112
+      }
+    ],
+    "0x3f53f5084d8d17f7": [
+      {
+        "block": "prototype_sprint",
+        "owner_offset": 6836,
+        "condition_offset": 6876
+      }
+    ],
+    "0x5d7ebd26033a6817": [
+      {
+        "block": "prototype_sprint",
+        "owner_offset": 17900,
+        "condition_offset": 17940
+      }
+    ],
+    "0x016b11808e8571bb": [
+      {
+        "block": "prototype_sprint",
+        "owner_offset": 32908,
+        "condition_offset": 33008
+      },
+      {
+        "block": "prototype_sprint",
+        "owner_offset": 38712,
+        "condition_offset": 38816
+      }
+    ]
+  }
+}

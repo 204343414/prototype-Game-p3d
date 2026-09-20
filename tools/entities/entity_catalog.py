@@ -131,6 +131,7 @@ FRIENDLY_NAMES = {
     "bw_scientist_2008": "黑色守望主任科学家",
     "infected2_all": "二次感染变异人群",
     "infected_businessman_fat": "变异肥胖商人",
+    "PermanentCharactersPackage": "常驻剧情角色与任务装配包（按源 Skin 分组）",
 }
 
 
@@ -145,6 +146,14 @@ def classify_entry(name: str) -> str | None:
         return CATEGORY_VEHICLES
     if "/pedestrians/" in clean:
         return CATEGORY_PEDESTRIANS
+    # A package path is an actual asset-library boundary.  In particular,
+    # ``PermanentCharactersPackage`` was previously hidden merely because its
+    # directory happened to contain the word "characters"; that loses a
+    # renderable 39-geometry / 82-animation story package.  Mission-script
+    # ``\art\missions\...\characters.p3d.rz`` remains outside the shelf until
+    # a separate scene/actor reference chain is proven.
+    if "/packages/missions/" in clean and not any(k in clean for k in ("tank", "apc", "heli", "f45", "driller", "props", "tod", "fig", "effects")):
+        return CATEGORY_CHARACTERS
     if "/missions/" in clean and not any(k in clean for k in ("tank", "apc", "heli", "f45", "driller", "props", "tod", "fig", "effects", "characters")):
         return CATEGORY_CHARACTERS
     if clean == "/art/locations/manhattan/props.p3d.rz":

@@ -1,0 +1,2770 @@
+{
+  "schema": "prototype-player-actor-manifest/v1",
+  "claim_boundary": {
+    "exact": [
+      "art.rcf exact-name/hash lookup",
+      "RZ decode",
+      "P3D containment",
+      "14/14 META exact-end field framing",
+      "all string/numeric values",
+      "exact TOD object-name references",
+      "FIG consumptionName hash matches and locations"
+    ],
+    "provisional": [
+      "TransformationDescription field labels/order are mapped from contiguous DLL reflection vocabulary near proto::TransformationDescription; widths/order are exact, but registration-code xrefs remain required to promote labels to exact."
+    ],
+    "unknown": [
+      "bank arbitration",
+      "per-owner track scheduling",
+      "RenderBehaviour/component activation timing",
+      "Unity/Udon runtime mapping"
+    ]
+  },
+  "source": {
+    "archive": "art.rcf",
+    "entry": "\\art\\alex\\alex_tod.p3d.rz",
+    "entry_index": 207,
+    "entry_hash": "0x16742bf6",
+    "decoded_size": 36895,
+    "decoded_sha256": "383b26f83fcc87cf5146604dddd28219a520a33129ea6510484e1d36e9e9ed78"
+  },
+  "actor": {
+    "id": "alex",
+    "base_fig_block": "prototype",
+    "assembly_root": "GameObject(1):PrototypeTemplate",
+    "transformation_description_count": 14,
+    "transformations": [
+      {
+        "object_token": "proto::TransformationDescription(1):DisguiseTransformationDescription",
+        "object_offset": 26372,
+        "meta_offset": 26535,
+        "fields": {
+          "description_name": "Disguise",
+          "stream_package": "",
+          "drawable": "",
+          "body_template": "",
+          "body_grab_slot": "",
+          "physics_object": "",
+          "physics_object_factory": "AlexPhysicsFactory",
+          "supporting_limb_list_object": "AlexLimbs",
+          "power": "",
+          "faction": "",
+          "damage_multiplier": 1.0,
+          "health_damage_scale": 1.0,
+          "damage_attacker_amount": 0.0,
+          "hud_power": 12,
+          "override_left_arm_template": "",
+          "left_arm_needed": 0
+        },
+        "exact_string_framing": [
+          {
+            "field": "description_name",
+            "length_width": "u32",
+            "offset_in_meta_body": 0,
+            "value": "Disguise"
+          },
+          {
+            "field": "stream_package",
+            "length_width": "u8",
+            "offset_in_meta_body": 12,
+            "value": ""
+          },
+          {
+            "field": "drawable",
+            "length_width": "u32",
+            "offset_in_meta_body": 13,
+            "value": ""
+          },
+          {
+            "field": "body_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 17,
+            "value": ""
+          },
+          {
+            "field": "body_grab_slot",
+            "length_width": "u32",
+            "offset_in_meta_body": 21,
+            "value": ""
+          },
+          {
+            "field": "physics_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 25,
+            "value": ""
+          },
+          {
+            "field": "physics_object_factory",
+            "length_width": "u8",
+            "offset_in_meta_body": 26,
+            "value": "AlexPhysicsFactory"
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 45,
+            "value": "AlexLimbs"
+          },
+          {
+            "field": "power",
+            "length_width": "u8",
+            "offset_in_meta_body": 55,
+            "value": ""
+          },
+          {
+            "field": "faction",
+            "length_width": "u32",
+            "offset_in_meta_body": 56,
+            "value": ""
+          },
+          {
+            "field": "override_left_arm_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 76,
+            "value": ""
+          }
+        ],
+        "exact_tod_object_references": [
+          {
+            "field": "physics_object_factory",
+            "target_name": "AlexPhysicsFactory",
+            "targets": [
+              {
+                "class": "ravenphysics::SimplePhysicsObjectFactory",
+                "token": "ravenphysics::SimplePhysicsObjectFactory(1):AlexPhysicsFactory",
+                "offset": 26089
+              }
+            ]
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "target_name": "AlexLimbs",
+            "targets": [
+              {
+                "class": "SupportingLimbDefinitionList",
+                "token": "SupportingLimbDefinitionList(1):AlexLimbs",
+                "offset": 20665
+              }
+            ]
+          }
+        ],
+        "fig_consumption_name_hash": "0xbd0aedb8ed51df8d",
+        "fig_gate_occurrences": []
+      },
+      {
+        "object_token": "proto::TransformationDescription(1):ConsumeTransformationDescription",
+        "object_offset": 26639,
+        "meta_offset": 26794,
+        "fields": {
+          "description_name": "Consume",
+          "stream_package": "",
+          "drawable": "",
+          "body_template": "",
+          "body_grab_slot": "",
+          "physics_object": "",
+          "physics_object_factory": "AlexPhysicsFactory",
+          "supporting_limb_list_object": "AlexLimbs",
+          "power": "",
+          "faction": "",
+          "damage_multiplier": 1.0,
+          "health_damage_scale": 1.0,
+          "damage_attacker_amount": 0.0,
+          "hud_power": 12,
+          "override_left_arm_template": "",
+          "left_arm_needed": 0
+        },
+        "exact_string_framing": [
+          {
+            "field": "description_name",
+            "length_width": "u32",
+            "offset_in_meta_body": 0,
+            "value": "Consume"
+          },
+          {
+            "field": "stream_package",
+            "length_width": "u8",
+            "offset_in_meta_body": 11,
+            "value": ""
+          },
+          {
+            "field": "drawable",
+            "length_width": "u32",
+            "offset_in_meta_body": 12,
+            "value": ""
+          },
+          {
+            "field": "body_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 16,
+            "value": ""
+          },
+          {
+            "field": "body_grab_slot",
+            "length_width": "u32",
+            "offset_in_meta_body": 20,
+            "value": ""
+          },
+          {
+            "field": "physics_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 24,
+            "value": ""
+          },
+          {
+            "field": "physics_object_factory",
+            "length_width": "u8",
+            "offset_in_meta_body": 25,
+            "value": "AlexPhysicsFactory"
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 44,
+            "value": "AlexLimbs"
+          },
+          {
+            "field": "power",
+            "length_width": "u8",
+            "offset_in_meta_body": 54,
+            "value": ""
+          },
+          {
+            "field": "faction",
+            "length_width": "u32",
+            "offset_in_meta_body": 55,
+            "value": ""
+          },
+          {
+            "field": "override_left_arm_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 75,
+            "value": ""
+          }
+        ],
+        "exact_tod_object_references": [
+          {
+            "field": "physics_object_factory",
+            "target_name": "AlexPhysicsFactory",
+            "targets": [
+              {
+                "class": "ravenphysics::SimplePhysicsObjectFactory",
+                "token": "ravenphysics::SimplePhysicsObjectFactory(1):AlexPhysicsFactory",
+                "offset": 26089
+              }
+            ]
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "target_name": "AlexLimbs",
+            "targets": [
+              {
+                "class": "SupportingLimbDefinitionList",
+                "token": "SupportingLimbDefinitionList(1):AlexLimbs",
+                "offset": 20665
+              }
+            ]
+          }
+        ],
+        "fig_consumption_name_hash": "0xea6bf9575346bfe",
+        "fig_gate_occurrences": []
+      },
+      {
+        "object_token": "proto::TransformationDescription(1):AlexTransformationDescription",
+        "object_offset": 26897,
+        "meta_offset": 27052,
+        "fields": {
+          "description_name": "Alex",
+          "stream_package": "",
+          "drawable": "alex_reg_arms",
+          "body_template": "AlexBodyTemplate",
+          "body_grab_slot": "AlexBody",
+          "physics_object": "",
+          "physics_object_factory": "AlexPhysicsFactory",
+          "supporting_limb_list_object": "AlexLimbs",
+          "power": "",
+          "faction": "alex",
+          "damage_multiplier": 1.0,
+          "health_damage_scale": 1.0,
+          "damage_attacker_amount": 0.0,
+          "hud_power": 13,
+          "override_left_arm_template": "",
+          "left_arm_needed": 0
+        },
+        "exact_string_framing": [
+          {
+            "field": "description_name",
+            "length_width": "u32",
+            "offset_in_meta_body": 0,
+            "value": "Alex"
+          },
+          {
+            "field": "stream_package",
+            "length_width": "u8",
+            "offset_in_meta_body": 8,
+            "value": ""
+          },
+          {
+            "field": "drawable",
+            "length_width": "u32",
+            "offset_in_meta_body": 9,
+            "value": "alex_reg_arms"
+          },
+          {
+            "field": "body_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 26,
+            "value": "AlexBodyTemplate"
+          },
+          {
+            "field": "body_grab_slot",
+            "length_width": "u32",
+            "offset_in_meta_body": 46,
+            "value": "AlexBody"
+          },
+          {
+            "field": "physics_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 58,
+            "value": ""
+          },
+          {
+            "field": "physics_object_factory",
+            "length_width": "u8",
+            "offset_in_meta_body": 59,
+            "value": "AlexPhysicsFactory"
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 78,
+            "value": "AlexLimbs"
+          },
+          {
+            "field": "power",
+            "length_width": "u8",
+            "offset_in_meta_body": 88,
+            "value": ""
+          },
+          {
+            "field": "faction",
+            "length_width": "u32",
+            "offset_in_meta_body": 89,
+            "value": "alex"
+          },
+          {
+            "field": "override_left_arm_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 113,
+            "value": ""
+          }
+        ],
+        "exact_tod_object_references": [
+          {
+            "field": "body_template",
+            "target_name": "AlexBodyTemplate",
+            "targets": [
+              {
+                "class": "GameObject",
+                "token": "GameObject(1):AlexBodyTemplate",
+                "offset": 1418
+              }
+            ]
+          },
+          {
+            "field": "physics_object_factory",
+            "target_name": "AlexPhysicsFactory",
+            "targets": [
+              {
+                "class": "ravenphysics::SimplePhysicsObjectFactory",
+                "token": "ravenphysics::SimplePhysicsObjectFactory(1):AlexPhysicsFactory",
+                "offset": 26089
+              }
+            ]
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "target_name": "AlexLimbs",
+            "targets": [
+              {
+                "class": "SupportingLimbDefinitionList",
+                "token": "SupportingLimbDefinitionList(1):AlexLimbs",
+                "offset": 20665
+              }
+            ]
+          }
+        ],
+        "fig_consumption_name_hash": "0x412f9c9b277cc0",
+        "fig_gate_occurrences": []
+      },
+      {
+        "object_token": "proto::TransformationDescription(1):AlexShotBodyTransformationDescription",
+        "object_offset": 27193,
+        "meta_offset": 27364,
+        "fields": {
+          "description_name": "AlexShotBody",
+          "stream_package": "AlexShotBody_Disguise",
+          "drawable": "alex_shot_body",
+          "body_template": "",
+          "body_grab_slot": "",
+          "physics_object": "",
+          "physics_object_factory": "",
+          "supporting_limb_list_object": "",
+          "power": "",
+          "faction": "",
+          "damage_multiplier": 1.0,
+          "health_damage_scale": 1.0,
+          "damage_attacker_amount": 0.0,
+          "hud_power": 13,
+          "override_left_arm_template": "",
+          "left_arm_needed": 0
+        },
+        "exact_string_framing": [
+          {
+            "field": "description_name",
+            "length_width": "u32",
+            "offset_in_meta_body": 0,
+            "value": "AlexShotBody"
+          },
+          {
+            "field": "stream_package",
+            "length_width": "u8",
+            "offset_in_meta_body": 16,
+            "value": "AlexShotBody_Disguise"
+          },
+          {
+            "field": "drawable",
+            "length_width": "u32",
+            "offset_in_meta_body": 38,
+            "value": "alex_shot_body"
+          },
+          {
+            "field": "body_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 56,
+            "value": ""
+          },
+          {
+            "field": "body_grab_slot",
+            "length_width": "u32",
+            "offset_in_meta_body": 60,
+            "value": ""
+          },
+          {
+            "field": "physics_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 64,
+            "value": ""
+          },
+          {
+            "field": "physics_object_factory",
+            "length_width": "u8",
+            "offset_in_meta_body": 65,
+            "value": ""
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 66,
+            "value": ""
+          },
+          {
+            "field": "power",
+            "length_width": "u8",
+            "offset_in_meta_body": 67,
+            "value": ""
+          },
+          {
+            "field": "faction",
+            "length_width": "u32",
+            "offset_in_meta_body": 68,
+            "value": ""
+          },
+          {
+            "field": "override_left_arm_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 88,
+            "value": ""
+          }
+        ],
+        "exact_tod_object_references": [],
+        "fig_consumption_name_hash": "0x30ee61193a6b9424",
+        "fig_gate_occurrences": [
+          {
+            "block": "prototype",
+            "condition_offset": 165676,
+            "owner": {
+              "kind": "bank",
+              "offset": 165420,
+              "name_hash": "0xd912518989f17d14"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 174524,
+            "owner": {
+              "kind": "node",
+              "offset": 174340,
+              "name_hash": "0x851477eb71ef3659"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 177520,
+            "owner": {
+              "kind": "bank",
+              "offset": 177340,
+              "name_hash": "0xdad415b30db6b5e6"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 193444,
+            "owner": {
+              "kind": "bank",
+              "offset": 193264,
+              "name_hash": "0xdad415b30db6b5e6"
+            }
+          }
+        ]
+      },
+      {
+        "object_token": "proto::TransformationDescription(1):AlexParasiteTransformationDescription",
+        "object_offset": 27480,
+        "meta_offset": 27651,
+        "fields": {
+          "description_name": "AlexParasite",
+          "stream_package": "AlexParasite",
+          "drawable": "alex_reg_arms",
+          "body_template": "AlexParasiteBodyTemplate",
+          "body_grab_slot": "AlexBody",
+          "physics_object": "",
+          "physics_object_factory": "AlexPhysicsFactory",
+          "supporting_limb_list_object": "AlexLimbs",
+          "power": "",
+          "faction": "alex",
+          "damage_multiplier": 1.0,
+          "health_damage_scale": 1.0,
+          "damage_attacker_amount": 0.0,
+          "hud_power": 13,
+          "override_left_arm_template": "",
+          "left_arm_needed": 0
+        },
+        "exact_string_framing": [
+          {
+            "field": "description_name",
+            "length_width": "u32",
+            "offset_in_meta_body": 0,
+            "value": "AlexParasite"
+          },
+          {
+            "field": "stream_package",
+            "length_width": "u8",
+            "offset_in_meta_body": 16,
+            "value": "AlexParasite"
+          },
+          {
+            "field": "drawable",
+            "length_width": "u32",
+            "offset_in_meta_body": 29,
+            "value": "alex_reg_arms"
+          },
+          {
+            "field": "body_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 46,
+            "value": "AlexParasiteBodyTemplate"
+          },
+          {
+            "field": "body_grab_slot",
+            "length_width": "u32",
+            "offset_in_meta_body": 74,
+            "value": "AlexBody"
+          },
+          {
+            "field": "physics_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 86,
+            "value": ""
+          },
+          {
+            "field": "physics_object_factory",
+            "length_width": "u8",
+            "offset_in_meta_body": 87,
+            "value": "AlexPhysicsFactory"
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 106,
+            "value": "AlexLimbs"
+          },
+          {
+            "field": "power",
+            "length_width": "u8",
+            "offset_in_meta_body": 116,
+            "value": ""
+          },
+          {
+            "field": "faction",
+            "length_width": "u32",
+            "offset_in_meta_body": 117,
+            "value": "alex"
+          },
+          {
+            "field": "override_left_arm_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 141,
+            "value": ""
+          }
+        ],
+        "exact_tod_object_references": [
+          {
+            "field": "physics_object_factory",
+            "target_name": "AlexPhysicsFactory",
+            "targets": [
+              {
+                "class": "ravenphysics::SimplePhysicsObjectFactory",
+                "token": "ravenphysics::SimplePhysicsObjectFactory(1):AlexPhysicsFactory",
+                "offset": 26089
+              }
+            ]
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "target_name": "AlexLimbs",
+            "targets": [
+              {
+                "class": "SupportingLimbDefinitionList",
+                "token": "SupportingLimbDefinitionList(1):AlexLimbs",
+                "offset": 20665
+              }
+            ]
+          }
+        ],
+        "fig_consumption_name_hash": "0xb34916971485e44b",
+        "fig_gate_occurrences": []
+      },
+      {
+        "object_token": "proto::TransformationDescription(1):AlexBladesTransformationDescription",
+        "object_offset": 27820,
+        "meta_offset": 27983,
+        "fields": {
+          "description_name": "AlexBlades",
+          "stream_package": "AlexBlades",
+          "drawable": "alex_blade_arms",
+          "body_template": "",
+          "body_grab_slot": "AlexBody",
+          "physics_object": "",
+          "physics_object_factory": "AlexPhysicsFactory",
+          "supporting_limb_list_object": "AlexLimbs",
+          "power": "",
+          "faction": "powered",
+          "damage_multiplier": 1.0,
+          "health_damage_scale": 1.0,
+          "damage_attacker_amount": 0.0,
+          "hud_power": 2,
+          "override_left_arm_template": "",
+          "left_arm_needed": 1
+        },
+        "exact_string_framing": [
+          {
+            "field": "description_name",
+            "length_width": "u32",
+            "offset_in_meta_body": 0,
+            "value": "AlexBlades"
+          },
+          {
+            "field": "stream_package",
+            "length_width": "u8",
+            "offset_in_meta_body": 14,
+            "value": "AlexBlades"
+          },
+          {
+            "field": "drawable",
+            "length_width": "u32",
+            "offset_in_meta_body": 25,
+            "value": "alex_blade_arms"
+          },
+          {
+            "field": "body_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 44,
+            "value": ""
+          },
+          {
+            "field": "body_grab_slot",
+            "length_width": "u32",
+            "offset_in_meta_body": 48,
+            "value": "AlexBody"
+          },
+          {
+            "field": "physics_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 60,
+            "value": ""
+          },
+          {
+            "field": "physics_object_factory",
+            "length_width": "u8",
+            "offset_in_meta_body": 61,
+            "value": "AlexPhysicsFactory"
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 80,
+            "value": "AlexLimbs"
+          },
+          {
+            "field": "power",
+            "length_width": "u8",
+            "offset_in_meta_body": 90,
+            "value": ""
+          },
+          {
+            "field": "faction",
+            "length_width": "u32",
+            "offset_in_meta_body": 91,
+            "value": "powered"
+          },
+          {
+            "field": "override_left_arm_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 118,
+            "value": ""
+          }
+        ],
+        "exact_tod_object_references": [
+          {
+            "field": "physics_object_factory",
+            "target_name": "AlexPhysicsFactory",
+            "targets": [
+              {
+                "class": "ravenphysics::SimplePhysicsObjectFactory",
+                "token": "ravenphysics::SimplePhysicsObjectFactory(1):AlexPhysicsFactory",
+                "offset": 26089
+              }
+            ]
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "target_name": "AlexLimbs",
+            "targets": [
+              {
+                "class": "SupportingLimbDefinitionList",
+                "token": "SupportingLimbDefinitionList(1):AlexLimbs",
+                "offset": 20665
+              }
+            ]
+          }
+        ],
+        "fig_consumption_name_hash": "0x44ca32eda33e5b01",
+        "fig_gate_occurrences": [
+          {
+            "block": "prototype_bare",
+            "condition_offset": 21348,
+            "owner": {
+              "kind": "bank",
+              "offset": 21160,
+              "name_hash": "0x60fce9c39a0784fa"
+            }
+          },
+          {
+            "block": "prototype_blades",
+            "condition_offset": 144,
+            "owner": {
+              "kind": "bank",
+              "offset": 104,
+              "name_hash": "0xa74c55cea0c0ec38"
+            }
+          },
+          {
+            "block": "prototype_blades",
+            "condition_offset": 6056,
+            "owner": {
+              "kind": "bank",
+              "offset": 6016,
+              "name_hash": "0x3200961c020ff7f"
+            }
+          },
+          {
+            "block": "prototype_blades",
+            "condition_offset": 16608,
+            "owner": {
+              "kind": "bank",
+              "offset": 16508,
+              "name_hash": "0xfe744e3410abb721"
+            }
+          },
+          {
+            "block": "prototype_blades",
+            "condition_offset": 21008,
+            "owner": {
+              "kind": "bank",
+              "offset": 20908,
+              "name_hash": "0xbd0c91bc17ca9b94"
+            }
+          },
+          {
+            "block": "prototype_blades",
+            "condition_offset": 25280,
+            "owner": {
+              "kind": "bank",
+              "offset": 25180,
+              "name_hash": "0xbc024921790cec09"
+            }
+          },
+          {
+            "block": "prototype_blades",
+            "condition_offset": 29344,
+            "owner": {
+              "kind": "bank",
+              "offset": 29244,
+              "name_hash": "0xd37f5bbba51373c8"
+            }
+          },
+          {
+            "block": "prototype_blades",
+            "condition_offset": 33588,
+            "owner": {
+              "kind": "bank",
+              "offset": 33548,
+              "name_hash": "0x3200961c020ff7f"
+            }
+          },
+          {
+            "block": "prototype_jump",
+            "condition_offset": 4412,
+            "owner": {
+              "kind": "node",
+              "offset": 4368,
+              "name_hash": "0xa9d78ceeab9b8f15"
+            }
+          },
+          {
+            "block": "prototype_sprint",
+            "condition_offset": 69248,
+            "owner": {
+              "kind": "node",
+              "offset": 69204,
+              "name_hash": "0x705333919508ab"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 105072,
+            "owner": {
+              "kind": "node",
+              "offset": 105028,
+              "name_hash": "0x1643c005d81edd41"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 147460,
+            "owner": {
+              "kind": "node",
+              "offset": 147084,
+              "name_hash": "0x93fbb2b5b66bc456"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 149932,
+            "owner": {
+              "kind": "node",
+              "offset": 149592,
+              "name_hash": "0x97fcf63482d89650"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 152228,
+            "owner": {
+              "kind": "node",
+              "offset": 152184,
+              "name_hash": "0x1643c005d81edd41"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 166592,
+            "owner": {
+              "kind": "node",
+              "offset": 166484,
+              "name_hash": "0x9090d3e91f4ee86f"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 171976,
+            "owner": {
+              "kind": "node",
+              "offset": 171932,
+              "name_hash": "0xbba0b9e55a3ae561"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 175340,
+            "owner": {
+              "kind": "node",
+              "offset": 175176,
+              "name_hash": "0x83994361bccdbcc5"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 46020,
+            "owner": {
+              "kind": "bank",
+              "offset": 45980,
+              "name_hash": "0xbba0b9e55a3ae561"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 215680,
+            "owner": {
+              "kind": "bank",
+              "offset": 215640,
+              "name_hash": "0xbba0b9e55a3ae561"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 285656,
+            "owner": {
+              "kind": "node",
+              "offset": 285612,
+              "name_hash": "0xbba0b9e55a3ae561"
+            }
+          }
+        ]
+      },
+      {
+        "object_token": "proto::TransformationDescription(1):AlexWhipFistTransformationDescription",
+        "object_offset": 28129,
+        "meta_offset": 28300,
+        "fields": {
+          "description_name": "AlexWhipFist",
+          "stream_package": "AlexWhipFist",
+          "drawable": "alex_whip_arms",
+          "body_template": "",
+          "body_grab_slot": "AlexBody",
+          "physics_object": "",
+          "physics_object_factory": "AlexPhysicsFactory",
+          "supporting_limb_list_object": "AlexLimbs",
+          "power": "WhipFistPower",
+          "faction": "powered",
+          "damage_multiplier": 1.0,
+          "health_damage_scale": 1.0,
+          "damage_attacker_amount": 0.0,
+          "hud_power": 4,
+          "override_left_arm_template": "",
+          "left_arm_needed": 1
+        },
+        "exact_string_framing": [
+          {
+            "field": "description_name",
+            "length_width": "u32",
+            "offset_in_meta_body": 0,
+            "value": "AlexWhipFist"
+          },
+          {
+            "field": "stream_package",
+            "length_width": "u8",
+            "offset_in_meta_body": 16,
+            "value": "AlexWhipFist"
+          },
+          {
+            "field": "drawable",
+            "length_width": "u32",
+            "offset_in_meta_body": 29,
+            "value": "alex_whip_arms"
+          },
+          {
+            "field": "body_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 47,
+            "value": ""
+          },
+          {
+            "field": "body_grab_slot",
+            "length_width": "u32",
+            "offset_in_meta_body": 51,
+            "value": "AlexBody"
+          },
+          {
+            "field": "physics_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 63,
+            "value": ""
+          },
+          {
+            "field": "physics_object_factory",
+            "length_width": "u8",
+            "offset_in_meta_body": 64,
+            "value": "AlexPhysicsFactory"
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 83,
+            "value": "AlexLimbs"
+          },
+          {
+            "field": "power",
+            "length_width": "u8",
+            "offset_in_meta_body": 93,
+            "value": "WhipFistPower"
+          },
+          {
+            "field": "faction",
+            "length_width": "u32",
+            "offset_in_meta_body": 107,
+            "value": "powered"
+          },
+          {
+            "field": "override_left_arm_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 134,
+            "value": ""
+          }
+        ],
+        "exact_tod_object_references": [
+          {
+            "field": "physics_object_factory",
+            "target_name": "AlexPhysicsFactory",
+            "targets": [
+              {
+                "class": "ravenphysics::SimplePhysicsObjectFactory",
+                "token": "ravenphysics::SimplePhysicsObjectFactory(1):AlexPhysicsFactory",
+                "offset": 26089
+              }
+            ]
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "target_name": "AlexLimbs",
+            "targets": [
+              {
+                "class": "SupportingLimbDefinitionList",
+                "token": "SupportingLimbDefinitionList(1):AlexLimbs",
+                "offset": 20665
+              }
+            ]
+          },
+          {
+            "field": "power",
+            "target_name": "WhipFistPower",
+            "targets": [
+              {
+                "class": "proto::WhipFistPower",
+                "token": "proto::WhipFistPower(1):WhipFistPower",
+                "offset": 25880
+              }
+            ]
+          }
+        ],
+        "fig_consumption_name_hash": "0x5d87095518f5f848",
+        "fig_gate_occurrences": [
+          {
+            "block": "prototype_bare",
+            "condition_offset": 21400,
+            "owner": {
+              "kind": "bank",
+              "offset": 21160,
+              "name_hash": "0x60fce9c39a0784fa"
+            }
+          },
+          {
+            "block": "prototype_wall",
+            "condition_offset": 18612,
+            "owner": {
+              "kind": "node",
+              "offset": 18040,
+              "name_hash": "0x50667f859f7fd9a6"
+            }
+          },
+          {
+            "block": "prototype_whipfist",
+            "condition_offset": 192,
+            "owner": {
+              "kind": "bank",
+              "offset": 152,
+              "name_hash": "0x3200961c020ff7f"
+            }
+          },
+          {
+            "block": "prototype_whipfist",
+            "condition_offset": 12600,
+            "owner": {
+              "kind": "bank",
+              "offset": 12560,
+              "name_hash": "0x3200961c020ff7f"
+            }
+          },
+          {
+            "block": "prototype_whipfist",
+            "condition_offset": 18948,
+            "owner": {
+              "kind": "node",
+              "offset": 18844,
+              "name_hash": "0xfaa7614558fe7b51"
+            }
+          },
+          {
+            "block": "prototype_whipfist",
+            "condition_offset": 25144,
+            "owner": {
+              "kind": "node",
+              "offset": 25040,
+              "name_hash": "0xfaa7614558fe7b51"
+            }
+          },
+          {
+            "block": "prototype_whipfist",
+            "condition_offset": 31280,
+            "owner": {
+              "kind": "bank",
+              "offset": 31152,
+              "name_hash": "0x714ac25ffe4c2778"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 166624,
+            "owner": {
+              "kind": "node",
+              "offset": 166484,
+              "name_hash": "0x9090d3e91f4ee86f"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 173828,
+            "owner": {
+              "kind": "node",
+              "offset": 173784,
+              "name_hash": "0xefbb1e150625ba88"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 175444,
+            "owner": {
+              "kind": "node",
+              "offset": 175176,
+              "name_hash": "0x83994361bccdbcc5"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 34312,
+            "owner": {
+              "kind": "bank",
+              "offset": 34272,
+              "name_hash": "0xefbb1e150625ba88"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 197396,
+            "owner": {
+              "kind": "bank",
+              "offset": 197252,
+              "name_hash": "0x674befa1f64b6e"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 202588,
+            "owner": {
+              "kind": "bank",
+              "offset": 202444,
+              "name_hash": "0x674befa1f64b6e"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 205380,
+            "owner": {
+              "kind": "bank",
+              "offset": 201216,
+              "name_hash": "0xd8c1fcc065c95135"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 216924,
+            "owner": {
+              "kind": "bank",
+              "offset": 216884,
+              "name_hash": "0xefbb1e150625ba88"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 286136,
+            "owner": {
+              "kind": "node",
+              "offset": 286092,
+              "name_hash": "0xefbb1e150625ba88"
+            }
+          }
+        ]
+      },
+      {
+        "object_token": "proto::TransformationDescription(1):AlexShieldTransformationDescription",
+        "object_offset": 28462,
+        "meta_offset": 28625,
+        "fields": {
+          "description_name": "AlexShield",
+          "stream_package": "AlexShield",
+          "drawable": "alex_shield_arms",
+          "body_template": "AlexShieldBodyTemplate",
+          "body_grab_slot": "AlexBody",
+          "physics_object": "",
+          "physics_object_factory": "AlexPhysicsFactory",
+          "supporting_limb_list_object": "AlexLimbs",
+          "power": "ShieldPower",
+          "faction": "powered",
+          "damage_multiplier": 1.0,
+          "health_damage_scale": 1.0,
+          "damage_attacker_amount": 0.0,
+          "hud_power": 8,
+          "override_left_arm_template": "",
+          "left_arm_needed": 0
+        },
+        "exact_string_framing": [
+          {
+            "field": "description_name",
+            "length_width": "u32",
+            "offset_in_meta_body": 0,
+            "value": "AlexShield"
+          },
+          {
+            "field": "stream_package",
+            "length_width": "u8",
+            "offset_in_meta_body": 14,
+            "value": "AlexShield"
+          },
+          {
+            "field": "drawable",
+            "length_width": "u32",
+            "offset_in_meta_body": 25,
+            "value": "alex_shield_arms"
+          },
+          {
+            "field": "body_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 45,
+            "value": "AlexShieldBodyTemplate"
+          },
+          {
+            "field": "body_grab_slot",
+            "length_width": "u32",
+            "offset_in_meta_body": 71,
+            "value": "AlexBody"
+          },
+          {
+            "field": "physics_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 83,
+            "value": ""
+          },
+          {
+            "field": "physics_object_factory",
+            "length_width": "u8",
+            "offset_in_meta_body": 84,
+            "value": "AlexPhysicsFactory"
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 103,
+            "value": "AlexLimbs"
+          },
+          {
+            "field": "power",
+            "length_width": "u8",
+            "offset_in_meta_body": 113,
+            "value": "ShieldPower"
+          },
+          {
+            "field": "faction",
+            "length_width": "u32",
+            "offset_in_meta_body": 125,
+            "value": "powered"
+          },
+          {
+            "field": "override_left_arm_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 152,
+            "value": ""
+          }
+        ],
+        "exact_tod_object_references": [
+          {
+            "field": "physics_object_factory",
+            "target_name": "AlexPhysicsFactory",
+            "targets": [
+              {
+                "class": "ravenphysics::SimplePhysicsObjectFactory",
+                "token": "ravenphysics::SimplePhysicsObjectFactory(1):AlexPhysicsFactory",
+                "offset": 26089
+              }
+            ]
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "target_name": "AlexLimbs",
+            "targets": [
+              {
+                "class": "SupportingLimbDefinitionList",
+                "token": "SupportingLimbDefinitionList(1):AlexLimbs",
+                "offset": 20665
+              }
+            ]
+          },
+          {
+            "field": "power",
+            "target_name": "ShieldPower",
+            "targets": [
+              {
+                "class": "proto::ShieldPower",
+                "token": "proto::ShieldPower(1):ShieldPower",
+                "offset": 25685
+              }
+            ]
+          }
+        ],
+        "fig_consumption_name_hash": "0x151318a30ed49803",
+        "fig_gate_occurrences": [
+          {
+            "block": "prototype_firearm",
+            "condition_offset": 14108,
+            "owner": {
+              "kind": "bank",
+              "offset": 14068,
+              "name_hash": "0x8f8c8b5756816363"
+            }
+          },
+          {
+            "block": "prototype_sprint",
+            "condition_offset": 4864,
+            "owner": {
+              "kind": "node",
+              "offset": 4800,
+              "name_hash": "0x8f8c8b5756816363"
+            }
+          },
+          {
+            "block": "prototype_sprint",
+            "condition_offset": 16824,
+            "owner": {
+              "kind": "node",
+              "offset": 16760,
+              "name_hash": "0x8f8c8b5756816363"
+            }
+          },
+          {
+            "block": "prototype_sprint",
+            "condition_offset": 69280,
+            "owner": {
+              "kind": "node",
+              "offset": 69204,
+              "name_hash": "0x705333919508ab"
+            }
+          },
+          {
+            "block": "prototype_sprint",
+            "condition_offset": 71140,
+            "owner": {
+              "kind": "node",
+              "offset": 71076,
+              "name_hash": "0x8f8c8b5756816363"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 182292,
+            "owner": {
+              "kind": "bank",
+              "offset": 182252,
+              "name_hash": "0x8f8c8b5756816363"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 182436,
+            "owner": {
+              "kind": "node",
+              "offset": 182332,
+              "name_hash": "0x8f8c8b5756816363"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 286480,
+            "owner": {
+              "kind": "node",
+              "offset": 286436,
+              "name_hash": "0x8f8c8b5756816363"
+            }
+          }
+        ]
+      },
+      {
+        "object_token": "proto::TransformationDescription(1):AlexSpinesTransformationDescription",
+        "object_offset": 28805,
+        "meta_offset": 28968,
+        "fields": {
+          "description_name": "AlexSpines",
+          "stream_package": "AlexSpines",
+          "drawable": "alex_spine_arms",
+          "body_template": "AlexSpinesBodyTemplate",
+          "body_grab_slot": "AlexBody",
+          "physics_object": "",
+          "physics_object_factory": "AlexPhysicsFactory",
+          "supporting_limb_list_object": "AlexLimbs",
+          "power": "",
+          "faction": "powered",
+          "damage_multiplier": 1.0,
+          "health_damage_scale": 1.0,
+          "damage_attacker_amount": 10.0,
+          "hud_power": 7,
+          "override_left_arm_template": "",
+          "left_arm_needed": 0
+        },
+        "exact_string_framing": [
+          {
+            "field": "description_name",
+            "length_width": "u32",
+            "offset_in_meta_body": 0,
+            "value": "AlexSpines"
+          },
+          {
+            "field": "stream_package",
+            "length_width": "u8",
+            "offset_in_meta_body": 14,
+            "value": "AlexSpines"
+          },
+          {
+            "field": "drawable",
+            "length_width": "u32",
+            "offset_in_meta_body": 25,
+            "value": "alex_spine_arms"
+          },
+          {
+            "field": "body_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 44,
+            "value": "AlexSpinesBodyTemplate"
+          },
+          {
+            "field": "body_grab_slot",
+            "length_width": "u32",
+            "offset_in_meta_body": 70,
+            "value": "AlexBody"
+          },
+          {
+            "field": "physics_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 82,
+            "value": ""
+          },
+          {
+            "field": "physics_object_factory",
+            "length_width": "u8",
+            "offset_in_meta_body": 83,
+            "value": "AlexPhysicsFactory"
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 102,
+            "value": "AlexLimbs"
+          },
+          {
+            "field": "power",
+            "length_width": "u8",
+            "offset_in_meta_body": 112,
+            "value": ""
+          },
+          {
+            "field": "faction",
+            "length_width": "u32",
+            "offset_in_meta_body": 113,
+            "value": "powered"
+          },
+          {
+            "field": "override_left_arm_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 140,
+            "value": ""
+          }
+        ],
+        "exact_tod_object_references": [
+          {
+            "field": "physics_object_factory",
+            "target_name": "AlexPhysicsFactory",
+            "targets": [
+              {
+                "class": "ravenphysics::SimplePhysicsObjectFactory",
+                "token": "ravenphysics::SimplePhysicsObjectFactory(1):AlexPhysicsFactory",
+                "offset": 26089
+              }
+            ]
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "target_name": "AlexLimbs",
+            "targets": [
+              {
+                "class": "SupportingLimbDefinitionList",
+                "token": "SupportingLimbDefinitionList(1):AlexLimbs",
+                "offset": 20665
+              }
+            ]
+          }
+        ],
+        "fig_consumption_name_hash": "0x2ccbde795761bac0",
+        "fig_gate_occurrences": []
+      },
+      {
+        "object_token": "proto::TransformationDescription(1):AlexMuscleMassTransformationDescription",
+        "object_offset": 29136,
+        "meta_offset": 29307,
+        "fields": {
+          "description_name": "AlexMuscleMass",
+          "stream_package": "AlexMuscleMass",
+          "drawable": "alex_muscle_arms",
+          "body_template": "",
+          "body_grab_slot": "AlexBody",
+          "physics_object": "",
+          "physics_object_factory": "AlexPhysicsFactory",
+          "supporting_limb_list_object": "AlexLimbs",
+          "power": "",
+          "faction": "powered",
+          "damage_multiplier": 1.7000000476837158,
+          "health_damage_scale": 1.0,
+          "damage_attacker_amount": 0.0,
+          "hud_power": 5,
+          "override_left_arm_template": "",
+          "left_arm_needed": 0
+        },
+        "exact_string_framing": [
+          {
+            "field": "description_name",
+            "length_width": "u32",
+            "offset_in_meta_body": 0,
+            "value": "AlexMuscleMass"
+          },
+          {
+            "field": "stream_package",
+            "length_width": "u8",
+            "offset_in_meta_body": 18,
+            "value": "AlexMuscleMass"
+          },
+          {
+            "field": "drawable",
+            "length_width": "u32",
+            "offset_in_meta_body": 33,
+            "value": "alex_muscle_arms"
+          },
+          {
+            "field": "body_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 53,
+            "value": ""
+          },
+          {
+            "field": "body_grab_slot",
+            "length_width": "u32",
+            "offset_in_meta_body": 57,
+            "value": "AlexBody"
+          },
+          {
+            "field": "physics_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 69,
+            "value": ""
+          },
+          {
+            "field": "physics_object_factory",
+            "length_width": "u8",
+            "offset_in_meta_body": 70,
+            "value": "AlexPhysicsFactory"
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 89,
+            "value": "AlexLimbs"
+          },
+          {
+            "field": "power",
+            "length_width": "u8",
+            "offset_in_meta_body": 99,
+            "value": ""
+          },
+          {
+            "field": "faction",
+            "length_width": "u32",
+            "offset_in_meta_body": 100,
+            "value": "powered"
+          },
+          {
+            "field": "override_left_arm_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 127,
+            "value": ""
+          }
+        ],
+        "exact_tod_object_references": [
+          {
+            "field": "physics_object_factory",
+            "target_name": "AlexPhysicsFactory",
+            "targets": [
+              {
+                "class": "ravenphysics::SimplePhysicsObjectFactory",
+                "token": "ravenphysics::SimplePhysicsObjectFactory(1):AlexPhysicsFactory",
+                "offset": 26089
+              }
+            ]
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "target_name": "AlexLimbs",
+            "targets": [
+              {
+                "class": "SupportingLimbDefinitionList",
+                "token": "SupportingLimbDefinitionList(1):AlexLimbs",
+                "offset": 20665
+              }
+            ]
+          }
+        ],
+        "fig_consumption_name_hash": "0x35c1685a2a56a749",
+        "fig_gate_occurrences": [
+          {
+            "block": "prototype_air",
+            "condition_offset": 25816,
+            "owner": {
+              "kind": "node",
+              "offset": 25772,
+              "name_hash": "0x1dbf2d641bed5a2c"
+            }
+          },
+          {
+            "block": "prototype_air",
+            "condition_offset": 63848,
+            "owner": {
+              "kind": "node",
+              "offset": 63804,
+              "name_hash": "0x1dbf2d641bed5a2c"
+            }
+          },
+          {
+            "block": "prototype_musclemass",
+            "condition_offset": 196,
+            "owner": {
+              "kind": "node",
+              "offset": 152,
+              "name_hash": "0x66db0f5f00539af3"
+            }
+          },
+          {
+            "block": "prototype_musclemass",
+            "condition_offset": 436,
+            "owner": {
+              "kind": "bank",
+              "offset": 396,
+              "name_hash": "0x74561240c3f172"
+            }
+          },
+          {
+            "block": "prototype_musclemass",
+            "condition_offset": 988,
+            "owner": {
+              "kind": "bank",
+              "offset": 948,
+              "name_hash": "0x7130aeed26c83f81"
+            }
+          },
+          {
+            "block": "prototype_musclemass",
+            "condition_offset": 1540,
+            "owner": {
+              "kind": "bank",
+              "offset": 1500,
+              "name_hash": "0xa93cef62e1081438"
+            }
+          },
+          {
+            "block": "prototype_musclemass",
+            "condition_offset": 2092,
+            "owner": {
+              "kind": "bank",
+              "offset": 2052,
+              "name_hash": "0x6ad88c9540492bc5"
+            }
+          },
+          {
+            "block": "prototype_musclemass",
+            "condition_offset": 2644,
+            "owner": {
+              "kind": "bank",
+              "offset": 2604,
+              "name_hash": "0x75f64f297ccdcb5b"
+            }
+          },
+          {
+            "block": "prototype_musclemass",
+            "condition_offset": 3196,
+            "owner": {
+              "kind": "bank",
+              "offset": 3156,
+              "name_hash": "0x684d301080eba9"
+            }
+          },
+          {
+            "block": "prototype_musclemass",
+            "condition_offset": 3760,
+            "owner": {
+              "kind": "node",
+              "offset": 3716,
+              "name_hash": "0x909dc054577a5f9"
+            }
+          },
+          {
+            "block": "prototype_sprint",
+            "condition_offset": 31892,
+            "owner": {
+              "kind": "node",
+              "offset": 31848,
+              "name_hash": "0x1dbf2d641bed5a2c"
+            }
+          },
+          {
+            "block": "prototype_wall",
+            "condition_offset": 54348,
+            "owner": {
+              "kind": "node",
+              "offset": 54304,
+              "name_hash": "0x1dbf2d641bed5a2c"
+            }
+          },
+          {
+            "block": "prototype_wall",
+            "condition_offset": 55276,
+            "owner": {
+              "kind": "node",
+              "offset": 55232,
+              "name_hash": "0x1dbf2d641bed5a2c"
+            }
+          },
+          {
+            "block": "prototype_wall",
+            "condition_offset": 56156,
+            "owner": {
+              "kind": "node",
+              "offset": 56112,
+              "name_hash": "0x1dbf2d641bed5a2c"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 78680,
+            "owner": {
+              "kind": "node",
+              "offset": 78636,
+              "name_hash": "0x1dbf2d641bed5a2c"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 175496,
+            "owner": {
+              "kind": "node",
+              "offset": 175176,
+              "name_hash": "0x83994361bccdbcc5"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 176208,
+            "owner": {
+              "kind": "node",
+              "offset": 176140,
+              "name_hash": "0x83994361bccdbcc1"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 24156,
+            "owner": {
+              "kind": "bank",
+              "offset": 24116,
+              "name_hash": "0xf81901968b7279c9"
+            }
+          }
+        ]
+      },
+      {
+        "object_token": "proto::TransformationDescription(1):AlexHammerFistTransformationDescription",
+        "object_offset": 29462,
+        "meta_offset": 29633,
+        "fields": {
+          "description_name": "AlexHammerFist",
+          "stream_package": "AlexHammerFist",
+          "drawable": "alex_hammer_arms",
+          "body_template": "",
+          "body_grab_slot": "AlexBody",
+          "physics_object": "",
+          "physics_object_factory": "AlexPhysicsFactory",
+          "supporting_limb_list_object": "AlexLimbs",
+          "power": "",
+          "faction": "powered",
+          "damage_multiplier": 1.0,
+          "health_damage_scale": 1.0,
+          "damage_attacker_amount": 0.0,
+          "hud_power": 3,
+          "override_left_arm_template": "",
+          "left_arm_needed": 0
+        },
+        "exact_string_framing": [
+          {
+            "field": "description_name",
+            "length_width": "u32",
+            "offset_in_meta_body": 0,
+            "value": "AlexHammerFist"
+          },
+          {
+            "field": "stream_package",
+            "length_width": "u8",
+            "offset_in_meta_body": 18,
+            "value": "AlexHammerFist"
+          },
+          {
+            "field": "drawable",
+            "length_width": "u32",
+            "offset_in_meta_body": 33,
+            "value": "alex_hammer_arms"
+          },
+          {
+            "field": "body_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 53,
+            "value": ""
+          },
+          {
+            "field": "body_grab_slot",
+            "length_width": "u32",
+            "offset_in_meta_body": 57,
+            "value": "AlexBody"
+          },
+          {
+            "field": "physics_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 69,
+            "value": ""
+          },
+          {
+            "field": "physics_object_factory",
+            "length_width": "u8",
+            "offset_in_meta_body": 70,
+            "value": "AlexPhysicsFactory"
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 89,
+            "value": "AlexLimbs"
+          },
+          {
+            "field": "power",
+            "length_width": "u8",
+            "offset_in_meta_body": 99,
+            "value": ""
+          },
+          {
+            "field": "faction",
+            "length_width": "u32",
+            "offset_in_meta_body": 100,
+            "value": "powered"
+          },
+          {
+            "field": "override_left_arm_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 127,
+            "value": ""
+          }
+        ],
+        "exact_tod_object_references": [
+          {
+            "field": "physics_object_factory",
+            "target_name": "AlexPhysicsFactory",
+            "targets": [
+              {
+                "class": "ravenphysics::SimplePhysicsObjectFactory",
+                "token": "ravenphysics::SimplePhysicsObjectFactory(1):AlexPhysicsFactory",
+                "offset": 26089
+              }
+            ]
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "target_name": "AlexLimbs",
+            "targets": [
+              {
+                "class": "SupportingLimbDefinitionList",
+                "token": "SupportingLimbDefinitionList(1):AlexLimbs",
+                "offset": 20665
+              }
+            ]
+          }
+        ],
+        "fig_consumption_name_hash": "0x2e1c74e942b0d10",
+        "fig_gate_occurrences": [
+          {
+            "block": "prototype_bare",
+            "condition_offset": 21244,
+            "owner": {
+              "kind": "bank",
+              "offset": 21160,
+              "name_hash": "0x60fce9c39a0784fa"
+            }
+          },
+          {
+            "block": "prototype_devastator",
+            "condition_offset": 30512,
+            "owner": {
+              "kind": "bank",
+              "offset": 30472,
+              "name_hash": "0x8e297a87e4165f90"
+            }
+          },
+          {
+            "block": "prototype_hammerfist",
+            "condition_offset": 144,
+            "owner": {
+              "kind": "bank",
+              "offset": 104,
+              "name_hash": "0xa74c55cea0c0ec38"
+            }
+          },
+          {
+            "block": "prototype_hammerfist",
+            "condition_offset": 14056,
+            "owner": {
+              "kind": "bank",
+              "offset": 14016,
+              "name_hash": "0x3200961c020ff7f"
+            }
+          },
+          {
+            "block": "prototype_hammerfist",
+            "condition_offset": 25352,
+            "owner": {
+              "kind": "bank",
+              "offset": 25252,
+              "name_hash": "0x544d10fdf1597ca"
+            }
+          },
+          {
+            "block": "prototype_hammerfist",
+            "condition_offset": 30088,
+            "owner": {
+              "kind": "bank",
+              "offset": 29988,
+              "name_hash": "0x174ed50c9125f542"
+            }
+          },
+          {
+            "block": "prototype_hammerfist",
+            "condition_offset": 34064,
+            "owner": {
+              "kind": "bank",
+              "offset": 33964,
+              "name_hash": "0xbedf1ac056c621cc"
+            }
+          },
+          {
+            "block": "prototype_hammerfist",
+            "condition_offset": 38440,
+            "owner": {
+              "kind": "bank",
+              "offset": 38340,
+              "name_hash": "0x60fb4e211640ad6d"
+            }
+          },
+          {
+            "block": "prototype_hammerfist",
+            "condition_offset": 47384,
+            "owner": {
+              "kind": "bank",
+              "offset": 47344,
+              "name_hash": "0x3200961c020ff7f"
+            }
+          },
+          {
+            "block": "prototype_wall",
+            "condition_offset": 51700,
+            "owner": {
+              "kind": "bank",
+              "offset": 51660,
+              "name_hash": "0x8e297a87e4165f90"
+            }
+          },
+          {
+            "block": "prototype_wall",
+            "condition_offset": 58896,
+            "owner": {
+              "kind": "bank",
+              "offset": 58856,
+              "name_hash": "0x8e297a87e4165f90"
+            }
+          },
+          {
+            "block": "prototype_wall",
+            "condition_offset": 64060,
+            "owner": {
+              "kind": "bank",
+              "offset": 64020,
+              "name_hash": "0x8e297a87e4165f90"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 166528,
+            "owner": {
+              "kind": "node",
+              "offset": 166484,
+              "name_hash": "0x9090d3e91f4ee86f"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 170168,
+            "owner": {
+              "kind": "node",
+              "offset": 170124,
+              "name_hash": "0x8e297a87e4165f90"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 175288,
+            "owner": {
+              "kind": "node",
+              "offset": 175176,
+              "name_hash": "0x83994361bccdbcc5"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 10900,
+            "owner": {
+              "kind": "bank",
+              "offset": 10860,
+              "name_hash": "0x8e297a87e4165f90"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 216328,
+            "owner": {
+              "kind": "bank",
+              "offset": 216236,
+              "name_hash": "0x6a926ce9182bdc57"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 285976,
+            "owner": {
+              "kind": "node",
+              "offset": 285932,
+              "name_hash": "0x8e297a87e4165f90"
+            }
+          }
+        ]
+      },
+      {
+        "object_token": "proto::TransformationDescription(1):AlexClawsTransformationDescription",
+        "object_offset": 29788,
+        "meta_offset": 29951,
+        "fields": {
+          "description_name": "AlexClaws",
+          "stream_package": "AlexClaws",
+          "drawable": "alex_claw_arms",
+          "body_template": "",
+          "body_grab_slot": "AlexBody",
+          "physics_object": "",
+          "physics_object_factory": "AlexPhysicsFactory",
+          "supporting_limb_list_object": "AlexLimbs",
+          "power": "",
+          "faction": "powered",
+          "damage_multiplier": 1.0,
+          "health_damage_scale": 1.0,
+          "damage_attacker_amount": 0.0,
+          "hud_power": 1,
+          "override_left_arm_template": "",
+          "left_arm_needed": 0
+        },
+        "exact_string_framing": [
+          {
+            "field": "description_name",
+            "length_width": "u32",
+            "offset_in_meta_body": 0,
+            "value": "AlexClaws"
+          },
+          {
+            "field": "stream_package",
+            "length_width": "u8",
+            "offset_in_meta_body": 13,
+            "value": "AlexClaws"
+          },
+          {
+            "field": "drawable",
+            "length_width": "u32",
+            "offset_in_meta_body": 23,
+            "value": "alex_claw_arms"
+          },
+          {
+            "field": "body_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 41,
+            "value": ""
+          },
+          {
+            "field": "body_grab_slot",
+            "length_width": "u32",
+            "offset_in_meta_body": 45,
+            "value": "AlexBody"
+          },
+          {
+            "field": "physics_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 57,
+            "value": ""
+          },
+          {
+            "field": "physics_object_factory",
+            "length_width": "u8",
+            "offset_in_meta_body": 58,
+            "value": "AlexPhysicsFactory"
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 77,
+            "value": "AlexLimbs"
+          },
+          {
+            "field": "power",
+            "length_width": "u8",
+            "offset_in_meta_body": 87,
+            "value": ""
+          },
+          {
+            "field": "faction",
+            "length_width": "u32",
+            "offset_in_meta_body": 88,
+            "value": "powered"
+          },
+          {
+            "field": "override_left_arm_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 115,
+            "value": ""
+          }
+        ],
+        "exact_tod_object_references": [
+          {
+            "field": "physics_object_factory",
+            "target_name": "AlexPhysicsFactory",
+            "targets": [
+              {
+                "class": "ravenphysics::SimplePhysicsObjectFactory",
+                "token": "ravenphysics::SimplePhysicsObjectFactory(1):AlexPhysicsFactory",
+                "offset": 26089
+              }
+            ]
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "target_name": "AlexLimbs",
+            "targets": [
+              {
+                "class": "SupportingLimbDefinitionList",
+                "token": "SupportingLimbDefinitionList(1):AlexLimbs",
+                "offset": 20665
+              }
+            ]
+          }
+        ],
+        "fig_consumption_name_hash": "0xd6e37c2b59012448",
+        "fig_gate_occurrences": [
+          {
+            "block": "prototype_bare",
+            "condition_offset": 21296,
+            "owner": {
+              "kind": "bank",
+              "offset": 21160,
+              "name_hash": "0x60fce9c39a0784fa"
+            }
+          },
+          {
+            "block": "prototype_bare",
+            "condition_offset": 64428,
+            "owner": {
+              "kind": "bank",
+              "offset": 64388,
+              "name_hash": "0x616bdf147457b1a8"
+            }
+          },
+          {
+            "block": "prototype_bare",
+            "condition_offset": 69396,
+            "owner": {
+              "kind": "bank",
+              "offset": 69356,
+              "name_hash": "0x616bdf147457b1a8"
+            }
+          },
+          {
+            "block": "prototype_bare",
+            "condition_offset": 74768,
+            "owner": {
+              "kind": "bank",
+              "offset": 74728,
+              "name_hash": "0x616bdf147457b1a8"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 54920,
+            "owner": {
+              "kind": "node",
+              "offset": 54876,
+              "name_hash": "0x6348fce8d72765"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 74588,
+            "owner": {
+              "kind": "node",
+              "offset": 74544,
+              "name_hash": "0x6348fce8d72765"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 166560,
+            "owner": {
+              "kind": "node",
+              "offset": 166484,
+              "name_hash": "0x9090d3e91f4ee86f"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 173160,
+            "owner": {
+              "kind": "node",
+              "offset": 173116,
+              "name_hash": "0x616bdf147457b1a8"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 175392,
+            "owner": {
+              "kind": "node",
+              "offset": 175176,
+              "name_hash": "0x83994361bccdbcc5"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 194012,
+            "owner": {
+              "kind": "bank",
+              "offset": 193972,
+              "name_hash": "0xbda0f7aff6b6956c"
+            }
+          },
+          {
+            "block": "prototype_claws",
+            "condition_offset": 172,
+            "owner": {
+              "kind": "bank",
+              "offset": 104,
+              "name_hash": "0xa74c55cea0c0ec38"
+            }
+          },
+          {
+            "block": "prototype_claws",
+            "condition_offset": 4980,
+            "owner": {
+              "kind": "bank",
+              "offset": 4940,
+              "name_hash": "0x3200961c020ff7f"
+            }
+          },
+          {
+            "block": "prototype_claws",
+            "condition_offset": 20900,
+            "owner": {
+              "kind": "bank",
+              "offset": 20800,
+              "name_hash": "0x1330e1870cfcc143"
+            }
+          },
+          {
+            "block": "prototype_claws",
+            "condition_offset": 25140,
+            "owner": {
+              "kind": "bank",
+              "offset": 25040,
+              "name_hash": "0x1330e1870cfcc142"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 1760,
+            "owner": {
+              "kind": "bank",
+              "offset": 1720,
+              "name_hash": "0x6348fce8d72765"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 216276,
+            "owner": {
+              "kind": "bank",
+              "offset": 216236,
+              "name_hash": "0x6a926ce9182bdc57"
+            }
+          },
+          {
+            "block": "prototype_consume",
+            "condition_offset": 285816,
+            "owner": {
+              "kind": "node",
+              "offset": 285772,
+              "name_hash": "0x616bdf147457b1a8"
+            }
+          }
+        ]
+      },
+      {
+        "object_token": "proto::TransformationDescription(1):AlexArmourTransformationDescription",
+        "object_offset": 30094,
+        "meta_offset": 30257,
+        "fields": {
+          "description_name": "AlexArmour",
+          "stream_package": "AlexArmour",
+          "drawable": "alex_armor_arms",
+          "body_template": "AlexArmourBodyTemplate",
+          "body_grab_slot": "AlexBody",
+          "physics_object": "",
+          "physics_object_factory": "AlexPhysicsFactory",
+          "supporting_limb_list_object": "AlexLimbs",
+          "power": "",
+          "faction": "powered",
+          "damage_multiplier": 1.0,
+          "health_damage_scale": 0.5249999761581421,
+          "damage_attacker_amount": 0.0,
+          "hud_power": 6,
+          "override_left_arm_template": "AlexArmourLeftArmTemplate",
+          "left_arm_needed": 0
+        },
+        "exact_string_framing": [
+          {
+            "field": "description_name",
+            "length_width": "u32",
+            "offset_in_meta_body": 0,
+            "value": "AlexArmour"
+          },
+          {
+            "field": "stream_package",
+            "length_width": "u8",
+            "offset_in_meta_body": 14,
+            "value": "AlexArmour"
+          },
+          {
+            "field": "drawable",
+            "length_width": "u32",
+            "offset_in_meta_body": 25,
+            "value": "alex_armor_arms"
+          },
+          {
+            "field": "body_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 44,
+            "value": "AlexArmourBodyTemplate"
+          },
+          {
+            "field": "body_grab_slot",
+            "length_width": "u32",
+            "offset_in_meta_body": 70,
+            "value": "AlexBody"
+          },
+          {
+            "field": "physics_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 82,
+            "value": ""
+          },
+          {
+            "field": "physics_object_factory",
+            "length_width": "u8",
+            "offset_in_meta_body": 83,
+            "value": "AlexPhysicsFactory"
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 102,
+            "value": "AlexLimbs"
+          },
+          {
+            "field": "power",
+            "length_width": "u8",
+            "offset_in_meta_body": 112,
+            "value": ""
+          },
+          {
+            "field": "faction",
+            "length_width": "u32",
+            "offset_in_meta_body": 113,
+            "value": "powered"
+          },
+          {
+            "field": "override_left_arm_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 140,
+            "value": "AlexArmourLeftArmTemplate"
+          }
+        ],
+        "exact_tod_object_references": [
+          {
+            "field": "physics_object_factory",
+            "target_name": "AlexPhysicsFactory",
+            "targets": [
+              {
+                "class": "ravenphysics::SimplePhysicsObjectFactory",
+                "token": "ravenphysics::SimplePhysicsObjectFactory(1):AlexPhysicsFactory",
+                "offset": 26089
+              }
+            ]
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "target_name": "AlexLimbs",
+            "targets": [
+              {
+                "class": "SupportingLimbDefinitionList",
+                "token": "SupportingLimbDefinitionList(1):AlexLimbs",
+                "offset": 20665
+              }
+            ]
+          }
+        ],
+        "fig_consumption_name_hash": "0x21e869d281d62fc8",
+        "fig_gate_occurrences": [
+          {
+            "block": "prototype_air",
+            "condition_offset": 111088,
+            "owner": {
+              "kind": "bank",
+              "offset": 110100,
+              "name_hash": "0xee212aa1e8b35fb9"
+            }
+          },
+          {
+            "block": "prototype_air",
+            "condition_offset": 149584,
+            "owner": {
+              "kind": "node",
+              "offset": 149540,
+              "name_hash": "0x6248ccff50c526"
+            }
+          },
+          {
+            "block": "prototype_air",
+            "condition_offset": 177084,
+            "owner": {
+              "kind": "node",
+              "offset": 177040,
+              "name_hash": "0x9c61dc86c982fa28"
+            }
+          },
+          {
+            "block": "prototype_air",
+            "condition_offset": 177516,
+            "owner": {
+              "kind": "node",
+              "offset": 177472,
+              "name_hash": "0x9c61dc86c982fa28"
+            }
+          },
+          {
+            "block": "prototype_jump",
+            "condition_offset": 4736,
+            "owner": {
+              "kind": "node",
+              "offset": 4624,
+              "name_hash": "0xed88d8fe8798d620"
+            }
+          },
+          {
+            "block": "prototype_sprint",
+            "condition_offset": 5664,
+            "owner": {
+              "kind": "bank",
+              "offset": 5624,
+              "name_hash": "0x6248ccff50c526"
+            }
+          },
+          {
+            "block": "prototype_sprint",
+            "condition_offset": 6904,
+            "owner": {
+              "kind": "bank",
+              "offset": 6836,
+              "name_hash": "0x3e289fc8c50c9ad0"
+            }
+          },
+          {
+            "block": "prototype_sprint",
+            "condition_offset": 12104,
+            "owner": {
+              "kind": "store",
+              "offset": 12008,
+              "name_hash": "0x9a96770dbe0346bf"
+            }
+          },
+          {
+            "block": "prototype_sprint",
+            "condition_offset": 69900,
+            "owner": {
+              "kind": "bank",
+              "offset": 69860,
+              "name_hash": "0x9c61dc86c982fa28"
+            }
+          },
+          {
+            "block": "prototype_sprint",
+            "condition_offset": 74752,
+            "owner": {
+              "kind": "node",
+              "offset": 74708,
+              "name_hash": "0x6248ccff50c526"
+            }
+          },
+          {
+            "block": "prototype_sprint",
+            "condition_offset": 80948,
+            "owner": {
+              "kind": "node",
+              "offset": 79844,
+              "name_hash": "0x5c6e9d5102718138"
+            }
+          },
+          {
+            "block": "prototype_sprint",
+            "condition_offset": 95180,
+            "owner": {
+              "kind": "store",
+              "offset": 94932,
+              "name_hash": "0x815e960d4981a6e9"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 165792,
+            "owner": {
+              "kind": "node",
+              "offset": 165748,
+              "name_hash": "0x9c61dc86c982fa28"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 172852,
+            "owner": {
+              "kind": "node",
+              "offset": 172808,
+              "name_hash": "0x9c61dc86c982fa28"
+            }
+          },
+          {
+            "block": "prototype",
+            "condition_offset": 194356,
+            "owner": {
+              "kind": "bank",
+              "offset": 194316,
+              "name_hash": "0x9c61dc86c982fa28"
+            }
+          }
+        ]
+      },
+      {
+        "object_token": "proto::TransformationDescription(1):AlexChameleonicSkinTransformationDescription",
+        "object_offset": 30450,
+        "meta_offset": 30629,
+        "fields": {
+          "description_name": "AlexChameleonicSkin",
+          "stream_package": "",
+          "drawable": "alex_reg_arms",
+          "body_template": "AlexBodyTemplate",
+          "body_grab_slot": "AlexBody",
+          "physics_object": "",
+          "physics_object_factory": "AlexPhysicsFactory",
+          "supporting_limb_list_object": "AlexLimbs",
+          "power": "",
+          "faction": "chameleon",
+          "damage_multiplier": 1.0,
+          "health_damage_scale": 1.0,
+          "damage_attacker_amount": 0.0,
+          "hud_power": 9,
+          "override_left_arm_template": "",
+          "left_arm_needed": 0
+        },
+        "exact_string_framing": [
+          {
+            "field": "description_name",
+            "length_width": "u32",
+            "offset_in_meta_body": 0,
+            "value": "AlexChameleonicSkin"
+          },
+          {
+            "field": "stream_package",
+            "length_width": "u8",
+            "offset_in_meta_body": 23,
+            "value": ""
+          },
+          {
+            "field": "drawable",
+            "length_width": "u32",
+            "offset_in_meta_body": 24,
+            "value": "alex_reg_arms"
+          },
+          {
+            "field": "body_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 41,
+            "value": "AlexBodyTemplate"
+          },
+          {
+            "field": "body_grab_slot",
+            "length_width": "u32",
+            "offset_in_meta_body": 61,
+            "value": "AlexBody"
+          },
+          {
+            "field": "physics_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 73,
+            "value": ""
+          },
+          {
+            "field": "physics_object_factory",
+            "length_width": "u8",
+            "offset_in_meta_body": 74,
+            "value": "AlexPhysicsFactory"
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "length_width": "u8",
+            "offset_in_meta_body": 93,
+            "value": "AlexLimbs"
+          },
+          {
+            "field": "power",
+            "length_width": "u8",
+            "offset_in_meta_body": 103,
+            "value": ""
+          },
+          {
+            "field": "faction",
+            "length_width": "u32",
+            "offset_in_meta_body": 104,
+            "value": "chameleon"
+          },
+          {
+            "field": "override_left_arm_template",
+            "length_width": "u32",
+            "offset_in_meta_body": 133,
+            "value": ""
+          }
+        ],
+        "exact_tod_object_references": [
+          {
+            "field": "body_template",
+            "target_name": "AlexBodyTemplate",
+            "targets": [
+              {
+                "class": "GameObject",
+                "token": "GameObject(1):AlexBodyTemplate",
+                "offset": 1418
+              }
+            ]
+          },
+          {
+            "field": "physics_object_factory",
+            "target_name": "AlexPhysicsFactory",
+            "targets": [
+              {
+                "class": "ravenphysics::SimplePhysicsObjectFactory",
+                "token": "ravenphysics::SimplePhysicsObjectFactory(1):AlexPhysicsFactory",
+                "offset": 26089
+              }
+            ]
+          },
+          {
+            "field": "supporting_limb_list_object",
+            "target_name": "AlexLimbs",
+            "targets": [
+              {
+                "class": "SupportingLimbDefinitionList",
+                "token": "SupportingLimbDefinitionList(1):AlexLimbs",
+                "offset": 20665
+              }
+            ]
+          }
+        ],
+        "fig_consumption_name_hash": "0x278fa5477f927a3d",
+        "fig_gate_occurrences": []
+      }
+    ]
+  },
+  "field_vocabulary_evidence": {
+    "dll_contiguous_strings": [
+      "leftArmNeeded",
+      "overrideLeftArmTemplate",
+      "hudPower",
+      "damageAttackerAmount",
+      "healthDamageScale",
+      "damageMultiplier",
+      "faction",
+      "power",
+      "supportingLimbListObject",
+      "physicsObjectFactory",
+      "physicsObject",
+      "bodyGrabSlot",
+      "bodyTemplate",
+      "drawable",
+      "streamPackage",
+      "proto::TransformationDescription"
+    ]
+  }
+}

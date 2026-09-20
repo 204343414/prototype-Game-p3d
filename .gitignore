@@ -16,6 +16,11 @@ extracted/
 samples/exported/
 *.glb
 *.gltf
+*.fbx
+*.wav
+PrototypeExports/
+FBXBatch/
+.batch-staging/
 
 # OS
 .DS_Store
