@@ -23,6 +23,8 @@ Usage:
     如果你只想暴露某个解包出来的目录，传 --root /path/to/unpacked 更安全）
 """
 import argparse
+import collections
+import datetime
 from functools import lru_cache
 import http.server
 import gzip
@@ -154,6 +156,18 @@ def _explicit_entity_skeleton_donors(archive_path, archive_mtime_ns, archive_siz
 CELL_PREVIEW_LOCK = threading.Lock()
 EXPORT_LOCK = threading.Lock()
 EXPORT_JOBS_LOCK = threading.Lock()
+
+# 内存环形日志缓冲：给网页控制台页（/api/logs）使用，记录最近的服务日志，
+# 不依赖外部 stdout 重定向，重启后丢失是符合预期的（只看实时事件）。
+LOG_BUFFER = collections.deque(maxlen=2000)
+LOG_BUFFER_LOCK = threading.Lock()
+
+
+def log_line(kind, message):
+    line = f"{datetime.datetime.now().strftime('%H:%M:%S')} [{kind}] {message}"
+    with LOG_BUFFER_LOCK:
+        LOG_BUFFER.append(line)
+    print(line, flush=True)
 EXPORT_JOBS: dict[str, dict] = {}
 EXPORT_ROOT = os.path.realpath(os.environ.get("PROTOTYPE_EXPORT_ROOT", "/mnt/hdd/PrototypeExports"))
 BLENDER_BIN = os.environ.get("PROTOTYPE_BLENDER", shutil.which("blender") or os.path.join(EXPORT_ROOT, "tools", "blender-4.5.3-linux-x64", "blender"))
@@ -374,8 +388,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
     root_dir = "/"  # overridden by main() via a subclass factory
 
     def log_message(self, fmt, *args):
-        # quieter default logging
-        print("[viewer] " + (fmt % args))
+        # 请求日志进环形日志缓冲，供 /api/logs 网页控制台查看
+        line = f"{datetime.datetime.now().strftime('%H:%M:%S')} [http] " + (fmt % args)
+        with LOG_BUFFER_LOCK:
+            LOG_BUFFER.append(line)
 
     def _send_json(self, obj, status=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -472,6 +488,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_export_entity(qs)
         if parsed.path == "/api/export_job":
             return self._handle_export_job(qs)
+        if parsed.path == "/api/export_jobs":
+            return self._handle_export_jobs(qs)
+        if parsed.path == "/api/logs":
+            return self._handle_logs(qs)
         if parsed.path == "/api/export_entities_batch_download":
             return self._handle_export_entities_batch_download(qs)
         if parsed.path == "/api/export_directories":
@@ -1710,6 +1730,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (OSError, ValueError, PermissionError, json.JSONDecodeError) as exc:
             return self._send_error_json(str(exc), 400)
 
+    def _handle_export_jobs(self, qs):
+        kind = qs.get("type", [""])[0]
+        with EXPORT_JOBS_LOCK:
+            jobs = []
+            for jid, job in sorted(EXPORT_JOBS.items(), key=lambda kv: kv[1].get("created", 0), reverse=True):
+                if kind and job.get("type") != kind:
+                    continue
+                jobs.append({
+                    "id": jid,
+                    "type": job.get("type"),
+                    "status": job.get("status"),
+                    "total": job.get("total"),
+                    "completed": job.get("completed"),
+                    "current": job.get("current"),
+                    "errors": len(job.get("errors", [])),
+                    "results": len(job.get("results", [])),
+                    "download_url": job.get("download_url"),
+                    "output_dir": job.get("output_dir"),
+                })
+        return self._send_json({"jobs": jobs[:50]})
+
+    def _handle_logs(self, qs):
+        kind = qs.get("kind", [""])[0]
+        lines_qs = qs.get("lines", ["200"])[0]
+        try:
+            lines = max(1, min(2000, int(lines_qs)))
+        except ValueError:
+            lines = 200
+        with LOG_BUFFER_LOCK:
+            buf = list(LOG_BUFFER)
+        if kind:
+            buf = [l for l in buf if f"[{kind}]" in l]
+        return self._send_json({"lines": buf[-lines:]})
+
     def _handle_export_job(self, qs):
         job_id = qs.get("id", [""])[0]
         with EXPORT_JOBS_LOCK:
@@ -1860,31 +1914,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
         def worker():
             try:
                 with EXPORT_JOBS_LOCK: job["status"] = "running"
+                log_line("export", f"任务 {job_id} 启动：{len(clean_entries)} 个实体，workers={max_workers}，ZIP={'是' if package_zip else '否'}")
                 with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
                     futures = {pool.submit(export_one, i, item): i for i, item in enumerate(clean_entries)}
                     done_count = 0
                     for fut in concurrent.futures.as_completed(futures):
                         index = futures[fut]
                         done_count += 1
+                        item = clean_entries[index]
                         try:
                             result, error = fut.result()
                             with EXPORT_JOBS_LOCK:
                                 if result: job["results"].append(result)
                                 if error: job["errors"].append(error)
                                 job["completed"] = done_count
+                            if result:
+                                log_line("export", f"任务 {job_id} [{done_count}/{len(clean_entries)}] ✅ {result['name']}（FBX {result['fbx_bytes']//1048576} MB，动画 {result['source_actions']}，贴图 {result['textures']}）")
+                            if error:
+                                log_line("export", f"任务 {job_id} [{done_count}/{len(clean_entries)}] ❌ {error['name']}: {error['error'][:300]}")
                         except ItemSkipped:
                             with EXPORT_JOBS_LOCK:
-                                item = clean_entries[index]
                                 job["errors"].append({"name": item.get("name"), "entry": item.get("entry"), "error": "目标已存在；未启用覆盖"})
                                 job["completed"] = done_count
-                manifest = os.path.join(output_dir, "batch-export-manifest.json")
-                with EXPORT_JOBS_LOCK:
-                    job["status"] = "completed" if not job["errors"] else "completed_with_errors"
-                    job["current"] = None
-                    with open(manifest, "w", encoding="utf-8") as handle: json.dump(job, handle, ensure_ascii=False, indent=2)
+                            log_line("export", f"任务 {job_id} [{done_count}/{len(clean_entries)}] ⚠ 跳过 {item.get('name')}：目标已存在")
+                # 先打 ZIP，后落 final 状态：前端轮询只认 completed，避免状态已 completed
+                # 但 download_url 尚未就绪的竞态（用户看到的“28 剩 1 时报 未生成 ZIP”根因）
                 if package_zip and job["results"]:
+                    with EXPORT_JOBS_LOCK:
+                        job["status"] = "packaging"
+                        job["current"] = "打包 ZIP…"
+                    log_line("export", f"任务 {job_id} 实体全部完成，开始打包 ZIP…")
                     package = os.path.join(os.path.dirname(output_dir), f"entity-batch-{job_id}.zip")
-                    with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_STORED) as archive:
+                    with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
                         for root_dir, _dirs, files in os.walk(output_dir):
                             for file_name in files:
                                 full = os.path.join(root_dir, file_name)
@@ -1892,10 +1953,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     with EXPORT_JOBS_LOCK:
                         job["package"] = package
                         job["download_url"] = f"/api/export_entities_batch_download?job_id={job_id}"
+                    log_line("export", f"任务 {job_id} ZIP 打包完成：{package}（{os.path.getsize(package)//1048576} MB）")
+                manifest = os.path.join(output_dir, "batch-export-manifest.json")
+                with EXPORT_JOBS_LOCK:
+                    job["status"] = "completed" if not job["errors"] else "completed_with_errors"
+                    job["current"] = None
+                    with open(manifest, "w", encoding="utf-8") as handle: json.dump(job, handle, ensure_ascii=False, indent=2)
+                log_line("export", f"任务 {job_id} {job['status']}：成功 {len(job['results'])} / 失败 {len(job['errors'])}")
             except Exception as exc:
                 with EXPORT_JOBS_LOCK:
                     job["status"] = "failed"; job["current"] = None
                     job["errors"].append({"error": f"{type(exc).__name__}: {exc}"})
+                log_line("export", f"任务 {job_id} 失败：{type(exc).__name__}: {exc}")
             finally:
                 shutil.rmtree(staging_root, ignore_errors=True)
                 EXPORT_LOCK.release()

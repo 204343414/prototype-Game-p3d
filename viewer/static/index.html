@@ -53,6 +53,21 @@
 
   /* 实体卡片多选模式（仿系统文件管理器：Shift 范围选择 / Ctrl 反选） */
   #entity-multiselect-toggle { background: #1e293b; border: 1px solid #7c3aed; color: #c4b5fd; padding: 7px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: all 0.2s; }
+  #console-toggle { position: fixed; right: 16px; bottom: 16px; z-index: 90; background: #0d3325; border: 1px solid #34d399; color: #a7f3d0; padding: 9px 14px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+  #console-toggle:hover { background: #14532d; }
+  #console-panel { position: fixed; right: 16px; bottom: 64px; z-index: 95; width: min(720px, 92vw); height: 50vh; display: flex; flex-direction: column; background: #070c14f5; border: 1px solid #2c3f56; border-radius: 10px; box-shadow: 0 24px 70px #000; overflow: hidden; }
+  .console-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: #10192a; border-bottom: 1px solid #24354c; color: #e7f3ff; font-size: 13px; }
+  .console-head select { background: #0d1524; border: 1px solid #33475f; color: #dcecff; border-radius: 5px; padding: 4px 8px; font-size: 12px; }
+  .console-head button { background: #1a2740; border: 1px solid #33475f; color: #cfe0f7; border-radius: 5px; padding: 4px 9px; font-size: 11px; cursor: pointer; }
+  .console-head button:hover { background: #243a5f; }
+  #console-close { margin-left: auto; }
+  .console-jobs { padding: 8px 12px; font-size: 11px; color: #94c6ff; border-bottom: 1px solid #1c2b40; max-height: 90px; overflow: auto; }
+  .console-jobs .job-row { display: flex; gap: 8px; line-height: 1.6; }
+  .console-jobs .job-st { font-weight: 700; }
+  .console-jobs .st-ok { color: #4ade80; } .console-jobs .st-warn { color: #fbbf24; } .console-jobs .st-bad { color: #f87171; } .console-jobs .st-run { color: #60a5fa; }
+  .console-log { flex: 1; margin: 0; padding: 8px 12px; overflow: auto; font-size: 11px; line-height: 1.55; color: #9fe8c0; background: #05080f; white-space: pre-wrap; word-break: break-all; font-family: Consolas, 'Courier New', monospace; }
+  #console-hint { padding: 5px 12px; font-size: 10px; color: #5c7eae; border-top: 1px solid #16233a; }
+  #console-panel.hidden, #console-toggle.hidden { display: none; }
   #entity-multiselect-toggle:hover { background: #3b0764; }
   #entity-multiselect-toggle.active { background: #7c3aed; color: #fff; box-shadow: 0 0 12px rgba(124,58,237,0.5); }
   #entity-shelf-view.select-mode .entity-card { cursor: default; }
@@ -419,6 +434,24 @@
         <div id="entity-drawer-grid" class="drawer-grid"></div>
       </div>
 
+      <!-- 网页控制台：服务日志 + 导出任务 -->
+      <button id="console-toggle" type="button" title="查看服务端日志与导出任务">🖥 控制台</button>
+      <div id="console-panel" class="hidden">
+        <div class="console-head">
+          <strong>服务器控制台</strong>
+          <select id="console-kind">
+            <option value="">全部日志</option>
+            <option value="export">仅导出</option>
+            <option value="http">仅 HTTP</option>
+          </select>
+          <label style="color:#8ea5bd;font-size:11px"><input id="console-autoscroll" type="checkbox" checked /> 自动滚动</label>
+          <button id="console-clear" type="button">清屏</button>
+          <button id="console-close" type="button">✕</button>
+        </div>
+        <div id="console-jobs" class="console-jobs"></div>
+        <pre id="console-log" class="console-log"></pre>
+        <div id="console-hint">3 秒自动刷新 · 只显示内存中保留的最近 2000 行，服务重启后清空</div>
+      </div>
       <!-- 地图工具条 -->
       <div id="map-toolbar" class="hidden">
         <label><input id="map-wireframe" type="checkbox" /> 线框</label>
@@ -451,9 +484,56 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { createMapWorkbench } from "./map-view.js?v=20260920_map-path4";
-import { createEntityShelf } from "./entity-shelf.js?v=20260921_native-folder";
+import { createEntityShelf } from "./entity-shelf.js?v=20260921_console";
 
 console.log("[Prototype Viewer] Starting frontend runtime...");
+// 网页控制台：窗口右下角『🖥 控制台』，3 秒轮询 /api/logs + /api/export_jobs
+function setupDebugConsole() {
+  const toggle = document.getElementById('console-toggle');
+  const panel = document.getElementById('console-panel');
+  const logEl = document.getElementById('console-log');
+  const jobsEl = document.getElementById('console-jobs');
+  const kindSel = document.getElementById('console-kind');
+  const autoScroll = document.getElementById('console-autoscroll');
+  if (!toggle || !panel || !logEl || !jobsEl) return;
+  let timer = null;
+  const fmtJob = (j) => {
+    const st = j.status === 'failed' ? 'st-bad' : (j.status === 'running' || j.status === 'queued' ? 'st-run' : (j.errors > 0 ? 'st-warn' : 'st-ok'));
+    const done = `${j.completed ?? 0}/${j.total ?? 0}`;
+    const link = j.download_url ? ` · <a style="color:#7fd4ff" href="${j.download_url}">⬇ 下载ZIP</a>` : '';
+    return `<div class="job-row"><span class="job-st ${st}">${j.status}</span><span>${j.id.slice(0, 10)} · ${j.type || ''} · ${done}${j.current ? ' · ' + j.current : ''} · 失败 ${j.errors}</span>${link}</div>`;
+  };
+  const refresh = async () => {
+    try {
+      const [logResp, jobsResp] = await Promise.all([
+        fetch('/api/logs?' + new URLSearchParams({ kind: kindSel.value, lines: '400' })),
+        fetch('/api/export_jobs'),
+      ]);
+      const logData = await logResp.json();
+      const jobsData = await jobsResp.json();
+      const lines = logData.lines || [];
+      logEl.textContent = lines.length ? lines.join('\n') : '(暂无日志——日志是从服务启动开始计数的，重启后清空)';
+      if (autoScroll.checked) logEl.scrollTop = logEl.scrollHeight;
+      const jobs = jobsData.jobs || [];
+      jobsEl.innerHTML = jobs.length
+        ? jobs.slice(0, 8).map(fmtJob).join('')
+        : '<span style="color:#5c7eae">暂无导出任务</span>';
+    } catch (err) {
+      logEl.textContent = '控制台请求失败：' + err.message;
+    }
+  };
+  const open = (isOpen) => {
+    panel.classList.toggle('hidden', !isOpen);
+    if (isOpen) { refresh(); timer = setInterval(refresh, 3000); }
+    else if (timer) { clearInterval(timer); timer = null; }
+  };
+  toggle.onclick = () => open(panel.classList.contains('hidden'));
+  document.getElementById('console-close').onclick = () => open(false);
+  document.getElementById('console-clear').onclick = () => { logEl.textContent = ''; };
+  kindSel.onchange = refresh;
+}
+setupDebugConsole();
+
 
 // ---- 1. three.js 查看器基础环境搭建 ----
 const host = document.getElementById("canvas-host");

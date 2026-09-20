@@ -2038,7 +2038,7 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
         if (!jobResp.ok) throw new Error(j.error || `HTTP ${jobResp.status}`);
         job = j;
         status.textContent = `${j.status} · ${j.completed}/${j.total}${j.current ? ' · ' + j.current : ''} · 成功 ${j.results.length} · 失败 ${j.errors.length}`;
-        if (!['queued', 'running'].includes(j.status)) break;
+        if (!['queued', 'running', 'packaging'].includes(j.status)) break;
       }
       if (!job.download_url) throw new Error(job.errors?.map(e => e.name + ': ' + e.error).join('; ') || '导出失败，未生成 ZIP。');
 
