@@ -570,3 +570,13 @@ Blackwatch/NIS/gameplay 候选来源见角色地基文档；身份、通用缩�
 3. 已用 Soldier.p3d 跑通：FBX 重导入武器网格 smooth=100%，贴图引用全部 .png。
 
 已跑 rebuild_mirror_batches（39/39 实体用新链）；完成后包新 ZIP 交付。
+
+39/39 实体全部用新转换器重转完成（Soldier 488MB / alex 863MB 各 1 次过），新 ZIP：
+
+- entity-batch-e4f34300dd8e7629.zip（31 实体，角色批，1097MB）— 替代 b36b4d1c0c5caedf
+- entity-batch-09865cc9fe969eeb.zip（8 实体，Alex 变体批，919MB）— 替代 9fc85d0609286300
+
+验证：Soldier.p3d.fbx 字符串扫描已无任何 .dds 贴图引用（全部 .png）；
+Blender 重导入所有网格 use_smooth=100%（含 alex_claws 抽查）；新旧批的
+weapons001_diffuse.png md5 一致（764a15c216ec37fad713f26ed30218ef），
+即贴图字节级未变——用户只需覆盖 .fbx/.json，不必重新导贴图/排版。
