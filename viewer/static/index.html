@@ -44,24 +44,6 @@
 
   .shelf-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
   .shelf-export-status { flex-basis: 100%; text-align: right; font-size: 10px; color: #70efb3; line-height: 1.35; white-space: pre-wrap; }
-  .batch-export-primary { background:#123323; border:1px solid #39b77a; color:#8fffc4; padding:8px 13px; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap; }
-  .batch-export-primary:hover { background:#19533a; border-color:#8fffc4; }
-  .export-dialog-backdrop { position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center; padding:20px; background:rgba(3,7,12,.82); }
-  .export-dialog { width:min(680px, 96vw); max-height:90vh; overflow:auto; background:#111925; border:1px solid #34465d; border-radius:10px; box-shadow:0 24px 80px #000; padding:18px; }
-  .export-dialog h3 { margin:0 0 14px; color:#8fd8ff; font-size:17px; }
-  .export-dialog-grid { display:grid; grid-template-columns:150px 1fr; gap:10px 12px; align-items:center; }
-  .export-dialog label { color:#a9b7ca; font-size:12px; }
-  .export-dialog input[type="text"], .export-dialog input[type="search"], .export-dialog select { box-sizing:border-box; width:100%; background:#09111b; border:1px solid #34465d; color:#e7f1ff; padding:8px 10px; border-radius:5px; }
-  .export-path-row { display:flex; gap:8px; }
-  .export-path-row input { flex:1; }
-  .export-dialog-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
-  .export-dialog button { background:#1b293b; border:1px solid #425b78; color:#dcecff; padding:8px 12px; border-radius:5px; cursor:pointer; }
-  .export-dialog button.primary { background:#155c3d; border-color:#45c888; color:#fff; font-weight:700; }
-  .export-dialog button:disabled { opacity:.5; cursor:wait; }
-  .export-match-preview { margin-top:12px; padding:10px; max-height:120px; overflow:auto; background:#09111b; border:1px solid #26374b; color:#91a5bc; font-size:11px; line-height:1.55; white-space:pre-wrap; }
-  .folder-list { margin-top:10px; max-height:340px; overflow:auto; border:1px solid #2c4057; background:#09111b; }
-  .folder-entry { display:flex; gap:8px; width:100%; border:0 !important; border-bottom:1px solid #1d2c3e !important; border-radius:0 !important; background:transparent !important; text-align:left; }
-  .folder-entry:hover { background:#17283a !important; }
   .batch-snap-btn { background: #1e293b; border: 1px solid #3b82f6; color: #7fd4ff; padding: 7px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all 0.2s; user-select: none; white-space: nowrap; }
   .batch-snap-btn:hover { background: #2563eb; color: #fff; border-color: #60a5fa; box-shadow: 0 0 12px rgba(59,130,246,0.4); }
   .batch-snap-btn.running { background: #7c2d12; border-color: #ea580c; color: #fdba74; animation: pulse 1.5s infinite; }
@@ -249,12 +231,10 @@
           <input id="entity-search-full" type="search" placeholder="🔍 快速搜索 494 个实体 (如 claws, tank, soldier, dana)..." />
         </div>
         <div class="shelf-actions">
-          <button id="entity-batch-dialog-open-full" type="button" class="batch-export-primary" title="先筛选实体，再从服务器文件夹页面选择导出位置">🔎 筛选并批量导出…</button>
           <button id="entity-multiselect-toggle" type="button" title="多选模式：单击单选 · Shift+单击范围选择 · Ctrl+单击反选">☑ 多选导出</button>
           <button id="batch-snapshot-btn" class="batch-snap-btn" title="一键后台轮询生成所有实体的 1:1 3D 高清快照并永久缓存到浏览器">📸 自动拍照并持久缓存</button>
           <span id="snapshot-stats-badge" class="snap-stats-badge">已缓存: 0 / 494</span>
           <button id="clear-snapshot-btn" class="clear-snap-btn" title="清空所有已缓存的快照">🗑 清除缓存</button>
-          <div id="entity-batch-status-full" class="shelf-export-status"></div>
         </div>
       </div>
       <div id="entity-shelf-scroll" class="entity-shelf-scroll">
@@ -434,63 +414,9 @@
         <div class="drawer-search-box">
           <input id="entity-drawer-search" type="search" placeholder="筛选实体名称…" />
         </div>
-        <div style="padding:8px 10px;display:grid;gap:6px;border-bottom:1px solid #263244;background:#101722">
-          <button id="entity-batch-dialog-open-drawer" type="button" class="batch-export-primary">🔎 筛选并批量导出…</button>
-          <div id="entity-batch-status" style="font-size:10px;color:#70efb3;line-height:1.4;white-space:pre-wrap"></div>
-        </div>
+
         <div id="entity-drawer-status" style="padding: 4px 10px; font-size: 10px; color: #7fd4ff; background: #0c1017;"></div>
         <div id="entity-drawer-grid" class="drawer-grid"></div>
-      </div>
-
-      <!-- 明确的实体筛选与服务器目录选择流程 -->
-      <div id="entity-export-dialog-backdrop" class="export-dialog-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="entity-export-dialog-title">
-        <div class="export-dialog">
-          <h3 id="entity-export-dialog-title">🔎 筛选并批量导出实体</h3>
-          <div class="export-dialog-grid">
-            <label for="entity-export-filter-category">导出分类</label>
-            <select id="entity-export-filter-category">
-              <option value="all">全部实体</option><option value="powers">能力</option><option value="vehicles">载具</option><option value="characters">角色</option><option value="pedestrians">市民</option><option value="props">道具</option>
-            </select>
-            <label for="entity-export-filter-search">名称/路径筛选</label>
-            <input id="entity-export-filter-search" type="search" placeholder="留空表示此分类中的全部实体" />
-            <label>匹配结果</label>
-            <strong id="entity-export-match-count" style="color:#8fffc4">0 个实体</strong>
-            <label for="entity-export-selected-path">导出到服务器文件夹</label>
-            <div class="export-path-row">
-              <input id="entity-export-selected-path" type="text" value="." readonly />
-              <button id="entity-export-choose-folder" type="button">📁 选择文件夹…</button>
-            </div>
-            <label for="entity-export-overwrite-dialog">覆盖策略</label>
-            <label><input id="entity-export-overwrite-dialog" type="checkbox" /> 覆盖已存在的同名实体目录</label>
-          </div>
-          <div id="entity-export-match-preview" class="export-match-preview"></div>
-          <div id="entity-export-dialog-status" style="margin-top:10px;color:#ffcb75;font-size:12px;white-space:pre-wrap"></div>
-          <div class="export-dialog-actions">
-            <button id="entity-export-dialog-cancel" type="button">取消</button>
-            <button id="entity-export-dialog-start" type="button" class="primary">开始批量导出</button>
-          </div>
-        </div>
-      </div>
-
-      <div id="entity-folder-dialog-backdrop" class="export-dialog-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="entity-folder-dialog-title">
-        <div class="export-dialog">
-          <h3 id="entity-folder-dialog-title">📁 选择服务器导出文件夹</h3>
-          <div style="font-size:11px;color:#8295aa">安全根目录：<span id="entity-folder-root"></span></div>
-          <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
-            <button id="entity-folder-up" type="button">⬆ 上一级</button>
-            <strong id="entity-folder-current" style="color:#bfe3ff;word-break:break-all"></strong>
-          </div>
-          <div id="entity-folder-list" class="folder-list"></div>
-          <div style="display:flex;gap:8px;margin-top:10px">
-            <input id="entity-folder-new-name" type="text" placeholder="新文件夹名称" style="flex:1;background:#09111b;border:1px solid #34465d;color:#fff;padding:8px;border-radius:5px" />
-            <button id="entity-folder-create" type="button">＋ 新建文件夹</button>
-          </div>
-          <div id="entity-folder-status" style="margin-top:8px;color:#ffcb75;font-size:12px"></div>
-          <div class="export-dialog-actions">
-            <button id="entity-folder-cancel" type="button">取消</button>
-            <button id="entity-folder-select" type="button" class="primary">选择当前文件夹</button>
-          </div>
-        </div>
       </div>
 
       <!-- 地图工具条 -->
@@ -525,7 +451,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { createMapWorkbench } from "./map-view.js?v=20260920_map-path4";
-import { createEntityShelf } from "./entity-shelf.js?v=20260920_entity-batch9";
+import { createEntityShelf } from "./entity-shelf.js?v=20260921_native-folder";
 
 console.log("[Prototype Viewer] Starting frontend runtime...");
 

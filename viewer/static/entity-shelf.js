@@ -2094,6 +2094,8 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     }
   }
 
+  setupSelectionControls();
+
   function renderGrid() {
     if (!entityData) return;
 
@@ -2194,42 +2196,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
     return [...unique.values()];
   }
 
-  async function pollExportJob(jobId, statusEl, button) {
-    while (true) {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      const response = await fetch('/api/export_job?' + new URLSearchParams({id:jobId}));
-      const job = await response.json();
-      if (!response.ok) throw new Error(job.error || `HTTP ${response.status}`);
-      statusEl.textContent = `${job.status} · ${job.completed}/${job.total}${job.current ? ` · ${job.current}` : ''} · 成功 ${job.results.length} · 错误 ${job.errors.length}`;
-      if (!['queued','running'].includes(job.status)) {
-        button.disabled=false;button.textContent=button.dataset.idleLabel || '批量导出当前筛选结果';
-        if (job.status === 'completed' || job.status === 'completed_with_errors') statusEl.textContent += `\n输出：${job.output_dir}`;
-        return;
-      }
-    }
-  }
-
-  async function startBatchExport(items, controls) {
-    const pathInput=document.getElementById(controls.path);
-    const overwrite=document.getElementById(controls.overwrite);
-    const button=document.getElementById(controls.button);
-    const statusEl=document.getElementById(controls.status);
-    if (!pathInput || !overwrite || !button || !statusEl) return;
-    button.dataset.idleLabel ||= button.textContent;
-    if (!items.length) { statusEl.textContent='当前筛选没有可导出的实体。'; return; }
-    if (!pathInput.value.trim()) { statusEl.textContent='必须填写服务器导出路径。'; return; }
-    button.disabled=true;button.textContent=`正在提交 ${items.length} 个实体…`;
-    try {
-      const response=await fetch('/api/export_entities_batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({entries:items,output_dir:pathInput.value.trim(),overwrite:overwrite.checked})});
-      const result=await response.json();
-      if(!response.ok)throw new Error(result.error||`HTTP ${response.status}`);
-      statusEl.textContent=`任务 ${result.job_id} 已创建；输出：${result.output_dir}`;
-      await pollExportJob(result.job_id,statusEl,button);
-    } catch(error) {
-      button.disabled=false;button.textContent=button.dataset.idleLabel;statusEl.textContent='批量导出失败：'+error.message;
-    }
-  }
-
   function updateAnimation(dt) {
     sandboxUpdate(dt);
     combatPump();
@@ -2282,114 +2248,6 @@ export function createEntityShelf({ scene, camera, controls, renderer, onStatus,
       renderDrawerGrid();
     };
   }
-
-  const exportDialog = document.getElementById('entity-export-dialog-backdrop');
-  const folderDialog = document.getElementById('entity-folder-dialog-backdrop');
-  const exportCategory = document.getElementById('entity-export-filter-category');
-  const exportSearch = document.getElementById('entity-export-filter-search');
-  const exportPath = document.getElementById('entity-export-selected-path');
-  const exportMatchCount = document.getElementById('entity-export-match-count');
-  const exportPreview = document.getElementById('entity-export-match-preview');
-  let folderCurrent = '';
-
-  function refreshExportDialogMatches() {
-    const items = currentFilteredEntries(exportCategory.value, exportSearch.value);
-    exportMatchCount.textContent = `${items.length} 个实体`;
-    const names = items.slice(0, 30).map(item => `• ${item.name}`).join('\n');
-    exportPreview.textContent = names + (items.length > 30 ? `\n…另有 ${items.length - 30} 个` : '') || '没有匹配项；请修改分类或关键词。';
-    return items;
-  }
-
-  function openExportDialog() {
-    exportCategory.value = currentCategory;
-    exportSearch.value = currentSearchQuery;
-    document.getElementById('entity-export-dialog-status').textContent = '';
-    refreshExportDialogMatches();
-    exportDialog.classList.remove('hidden');
-  }
-
-  for (const id of ['entity-batch-dialog-open-full', 'entity-batch-dialog-open-drawer']) {
-    const button = document.getElementById(id);
-    if (button) button.onclick = openExportDialog;
-  }
-  exportCategory.onchange = refreshExportDialogMatches;
-  exportSearch.oninput = refreshExportDialogMatches;
-  document.getElementById('entity-export-dialog-cancel').onclick = () => exportDialog.classList.add('hidden');
-  document.getElementById('entity-export-dialog-start').onclick = () => {
-    const items = refreshExportDialogMatches();
-    startBatchExport(items, {
-      path:'entity-export-selected-path',
-      overwrite:'entity-export-overwrite-dialog',
-      button:'entity-export-dialog-start',
-      status:'entity-export-dialog-status',
-    });
-  };
-
-  // 文件管理器式多选（Shift 范围 / Ctrl 反选）+ 浏览器原生文件夹导出
-  setupSelectionControls();
-
-  async function loadFolder(path) {
-    const status = document.getElementById('entity-folder-status');
-    const list = document.getElementById('entity-folder-list');
-    status.textContent = '正在读取服务器文件夹…';
-    list.replaceChildren();
-    try {
-      const response = await fetch('/api/export_directories?' + new URLSearchParams({path:path || '.'}));
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-      folderCurrent = data.current || '';
-      document.getElementById('entity-folder-root').textContent = data.root;
-      document.getElementById('entity-folder-current').textContent = '/' + folderCurrent;
-      document.getElementById('entity-folder-up').disabled = data.parent === null;
-      document.getElementById('entity-folder-up').dataset.parent = data.parent ?? '';
-      for (const name of data.directories) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'folder-entry';
-        button.textContent = `📁 ${name}`;
-        button.onclick = () => loadFolder(folderCurrent ? `${folderCurrent}/${name}` : name);
-        list.appendChild(button);
-      }
-      if (!data.directories.length) {
-        const empty = document.createElement('div');
-        empty.style.cssText = 'padding:18px;color:#74869a;text-align:center';
-        empty.textContent = '此文件夹中没有子文件夹';
-        list.appendChild(empty);
-      }
-      status.textContent = '';
-    } catch (error) {
-      status.textContent = '读取失败：' + error.message;
-    }
-  }
-
-  document.getElementById('entity-export-choose-folder').onclick = () => {
-    folderDialog.classList.remove('hidden');
-    loadFolder(exportPath.value || '.');
-  };
-  document.getElementById('entity-folder-up').onclick = (event) => loadFolder(event.currentTarget.dataset.parent || '.');
-  document.getElementById('entity-folder-cancel').onclick = () => folderDialog.classList.add('hidden');
-  document.getElementById('entity-folder-select').onclick = () => {
-    exportPath.value = folderCurrent || '.';
-    folderDialog.classList.add('hidden');
-  };
-  document.getElementById('entity-folder-create').onclick = async () => {
-    const nameInput = document.getElementById('entity-folder-new-name');
-    const status = document.getElementById('entity-folder-status');
-    const name = nameInput.value.trim();
-    if (!name) { status.textContent = '请输入新文件夹名称。'; return; }
-    try {
-      const response = await fetch('/api/export_directory', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({parent:folderCurrent || '.', name}),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-      nameInput.value = '';
-      await loadFolder(data.path);
-    } catch (error) {
-      status.textContent = '新建失败：' + error.message;
-    }
-  };
 
   const clearBtn = document.getElementById('clear-snapshot-btn');
   if (clearBtn) {
