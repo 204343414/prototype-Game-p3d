@@ -9,6 +9,22 @@ def main():
     args=args_after_dash()
     if len(args)!=2: raise SystemExit('usage: blender -b --python convert_glb_to_fbx.py -- input.glb output.fbx')
     source,output=map(os.path.abspath,args);os.makedirs(os.path.dirname(output),exist_ok=True)
+    # Unity-targeted left/right mirror. Prototype's rig names land on the
+    # visually opposite side when the right-handed glTF is consumed by
+    # Unity's left-handed importer; mirroring the whole scene (meshes,
+    # skins, nodes, every animation curve) keeps names intact while
+    # Hip_L again lives on the left. Enabled with --mirror-lr or
+    # PROTOTYPE_FBX_MIRROR_LR=1. GLB viewer previews stay source-faithful.
+    mirror_flag='--mirror-lr' in sys.argv or os.environ.get('PROTOTYPE_FBX_MIRROR_LR')=='1'
+    if mirror_flag:
+        import io as _io
+        script_dir=os.path.dirname(os.path.abspath(__file__))
+        if script_dir not in sys.path:sys.path.insert(0,script_dir)
+        import glb_mirror_lr
+        mirrored=source+'.mirror-lr.glb'
+        stats=glb_mirror_lr.mirror_file(source,mirrored)
+        source=mirrored
+        print('MIRROR_LR_APPLIED '+json.dumps(stats,ensure_ascii=False))
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.gltf(filepath=source,import_pack_images=True,merge_vertices=False,import_shading='NORMALS')
     armatures=[o for o in bpy.context.scene.objects if o.type=='ARMATURE']
@@ -108,7 +124,8 @@ def main():
         path_mode='STRIP',embed_textures=False,use_custom_props=True,
         mesh_smooth_type='OFF',use_triangles=True,use_mesh_modifiers=True)
     if 'FINISHED' not in result or not os.path.isfile(output):raise RuntimeError(f'FBX export failed: {result}')
-    report={'source_glb':source,'output_fbx':output,'bytes':os.path.getsize(output),
+    report_mirror=mirror_flag
+    report={'source_glb':source,'output_fbx':output,'bytes':os.path.getsize(output),'mirror_lr':report_mirror,
             'objects':len(bpy.context.scene.objects),'meshes':sum(o.type=='MESH' for o in bpy.context.scene.objects),
             'armatures':len(armatures),'default_action':bind_action.name if bind_action else None,
             'actions':[a.name for a in bpy.data.actions],'textures':written_textures}

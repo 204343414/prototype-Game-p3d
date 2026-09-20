@@ -1838,8 +1838,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if gltf_run.returncode:
                     raise RuntimeError((gltf_run.stderr or gltf_run.stdout)[-2000:])
                 glb, fbx = os.path.join(stage, name + ".glb"), os.path.join(stage, name + ".fbx")
+                fbx_env = dict(os.environ, PROTOTYPE_FBX_MIRROR_LR="1")
                 fbx_run = subprocess.run([blender, "--background", "--python", converter, "--", glb, fbx],
-                                         capture_output=True, text=True, timeout=1800)
+                                         capture_output=True, text=True, timeout=1800, env=fbx_env)
                 if fbx_run.returncode or not os.path.isfile(fbx):
                     raise RuntimeError((fbx_run.stderr or fbx_run.stdout)[-4000:])
                 shutil.rmtree(target, ignore_errors=True); os.makedirs(target, exist_ok=True)
@@ -1926,7 +1927,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             blender = BLENDER_BIN
             converter = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "tools", "entities", "convert_glb_to_fbx.py"))
             converted = subprocess.run([blender, "--background", "--python", converter, "--", glb, fbx],
-                                       capture_output=True, text=True, timeout=1800)
+                                       capture_output=True, text=True, timeout=1800,
+                                       env=dict(os.environ, PROTOTYPE_FBX_MIRROR_LR="1"))
             if converted.returncode or not os.path.isfile(fbx):
                 detail = (converted.stderr or converted.stdout or "FBX 转换失败")[-4000:]
                 return self._send_error_json(detail, 500)
