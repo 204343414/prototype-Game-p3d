@@ -228,7 +228,9 @@ def export(data,out,name):
    import urllib.parse as _up,urllib.request as _ur
    donor_entry,overrides=cfg;donor_map=overrides
    need={v for sh in overrides.values() for v in sh.values()}
-   du='http://127.0.0.1:8421/api/entity_mesh?'+_up.urlencode({'entry':donor_entry})
+   # 跟随 --server 参数；本地预览器端口不一定是 8421
+   server=data.get('_server','http://127.0.0.1:8421')
+   du=server+'/api/entity_mesh?'+_up.urlencode({'entry':donor_entry})
    dd=json.load(_ur.urlopen(du))
    for t in dd.get('textures',[]):
     if t.get('key') in need:all_tex.append(t)
@@ -302,5 +304,5 @@ def export(data,out,name):
   else:omitted_animations.append({'name':a.get('name'),'reason':'no decoded skeleton has matching animation group joints'})
  b.g['buffers'][0]['byteLength']=len(b.bin);base=safe(name);b.g['buffers'][0]['uri']=base+'.bin';(out/(base+'.bin')).write_bytes(b.bin);(out/(base+'.gltf')).write_text(json.dumps(b.g,ensure_ascii=False,indent=2));write_glb(b.g,b.bin,out/(base+'.glb'),out); report={'sourceEntry':data.get('_source_entry'),'meshes':len(b.g['meshes']),'skins':len(b.g['skins']),'animations':len(b.g['animations']),'sourceAnimations':sum(1 for a in b.g['animations'] if not a.get('extras',{}).get('generatedUtilityClip')),'generatedBindPoseAnimations':sum(1 for a in b.g['animations'] if a.get('extras',{}).get('generatedUtilityClip')),'textures':len(b.g['textures']),'sourceDiagnostics':data.get('diagnostics',[]),'omittedAnimations':omitted_animations};(out/'export-report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2));(out/'unsupported-records.json').write_text(json.dumps({'sourceEntry':data.get('_source_entry'),'decoderDiagnostics':data.get('diagnostics',[]),'omittedAnimations':omitted_animations,'knownUnmappedSemantics':['shader parameters other than color/normal/specular are preserved only in source bytes','source-specific rendering template behavior is not translated into generic glTF PBR','non-render/gameplay chunks are outside an entity render asset']},ensure_ascii=False,indent=2));print(out/(base+'.gltf'))
 def main():
- p=argparse.ArgumentParser();p.add_argument('--server',default='http://127.0.0.1:8421');p.add_argument('--entry',required=True);p.add_argument('--output',required=True);p.add_argument('--name');a=p.parse_args();u=a.server+'/api/entity_mesh?'+urllib.parse.urlencode({'entry':a.entry});d=json.load(urllib.request.urlopen(u));d['_source_entry']=a.entry;export(d,Path(a.output),a.name or Path(a.entry.replace('\\','/')).stem)
+ p=argparse.ArgumentParser();p.add_argument('--server',default='http://127.0.0.1:8421');p.add_argument('--entry',required=True);p.add_argument('--output',required=True);p.add_argument('--name');a=p.parse_args();u=a.server+'/api/entity_mesh?'+urllib.parse.urlencode({'entry':a.entry});d=json.load(urllib.request.urlopen(u));d['_source_entry']=a.entry;d['_server']=a.server;export(d,Path(a.output),a.name or Path(a.entry.replace('\\','/')).stem)
 if __name__=='__main__':main()
