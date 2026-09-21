@@ -208,13 +208,45 @@ class Builder:
   if maxv is not None:a['max']=maxv
   if normalized:a['normalized']=True
   self.g['accessors'].append(a);return len(self.g['accessors'])-1
+# 共享贴图失主表：个别 entity 的 mesh 在源包里只声明了 normal 或干脆不填
+# 贴图参数，运行时其实去 \art\startup_effects.p3d.rz（全局特效共享包）取同色贴图。
+# 键=源 entity entry 路径；值=(donor entry, {shader_name: {channel: 贴图名}})。
+# 手动审计——别把别的 npy mesh 绑错贴图。
+_TEXTURE_DONORS={
+ r"\art\packages\powers\alex_whipfist\alex_whipfist.p3d.rz":(r"\art\startup_effects.p3d.rz",{"48766cf87930284a8fd4ac43345d2e97":{"color":"entity_tex_whip_spike_c.dds"}}),
+}
+
 def export(data,out,name):
  out.mkdir(parents=True,exist_ok=True);b=Builder(name);tex_by_key={};img_dir=out/'textures';img_dir.mkdir(exist_ok=True)
- for t in data.get('textures',[]):
+ all_tex=list(data.get('textures',[]))
+ # 失主贴图：按 entity 表合并 donor 包里的贴图（仅取被 override 引用到的）
+ donor_map={}
+ source_entry=data.get('_source_entry','')
+ cfg=_TEXTURE_DONORS.get(source_entry)
+ if cfg:
+  try:
+   import urllib.parse as _up,urllib.request as _ur
+   donor_entry,overrides=cfg;donor_map=overrides
+   need={v for sh in overrides.values() for v in sh.values()}
+   du='http://127.0.0.1:8421/api/entity_mesh?'+_up.urlencode({'entry':donor_entry})
+   dd=json.load(_ur.urlopen(du))
+   for t in dd.get('textures',[]):
+    if t.get('key') in need:all_tex.append(t)
+  except Exception as exc:
+   print(f'[donor-textures] skip: {exc}')
+ for t in all_tex:
   mip=t['mipmaps'][0];raw=base64.b64decode(mip['data']);fn=safe(Path(t['name']).stem)+'.png';(img_dir/fn).write_bytes(dxt_png(t['format'],mip['width'],mip['height'],raw));b.g['images'].append({'name':t['name'],'uri':'textures/'+fn});b.g['textures'].append({'source':len(b.g['images'])-1,'name':t['name']});tex_by_key[t['key']]=len(b.g['textures'])-1
  mat_by_sig={}
  def material(m):
-  keys=m.get('material_texture_keys') or {'color':m.get('texture_key')};sig=tuple(sorted(keys.items()))
+  keys=dict(m.get('material_texture_keys') or {'color':m.get('texture_key')})
+  # donor 覆盖：源数据只声明了部分 channel 时（如 whipfist 只有 normal）,补 color
+  shader_name=m.get('shader_name','')
+  ovr=donor_map.get(shader_name) if donor_map else None
+  if ovr:
+   merged=dict(ovr)
+   merged.update({k:v for k,v in keys.items() if v})
+   keys=merged
+  sig=tuple(sorted(keys.items()))
   if sig in mat_by_sig:return mat_by_sig[sig]
   pbr={'metallicFactor':0.0,'roughnessFactor':0.9};base=keys.get('color');normal=keys.get('normal');spec=keys.get('specular')
   if base in tex_by_key:pbr['baseColorTexture']={'index':tex_by_key[base]}

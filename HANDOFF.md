@@ -602,3 +602,23 @@ Import Animation 选项确认勾选（默认）。**不需要重下之前那 39 
 
 Blender FBX 单 action 烘焙陷阱：bake_anim_use_nla_strips=True 时
 obj.animation_data.action 不生效，必须置 False 才能拿到单 action 曲线。
+
+## 2026-09-21 下午 — 鞭拳只有法线没彩色图：贴图是在别的共享包里
+
+排查（1176 个 package 全扫）结论：
+
+1. **alex_whipfist**:Shader `48766cf8…` 只声明 normal → whip_spike_nm.dds,
+   包里确实没有 color。但全局特效共享包 `\art\startup_effects.p3d.rz` 里有
+   `entity_tex_whip_spike_c.dds`(256x256 DXT5,UV 布局匹配）。→ 导出器新增
+   `tools/entities/export_entity_gltf.py::_TEXTURE_DONORS` 失主表，导出
+   whipfist 时自动去 effects 包里把同色图拉进来并合并 material。
+   验证：新 GLB baseColorTexture=whip_spike_c、normalTexture=whip_spike_nm。
+
+2. **军队全家桶弹药**:`weapons001_diffuse.dds`（大枪 shells 30/40mm）和
+   `crate002_diffuse.dds`、`missle001_diffuse.dds` 都在。真正没贴图的：
+   `shell_127mm001InitialShape` 和 `zipLineRope001InitialShape` 在 1176 个
+   包里**全网无 color 声明**（shader 两个 hash abcfaeb… / 9203c902… 都不带贴图
+   参数）→ 源数据就是 untextured 细件，游戏里靠 shader color。不用修。
+
+重转 whipfist(1226KB FBX，镜像+平滑+同贴图命名规则），打包成
+`entity-batch-11891861d321bf77.zip`(2.5MB)下载链接同上 API。
