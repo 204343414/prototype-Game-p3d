@@ -317,5 +317,33 @@ class EntityDecoderTests(unittest.TestCase):
         self.assertEqual(unresolved["meshes"][0]["skeleton_name"], donor_name)
         self.assertTrue(any("declared skeleton 'base_rig' is unavailable" in msg for msg in unresolved["diagnostics"]))
 
+class MaterialChannelAliasTest(unittest.TestCase):
+    """Shader templates name the base-colour map several different ways.
+
+    Only 'color' used to be honoured, so every env_vehicle_military mesh (which
+    calls it 'camo') and the whipfist ('diffuseTexture') exported untextured.
+    """
+
+    def test_known_color_aliases_map_to_color(self):
+        from entity_decoder import _material_channel_for_parameter
+        for parameter in ("color", "camo", "diffuseTexture", "add_color", "bottom"):
+            self.assertEqual(_material_channel_for_parameter(parameter), "color", parameter)
+
+    def test_normal_and_specular_aliases(self):
+        from entity_decoder import _material_channel_for_parameter
+        for parameter in ("normal", "normalmap", "rivetsNm"):
+            self.assertEqual(_material_channel_for_parameter(parameter), "normal", parameter)
+        for parameter in ("specular", "specularMap"):
+            self.assertEqual(_material_channel_for_parameter(parameter), "specular", parameter)
+
+    def test_non_material_parameters_are_ignored(self):
+        # Reflection probes, decals, damage overlays and palette strips are not
+        # a base map; guessing one of them as colour would tint whole vehicles.
+        from entity_decoder import _material_channel_for_parameter
+        for parameter in ("cube_map", "decals", "palette_strip", "glass_damage",
+                          "overlay", "reflection", "grime", "gore_map", "damage"):
+            self.assertIsNone(_material_channel_for_parameter(parameter), parameter)
+
+
 if __name__ == '__main__':
     unittest.main()

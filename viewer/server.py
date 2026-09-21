@@ -252,6 +252,40 @@ def _shared_texture_index(path, mtime_ns, size):
     return combined
 
 
+# Audited shared texture packages.  A survey of all 662 packages in art.rcf
+# found 43 distinct texture names that entity shaders reference without the
+# package carrying them; all 43 resolve, by exact name, inside these five.
+# Order is priority: the first package carrying a name wins.
+ENTITY_TEXTURE_DONOR_PACKAGES = (
+    r"\art\packages\vehicles\shared.p3d.rz",
+    r"\art\startup_effects.p3d.rz",
+    r"\art\locations\manhattan\textures.p3d.rz",
+    r"\art\locations\manhattan\props.p3d.rz",
+    r"\art\alex\alex.p3d.rz",
+)
+
+
+@lru_cache(maxsize=1)
+def _entity_texture_donor_index(path, mtime_ns, size):
+    """Decode the audited shared packages once and index their textures by name.
+
+    Held for the process lifetime and keyed on archive identity, so a changed
+    art.rcf rebuilds it.  Only textures are kept; donor geometry is ignored.
+    """
+    if decode_entity_meshes is None:
+        return {}
+    index = {}
+    for package in ENTITY_TEXTURE_DONOR_PACKAGES:
+        try:
+            data = _read_preview_entry(path, package)
+            decoded = decode_entity_meshes(data)
+        except Exception:
+            continue
+        for texture in decoded.get("textures", []):
+            index.setdefault(texture["name"], texture)
+    return index
+
+
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 # bank AudioFile 对象索引的小 LRU（单 bank 可大到几 MB，至多缓存 6 个）
@@ -1822,8 +1856,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             data = _read_preview_entry(target, entry)
             external_skeletons = _explicit_entity_skeleton_donors(
                 target, stat.st_mtime_ns, stat.st_size, entry)
+            external_textures = _entity_texture_donor_index(
+                target, stat.st_mtime_ns, stat.st_size)
             result = decode_entity_meshes(
-                data, shape_filter=shape, external_skeletons=external_skeletons)
+                data, shape_filter=shape, external_skeletons=external_skeletons,
+                external_textures=external_textures)
             return self._send_json(result)
         except Exception as exc:
             return self._send_error_json(f"Entity mesh: {exc}", 500)

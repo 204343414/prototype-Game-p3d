@@ -640,17 +640,70 @@ def _decode_external_animation_channel(
     return None
 
 
+# NewShader string parameters that carry a base-colour / normal / specular
+# map under a template-specific name.  A survey of every NewShader in all 662
+# art.rcf packages produced the parameter vocabulary below; only names that are
+# unambiguously the stated channel are mapped.  Military vehicles in particular
+# name their diffuse "camo" (template env_vehicle_military / _militarybw) and
+# the whipfist names it "diffuseTexture" (char_alex_whipfist) — both were
+# previously discarded, which is why those meshes rendered flat-coloured.
+_COLOR_PARAMETERS = (
+    "color",            # the overwhelmingly common case
+    "camo",             # env_vehicle_military, env_vehicle_militarybw, env_vehicle_rivets
+    "diffuseTexture",   # char_alex_whipfist
+    "add_color",        # fx_add_soft
+    "bottom",           # env_road
+)
+_NORMAL_PARAMETERS = (
+    "normal",
+    "normalmap",        # env_vehicle_husk
+    "rivetsNm",         # env_vehicle_rivets
+)
+_SPECULAR_PARAMETERS = (
+    "specular",
+    "specularMap",      # char_NIS, char_NIS_alpha, char_NIS_meshMapperTNM, char_SupremeHunter
+)
+_MATERIAL_CHANNEL_ALIASES = {}
+for _channel, _names in (
+    ("color", _COLOR_PARAMETERS),
+    ("normal", _NORMAL_PARAMETERS),
+    ("specular", _SPECULAR_PARAMETERS),
+):
+    for _name in _names:
+        _MATERIAL_CHANNEL_ALIASES[_name.lower()] = _channel
+del _channel, _names, _name
+
+
+def _material_channel_for_parameter(parameter: str) -> str | None:
+    """Map a NewShader string parameter name onto a glTF material channel.
+
+    Returns None for parameters that are not a base-colour/normal/specular map
+    (decals, cube maps, damage overlays, palette strips and similar), so they
+    are ignored rather than guessed at.
+    """
+    return _MATERIAL_CHANNEL_ALIASES.get(parameter.lower())
+
+
 def decode_entity_meshes(
     data: bytes,
     shape_filter: str | None = None,
     *,
     external_skeletons: list[dict[str, Any]] | None = None,
+    external_textures: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Decode one package, binding every Skin only to its declared skeleton name.
 
     ``external_skeletons`` is an explicitly audited donor list supplied by the
     server for package assemblies.  It may fill a name absent from this P3D,
     but it can never replace an identically named local declaration.
+
+    ``external_textures`` maps a texture *name* to an already-decoded texture
+    record drawn from an audited shared package.  A shader in this P3D may name
+    a texture that the package does not carry (vehicle tyres, tank treads,
+    driver skins and the whipfist spike all live in shared packages); such a
+    name is resolved here instead of being silently dropped, which is what left
+    those meshes untextured.  A donor never overrides a local texture of the
+    same name, and only names a local shader actually asks for are pulled in.
     """
     if len(data) < 12:
         return {"meshes": [], "textures": [], "skeletons": [], "animations": [], "assemblies": [], "diagnostics": []}
@@ -698,8 +751,9 @@ def decode_entity_meshes(
                 if child["type_id"] != NEW_SHADER_STRING_PARAMETER:
                     continue
                 parameter, value = _parse_exact_string_pair(child["payload"], "NewShader string parameter")
-                if parameter in ("color", "normal", "specular") and value:
-                    channel_values.setdefault(parameter, []).append(value)
+                channel = _material_channel_for_parameter(parameter)
+                if channel and value:
+                    channel_values.setdefault(channel, []).append(value)
             resolved: dict[str, str] = {}
             for parameter, values in channel_values.items():
                 if len(values) == 1:
@@ -711,6 +765,20 @@ def decode_entity_meshes(
                 shader_to_textures[shader_header["shader_name"]] = resolved
         except (ValueError, struct.error) as exc:
             diagnostics.append(f"NewShader#{idx}: {exc}")
+
+    # 1b. Shared-package textures.  Every texture name this package's shaders
+    # reference but do not carry is looked up in the audited donor index.  A
+    # local declaration always wins, so a donor can only fill a real gap.
+    wanted_texture_names = {
+        name for channels in shader_to_textures.values() for name in channels.values()
+    }
+    resolved_donor_textures: dict[str, dict[str, Any]] = {}
+    unresolved_texture_names: set[str] = set()
+    if external_textures:
+        for name in sorted(wanted_texture_names - set(textures)):
+            donor = external_textures.get(name)
+            if donor is not None:
+                resolved_donor_textures[name] = donor
 
     # 2. Extract exact local Skeleton_2 declarations, then add only audited
     # external donors whose names are absent locally.  The name is the P3D
@@ -1155,10 +1223,14 @@ def decode_entity_meshes(
             continue
 
         material_names = shader_to_textures.get(shader_name, {})
-        material_texture_keys = {
-            channel: textures[name]["key"]
-            for channel, name in material_names.items() if name in textures
-        }
+        material_texture_keys = {}
+        for channel, name in material_names.items():
+            if name in textures:
+                material_texture_keys[channel] = textures[name]["key"]
+            elif name in resolved_donor_textures:
+                material_texture_keys[channel] = resolved_donor_textures[name]["key"]
+            else:
+                unresolved_texture_names.add(name)
         tex_key = material_texture_keys.get("color")
 
         decoded_meshes.append({
@@ -1177,9 +1249,15 @@ def decode_entity_meshes(
             "skin_weights": skin_weights_b64,
         })
 
+    if unresolved_texture_names:
+        diagnostics.append(
+            "unresolved texture names (not local, no audited donor): "
+            + ", ".join(sorted(unresolved_texture_names)))
+
     return {
         "meshes": decoded_meshes,
-        "textures": list(textures.values()),
+        "textures": list(textures.values()) + [
+            dict(t, donor=True) for t in resolved_donor_textures.values()],
         "skeletons": skeletons,
         "animations": animations,
         "assemblies": assemblies,
