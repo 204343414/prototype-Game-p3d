@@ -580,3 +580,25 @@ Blackwatch/NIS/gameplay 候选来源见角色地基文档；身份、通用缩�
 Blender 重导入所有网格 use_smooth=100%（含 alex_claws 抽查）；新旧批的
 weapons001_diffuse.png md5 一致（764a15c216ec37fad713f26ed30218ef），
 即贴图字节级未变——用户只需覆盖 .fbx/.json，不必重新导贴图/排版。
+
+## 2026-09-21 — alex.p3d Unity 卡死修复：拆成"本体 + 每动作一个 @fbx"
+
+反馈：alex.p3d FBX（863MB / 534 take）在 Unity 导入 7+ 小时不动。Unity 社区共识：
+单 FBX 动画太多 importer 会逐 take 建剪辑，open-file 时间指数级。标准解法
+是 **model.fbx（无动画）+ model@action.fbx（每条动画单独文件）**。
+
+新增 `tools/entities/split_animations_fbx.py`：
+- 本体 FBX：网格+骨骼，**不含 take**（3MB，Unity 秒开）
+- 每个动作单独 FBX：删网格留骨骼，bake_anim_use_nla_strips=False + 直接赋 action
+  （用 NLA 会拿到空 take——第一次拆出的 FBX 只有 315KB 空壳，就是踩这个坑；
+  单 action 烘焙 ~1.5-5MB/条）
+- Unity 自动按 `alex.p3d@xxx.fbx` 的名字把动画并到本体的 Avatar 上
+- 530/533 条成功，3 条 0 帧动作（alex_weap_rifle_aim_neutral 等）跳过
+
+产物：`entity-batch-6a1e5ab1c0de1234.zip`（198MB 压缩/1.1GB 解压）在导出服务器。
+用法：解压后 alex.p3d-split/ 拷到 Unity Assets，本体和 anims 同目录就行；
+Import Animation 选项确认勾选（默认）。**不需要重下之前那 39 个实体**——
+这个包是 alex 专用（之前 alex.fbx 是 alex-weapon 变体合集里的，本体不变）。
+
+Blender FBX 单 action 烘焙陷阱：bake_anim_use_nla_strips=True 时
+obj.animation_data.action 不生效，必须置 False 才能拿到单 action 曲线。
